@@ -1,0 +1,9 @@
+.venv/
+model_cache/
+compressed/
+docs/results/raw/
+__pycache__/
+*.pyc
+.pytest_cache/
+generated/
+.superpowers/

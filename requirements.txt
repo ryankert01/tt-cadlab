@@ -1,0 +1,4 @@
+datasets>=2.19
+safetensors>=0.4
+huggingface_hub>=0.23
+pytest>=8
