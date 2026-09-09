@@ -77,3 +77,58 @@ def test_identity_prefill_equals_stock_attention(mesh_device):
         ys.append(_to_torch(mesh_device, args, y)[:, 0:1, :SEQ, : args.dim].view(1, SEQ, args.dim))
     ok, msg = comp_pcc(ys[0], ys[1], 0.999)
     assert ok, msg
+
+
+def _decode_inputs(mesh_device, args, rope, x_bd, current_pos):
+    x_tt = args.prepare_residual_tensor_decode(x_bd, args.get_attn_input_mem_config(Mode.DECODE, None), force_replicated=True)
+    pos_tt = ttnn.from_torch(current_pos, device=mesh_device, dtype=ttnn.int32,
+                             mesh_mapper=ttnn.ShardTensor2dMesh(mesh_device, dims=(None, None), mesh_shape=args.cluster_shape))
+    return x_tt, pos_tt, rope.get_rot_mats(current_pos)
+
+
+@pytest.mark.parametrize("palu_dir,pcc", [(None, 0.999), ("compressed/svd_r64", 0.99)], ids=["identity", "r64"])
+def test_decode_after_prefill_matches_reference(mesh_device, palu_dir, pcc):
+    batch = 32
+    args, sd, rope, tt_ccl, ref = _setup(mesh_device, palu_dir, batch=batch, max_seq_len=SEQ)
+    args.palu.runtime.check = True
+    tt = _tt_attention(PaluAttention, mesh_device, args, sd, rope, tt_ccl)
+    # prefill user 0 with 128 tokens
+    P = 128
+    x_pre = torch.randn(1, P, args.dim) * 0.05
+    ref.forward(x_pre, start_pos=0)
+    rot = [rope.cos_matrix_prefill[:, :, :P, :], rope.sin_matrix_prefill[:, :, :P, :]]
+    tt.forward(args.prepare_residual_tensor_prefill(x_pre, force_replicated=True), None, rot_mats=rot, user_id=0, mode=Mode.PREFILL)
+    # 8 decode steps, all users get user 0's input so the reference (batch 1) applies to slot 0
+    for step in range(8):
+        pos = P + step
+        x = torch.randn(1, 1, args.dim) * 0.05
+        y_ref = ref.forward(x, start_pos=pos)
+        current_pos = torch.full((batch,), pos)
+        args.palu.runtime.recon_len = ((pos + 1 + 31) // 32) * 32
+        x_tt, pos_tt, rot_mats = _decode_inputs(mesh_device, args, rope, x.expand(batch, 1, -1).contiguous(), current_pos)
+        y = tt.forward(x_tt, pos_tt, rot_mats=rot_mats, mode=Mode.DECODE)
+        y = _to_torch(mesh_device, args, y)[:, 0:1, :batch, : args.dim].view(batch, 1, args.dim)
+        ok, msg = comp_pcc(y_ref, y[0:1], pcc)
+        logger.info(f"pos={pos} {msg}")
+        assert ok, f"pos={pos} {msg}"
+    v_lat = ttnn.to_torch(tt.layer_past[1], mesh_composer=ttnn.ConcatMesh2dToTensor(mesh_device, dims=(0, 1), mesh_shape=args.cluster_shape))
+    ok, msg = comp_pcc(ref.cache_v_lat, v_lat[:1, : args.n_kv_heads, : P + 8, :], 0.99)
+    assert ok, f"v latent cache {msg}"
+
+
+def test_identity_decode_equals_stock_attention(mesh_device):
+    batch = 32
+    args, sd, rope, tt_ccl, _ = _setup(mesh_device, None, batch=batch, max_seq_len=SEQ)
+    stock = _tt_attention(Attention, mesh_device, args, sd, rope, tt_ccl)
+    palu = _tt_attention(PaluAttention, mesh_device, args, sd, rope, tt_ccl)
+    for step in range(4):
+        x = torch.randn(batch, 1, args.dim) * 0.05
+        current_pos = torch.full((batch,), step)
+        args.palu.runtime.recon_len = 32
+        ys = []
+        for m in (stock, palu):
+            x_tt, pos_tt, rot_mats = _decode_inputs(mesh_device, args, rope, x, current_pos)
+            y = m.forward(x_tt, pos_tt, rot_mats=rot_mats, mode=Mode.DECODE)
+            ys.append(_to_torch(mesh_device, args, y)[:, 0:1, :batch, : args.dim].view(batch, 1, args.dim))
+        ok, msg = comp_pcc(ys[0], ys[1], 0.999)
+        assert ok, f"step={step} {msg}"

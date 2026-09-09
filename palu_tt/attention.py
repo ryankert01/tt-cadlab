@@ -22,6 +22,14 @@ class PaluAttention(LightweightModule):
         assert configuration.num_devices in (1, 2), "N150/N300 only"
         assert not configuration.use_hf_rope and not configuration.use_qk_fused, "set use_qk_fused=False, use_hf_rope=False"
         assert hasattr(configuration, "palu"), "attach a PaluConfig as configuration.palu"
+        # stock features this class silently drops -- refuse the model rather than lose them quietly
+        _ln = configuration.get_state_dict_prefix("Attention", layer_num)
+        assert f"{_ln}.q_norm.weight" not in state_dict, "q_norm not supported"
+        assert f"{_ln}.k_norm.weight" not in state_dict, "k_norm not supported"
+        assert f"{_ln}.wq.bias" not in state_dict, "QKV bias not supported"
+        assert configuration.query_pre_attn_scalar is None, "query_pre_attn_scalar not supported"
+        assert not configuration.layer_types or configuration.layer_types[layer_num] != "sliding_attention", \
+            "sliding-window (local) attention layers not supported"
 
         self.args = args
         self.mesh_device = mesh_device
@@ -241,8 +249,107 @@ class PaluAttention(LightweightModule):
                             memory_config=ttnn.DRAM_MEMORY_CONFIG, dtype=self.ccl_dtype)
         return out
 
+    def _recon_len(self, current_pos):
+        S = self.palu.runtime.recon_len or self.max_seq_len
+        S = min(nearest_32(S), self.max_seq_len)
+        if self.palu.runtime.check:
+            pos = ttnn.to_torch(ttnn.get_device_tensors(current_pos)[0])
+            assert int(pos.max()) < S, f"recon_len {S} does not cover current_pos max {int(pos.max())}"
+        return S
+
+    def _slice_latent(self, heads_1BKD, r):
+        """[1, B, nkv, 128] height-sharded -> [1, B, nkv, r] height-sharded (shard [32, r] per batch core)."""
+        t = ttnn.sharded_to_interleaved(heads_1BKD, ttnn.L1_MEMORY_CONFIG)
+        ttnn.deallocate(heads_1BKD)
+        if r < self.head_dim:
+            t2 = t[:, :, :, :r]
+            ttnn.deallocate(t)
+            t = t2
+        return ttnn.interleaved_to_sharded(t, self._latent_shard_cfg(r))
+
     def forward_decode(self, x, current_pos, rot_mats=None, page_table=None, kv_cache=None):
-        raise NotImplementedError("Task 6")
+        assert page_table is None and kv_cache is None
+        B = self.batch_size_per_device_group
+
+        # QKV matmul + head split (stock) -------------------------------------------------------------
+        xqkv_sharded = ttnn.linear(
+            x, self.wqkv, memory_config=self.args.get_attn_qkv_mm_mem_config(Mode.DECODE, None),
+            program_config=self.args.get_attn_qkv_program_config(Mode.DECODE, 1, None),
+            compute_kernel_config=self.li_qkv_decode_compute_kernel_cfg, dtype=self.activation_dtype or ttnn.bfloat16)
+        ttnn.deallocate(x)
+        mem = self.args.get_attn_qkv_all_reduce_output_mem_config(Mode.DECODE, list(self.mesh_device.shape)[1], None)
+        tt_all_reduce(xqkv_sharded, self.mesh_device, self.tt_ccl, cluster_axis=1,
+                      memory_config=mem if mem is not None else xqkv_sharded.memory_config(),
+                      sharded=True, dtype=self.ccl_dtype, topology=self.ccl_topology)
+        xqkv = ttnn.sharded_to_interleaved(xqkv_sharded, ttnn.L1_MEMORY_CONFIG, ttnn.bfloat16)
+        ttnn.deallocate(xqkv_sharded)
+        xqkv = ttnn.reshape(xqkv, (1, 1, B, xqkv.shape[3]), (1, 1, 32, xqkv.shape[3]))
+        q_pre, k_lat_pad, v_lat_pad = ttnn.experimental.nlp_create_qkv_heads_decode(
+            xqkv, num_heads=self.n_local_heads, num_kv_heads=self.n_local_kv_heads,
+            memory_config=self.args.get_attn_create_head_output_mem_config(Mode.DECODE, None))
+        ttnn.deallocate(xqkv)
+
+        # RoPE on q only ---------------------------------------------------------------------------------
+        q = ttnn.experimental.rotary_embedding_llama(q_pre, rot_mats[0], rot_mats[1], self.transformation_mats["decode"], is_decode_mode=True)
+        ttnn.deallocate(q_pre)
+
+        # latents -> caches -----------------------------------------------------------------------------
+        keys, values = self.layer_past
+        k_lat = self._slice_latent(k_lat_pad, self.r_k)
+        v_lat = self._slice_latent(v_lat_pad, self.r_v)
+        ttnn.experimental.paged_update_cache(keys, k_lat, update_idxs_tensor=current_pos)
+        ttnn.experimental.paged_update_cache(values, v_lat, update_idxs_tensor=current_pos)
+        ttnn.deallocate(k_lat)
+        ttnn.deallocate(v_lat)
+
+        # K reconstruction (the naive Palu path; stage 2 fuses this) -------------------------------------
+        S = self._recon_len(current_pos)
+        k_lat_S = keys[:, :, :S, :] if S < self.max_seq_len else keys                     # [B, nkv, S, r_k]
+        v_lat_S = values[:, :, :S, :] if S < self.max_seq_len else values                 # [B, nkv, S, r_v]
+        k_rec = ttnn.matmul(k_lat_S, self.u_k_decode, dtype=ttnn.bfloat16, memory_config=ttnn.DRAM_MEMORY_CONFIG,
+                            compute_kernel_config=self.compute_kernel_config_hifi2)       # [B, nkv, S, 128]
+        if S < self.max_seq_len:
+            ttnn.deallocate(k_lat_S)
+        k_rec = ttnn.reshape(k_rec, (1, B * self.n_local_kv_heads, S, self.head_dim))
+        cos = self.cos_prefill[:, :, :S, :]
+        sin = self.sin_prefill[:, :, :S, :]
+        k_rot = ttnn.experimental.rotary_embedding_llama(k_rec, cos, sin, self.transformation_mats["prefill"], is_decode_mode=False)
+        for t in (k_rec, cos, sin):
+            ttnn.deallocate(t)
+        k_rot = ttnn.reshape(k_rot, (B, self.n_local_kv_heads, S, self.head_dim))
+        k_rot8 = ttnn.typecast(k_rot, dtype=self.kv_cache_dtype)                          # same precision as a stock K cache
+        ttnn.deallocate(k_rot)
+
+        # attention on reconstructed K and the V latent --------------------------------------------------
+        attn = ttnn.transformer.flash_multi_latent_attention_decode(
+            q, k_rot8, v_lat_S, head_dim_v=self.r_v, cur_pos_tensor=current_pos, scale=self.scale,
+            program_config=self.args.get_attn_sdpa_decode_program_config(None),
+            compute_kernel_config=self.sdpa_decode_compute_kernel_cfg, memory_config=ttnn.DRAM_MEMORY_CONFIG)  # [1, B, nh, r_v]
+        ttnn.deallocate(q)
+        ttnn.deallocate(k_rot8)
+        if S < self.max_seq_len:
+            ttnn.deallocate(v_lat_S)
+        if self.r_v < self.head_dim:
+            attn_p = ttnn.pad(attn, padding=[(0, 0), (0, 0), (0, 0), (0, self.head_dim - self.r_v)], value=0.0)
+            ttnn.deallocate(attn)
+            attn = attn_p
+
+        # stock tail: concat heads, gather, fused wo, all-reduce -----------------------------------------
+        attn_11BH = ttnn.to_memory_config(attn, memory_config=self.args.get_attn_sdpa_output_mem_config(Mode.DECODE, B, None))
+        attn_cat = ttnn.experimental.nlp_concat_heads_decode(attn_11BH, num_heads=self.n_local_heads)
+        ttnn.deallocate(attn_11BH)
+        ttnn.deallocate(attn)
+        attn_g = tt_all_gather(attn_cat, self.mesh_device, self.tt_ccl, dim=2, cluster_axis=1,
+                               memory_config=self.args.get_attn_gather_users_mem_config(Mode.DECODE, list(self.mesh_device.shape)[1], None),
+                               sharded=True)
+        dense = ttnn.linear(attn_g, self.wo_fused, program_config=self.args.get_attn_wo_program_config(Mode.DECODE, 1, None),
+                            memory_config=self.args.get_attn_wo_output_mem_config(Mode.DECODE, None),
+                            compute_kernel_config=self.li_o_decode_compute_kernel_cfg)
+        ttnn.deallocate(attn_cat)
+        dense = tt_all_reduce(dense, self.mesh_device, self.tt_ccl, cluster_axis=0, dim=3, topology=self.ccl_topology,
+                              memory_config=self.args.get_attn_all_reduce_output_mem_config(Mode.DECODE, self.hidden_size, list(self.mesh_device.shape)[0], None),
+                              sharded=True, dtype=self.ccl_dtype, use_composite=False)
+        return ttnn.to_memory_config(dense, self.args.get_attn_dense_output_mem_config(Mode.DECODE, None))
 
     def forward(self, x, current_pos, rot_mats=None, user_id=0, mode=Mode.DECODE, page_table=None,
                 chunk_page_table=None, chunk_start_idx=None, kv_cache=None):
