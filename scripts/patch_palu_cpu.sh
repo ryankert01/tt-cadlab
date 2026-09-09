@@ -6,7 +6,7 @@ set -euo pipefail
 P="$(cd "$(dirname "$0")/.." && pwd)/third_party/palu"
 cd "$P"
 git checkout -- palu/decomposition.py palu/rank_search.py palu/data_utils.py \
-  palu/model/modules/hadamard_utils.py utils.py
+  palu/model/modules/hadamard_utils.py utils.py palu/model/modules/svd_linear.py
 
 # decomposition.py: three .cuda() sites -> stay on the working device (`dev`
 # is already in scope at each call site).
@@ -133,3 +133,26 @@ PY
 
 grep -n "cuda()" palu/*.py palu/model/modules/*.py utils.py compress.py 2>/dev/null || echo "no .cuda() left"
 echo "patch_palu_cpu.sh: applied cleanly"
+
+# svd_linear.py: whitening decomposition in float64. The whitening matrices of Llama-3.1-8B layers 0-1
+# have condition numbers ~1e16-1e18; inverting them in fp32 destroys the factorisation (full-rank
+# reconstruction error 47 % / 235 %). In float64 the full-rank reconstruction is exact to 1e-9.
+python3 - <<'PY'
+import pathlib
+p = pathlib.Path("palu/model/modules/svd_linear.py"); s = p.read_text()
+old = """    # Get the inverse of scaling_diag_matrix
+    scaling_matrix_inv = torch.linalg.inv(scaling_diag_matrix.to(torch.float32))
+
+    # Multiply scaling_diag_matrix to weight matrix
+    W_scale = torch.matmul(weight.to(torch.float32), scaling_diag_matrix.to(torch.float32))
+"""
+new = """    # Get the inverse of scaling_diag_matrix (float64: the matrix can be ill-conditioned, ~1e16+)
+    scaling_matrix_inv = torch.linalg.inv(scaling_diag_matrix.to(torch.float64))
+
+    # Multiply scaling_diag_matrix to weight matrix (float64 end to end; cast back at the end)
+    W_scale = torch.matmul(weight.to(torch.float64), scaling_diag_matrix.to(torch.float64))
+"""
+assert old in s, "svd_linear.py anchor not found"
+p.write_text(s.replace(old, new))
+PY
+grep -n "float64" palu/model/modules/svd_linear.py || { echo "svd_linear float64 patch missing"; exit 1; }
