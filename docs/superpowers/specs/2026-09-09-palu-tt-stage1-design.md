@@ -107,6 +107,8 @@ Fisher search are supported by the converter only if every rank is a multiple of
 and identical across KV heads within a layer (per-layer ranks may differ); other
 results are rounded up to satisfy this and the rounding is logged.
 
+**As built (deviation):** `compress.py` writes a *delta* file, not a full HF dump — `compressed/<row>/palu_attn.safetensors` (only the factorised `k_proj`/`v_proj` tensors, in Palu's key naming) plus `config.json` (`head_wise_ranks` and a `palu_tt` block recording method, group size, `rank_k`, `rank_v` and the source snapshot). Every other weight is read from the read-only HF cache, so a row costs ~0.5 GB instead of a 16 GB copy. A full Palu HF dump still loads, because `convert.py` reads the same key names from either layout.
+
 Cost notes (measured): CPU fp32 matmul ≈ 1.3 TFLOP/s; bf16 on this CPU is ~1000×
 slower, so all CPU work runs in fp32. Plain SVD export: minutes. Full recipe:
 Fisher ~1.5–3 h, whitening ~3–4 h, both cached per model.
@@ -119,7 +121,7 @@ Fisher ~1.5–3 h, whitening ~3–4 h, both cached per model.
 | `w_kv_lat` | 4096 × (8·r_k + 8·r_v) | fused `[VT_k ; VT_v]`, column-blocked per KV head so TP sharding by head works |
 | `U_k` | 8 × r_k × 128 | per-head up-projection; the Meta-style permutation is applied to its 128 output columns |
 | `wo` | 4096 × 4096 | original, used in prefill |
-| `wo_fused` | 4096 × (32·r_v) | `wo[:, head h] · U_v[kv(h)]` per query head, used in decode |
+| `wo_fused` | 4096 × 4096 | `wo[:, head h] · U_v[kv(h)]` per query head, used in decode. **As built:** each query head's 128-column block holds the `r_v` fused columns and is zero-padded to 128, so the tensor is always 4096 × 4096 (one device shape for every rank) |
 
 The converter is validated by a CPU test: for random x, applying `U_k` to the latent
 must equal the permuted stock K; `attn · h_v · wo_fusedᵀ` must equal
@@ -140,7 +142,8 @@ Per chip (TP=2): 16 query heads, 4 KV heads, head_dim 128, batch ≤ 32.
    (non-paged usage, as stock). Cache shapes `[32, 4, max_seq, r_k]`,
    `[32, 4, max_seq, r_v]`.
 5. K reconstruction: `K = h_k[:, :, :S] @ U_k` with `S = max(current_pos)+1`
-   rounded up to 32, into a reused scratch `[32, 4, S, 128]` (bf16), then
+   rounded up to 256 (**as built**; rounding to the 32-element tile changes the decode op shapes
+   every 32 tokens and thrashes the program cache), into a reused scratch `[32, 4, S, 128]` (bf16), then
    `rotary_embedding_llama` in prefill mode over positions 0..S-1 (cos/sin from the
    stock RoPE setup). This is Palu's non-fused path and the cost stage 2 removes.
 6. Attention: `flash_multi_latent_attention_decode(q, K_scratch, v=h_v cache,
@@ -164,9 +167,14 @@ a slice of K.
 - **Reconstruction cost.** At batch 32, context 16k, step 5 writes ~1 GB of K per
   layer per step. Expected; it is the stage 2 motivation. Reconstruction is bounded
   by the longest active sequence, never `max_seq`.
-- **Latent dtype.** Caches default to the base model's KV dtype (bfp8). If PCC
-  against the CPU reference drops noticeably versus the stock model, latents move to
-  bf16 and the memory table reports both.
+- **Latent dtype — resolved, fallback struck.** Caches keep the base model's KV dtype (bfp8).
+  Moving the latents to bf16 was tested and does **not** help: prefill never reads the latent cache
+  (it reconstructs in flight), so the prefill PCC is unchanged, and the decode teacher-forced
+  agreement moved by one token. The `r=64` fidelity gap (prefill logit PCC 0.963 against the fp32
+  CPU low-rank reference, versus 0.999 for stock against its own) lives in the reconstruction path
+  — the bf16/HiFi2 `latent @ U` matmul plus bfp8 requantisation. The lever, if a later stage needs
+  tighter fidelity, is higher matmul fidelity (HiFi4 / fp32 accumulate) on the two reconstruction
+  matmuls, not the cache dtype.
 
 ### Not in stage 1
 
@@ -197,11 +205,17 @@ pool), group size > 1, latent quantisation, tracing of the decode step (S varies
    for one layer with real ranks, PCC ≥ 0.99. First milestone; surfaces the MLA/GQA
    and dtype risks.
 3. Device, baseline parity: the `r=128` path must match stock tt_transformers
-   outputs (PCC ≥ 0.999 on logits), proving the plumbing adds no error.
+   outputs (PCC ≥ 0.999 on logits), proving the plumbing adds no error. **Measured: 0.9994**
+   prefill logit PCC identity-vs-stock, with 32/32 identical teacher-forced tokens.
 4. Device, model: full 8B Palu model vs the CPU Palu model on a ~128-token prompt
    plus 32 greedy tokens; logit PCC and top-1 match reported, compared against the
    same numbers for stock-vs-HF so the acceptance bar is "no worse than
-   tt_transformers' own fidelity".
+   tt_transformers' own fidelity". **Bars as built:** prefill logit PCC ≥ 0.95 against the fp32
+   CPU low-rank reference and teacher-forced token agreement ≥ 0.85 (`r=64` measured 0.963 and
+   0.906; the stock control measured 0.999 and 0.969). The originally written 0.99 PCC and 0.75
+   *free-running* greedy match were both wrong: 0.99 is unreachable even for stock against an fp32
+   reference at bfp8 weights, and free-running greedy diverges after the first differing token, so
+   it measures divergence time rather than per-step fidelity (stock itself scores 0.19 on it).
 
 ## 8. Evaluation: TT baseline vs TT Palu
 
@@ -214,7 +228,7 @@ All headline numbers are measured on the n300 through `palu_tt/eval_ppl.py` and
 | Wikitext2 perplexity (device) | Model forward in "all positions" mode on 2048-token windows; NLL on host from full logits (or from final hidden states with the HF `lm_head` in fp32 if the device path returns hidden states). CPU HF perplexity run once per row as a sanity check that the device harness agrees with HF within noise. |
 | KV cache bytes/token | From allocated latent caches; cross-checked with device memory reports |
 | Max context at batch 32 | Largest `max_seq` that allocates |
-| Decode latency | Per step at batch 32, contexts 1k/4k/16k; whole step and attention-only (op profiler) |
+| Decode latency | Per step at batch 32, contexts 1k/4k/8k, plus the max-context probe. **As built:** 16k is not measured — it does not allocate at batch 32 for any row (stock and the identity path stop at 4k), so the sweep is 1k/4k/8k and the ceiling is reported separately. Whole step and attention-only (a separate single-layer bench, not the op profiler) |
 | Prefill time | TTFT at 2k and 8k tokens, batch 1 |
 | Generation samples | Same prompts, greedy, side by side |
 
