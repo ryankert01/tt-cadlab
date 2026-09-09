@@ -132,3 +132,23 @@ def test_identity_decode_equals_stock_attention(mesh_device):
             ys.append(_to_torch(mesh_device, args, y)[:, 0:1, :batch, : args.dim].view(batch, 1, args.dim))
         ok, msg = comp_pcc(ys[0], ys[1], 0.999)
         assert ok, f"step={step} {msg}"
+
+
+def test_decode_at_full_context_keeps_prefill_cos_sin(mesh_device):
+    """recon_len == max_seq_len: the cos/sin slice covers the whole tensor, and a full-range ttnn
+    slice returns the *same* tensor, so deallocating it frees the module's persistent prefill
+    cos/sin and every later decode step dies with "Input Tensor is not allocated". Two identical
+    steps at the last position, which is what a decode at the end of the context window does."""
+    batch = 32
+    args, sd, rope, tt_ccl, _ = _setup(mesh_device, "compressed/svd_r64", batch=batch, max_seq_len=SEQ)
+    tt = _tt_attention(PaluAttention, mesh_device, args, sd, rope, tt_ccl)
+    args.palu.runtime.recon_len = SEQ
+    x = torch.randn(batch, 1, args.dim) * 0.05
+    current_pos = torch.full((batch,), SEQ - 1)
+    ys = []
+    for _ in range(2):
+        x_tt, pos_tt, rot_mats = _decode_inputs(mesh_device, args, rope, x, current_pos)
+        y = tt.forward(x_tt, pos_tt, rot_mats=rot_mats, mode=Mode.DECODE)
+        ys.append(_to_torch(mesh_device, args, y)[:, 0:1, :batch, : args.dim].view(batch, 1, args.dim))
+    ok, msg = comp_pcc(ys[0], ys[1], 0.999)  # same input at the same position -> same output
+    assert ok, msg

@@ -313,11 +313,17 @@ class PaluAttention(LightweightModule):
         if S < self.max_seq_len:
             ttnn.deallocate(k_lat_S)
         k_rec = ttnn.reshape(k_rec, (1, B * self.n_local_kv_heads, S, self.head_dim))
-        cos = self.cos_prefill[:, :, :S, :]
-        sin = self.sin_prefill[:, :, :S, :]
+        # A full-range ttnn slice is a no-op that returns the *same* tensor (see the "No-op check"
+        # in ttnn::slice), so at S == max_seq_len -- the case a decode at the end of the context
+        # window hits -- these alias the persistent prefill cos/sin and must not be deallocated.
+        sliced = S < self.max_seq_len
+        cos = self.cos_prefill[:, :, :S, :] if sliced else self.cos_prefill
+        sin = self.sin_prefill[:, :, :S, :] if sliced else self.sin_prefill
         k_rot = ttnn.experimental.rotary_embedding_llama(k_rec, cos, sin, self.transformation_mats["prefill"], is_decode_mode=False)
-        for t in (k_rec, cos, sin):
-            ttnn.deallocate(t)
+        ttnn.deallocate(k_rec)
+        if sliced:
+            ttnn.deallocate(cos)
+            ttnn.deallocate(sin)
         k_rot = ttnn.reshape(k_rot, (B, self.n_local_kv_heads, S, self.head_dim))
         k_rot8 = ttnn.typecast(k_rot, dtype=self.kv_cache_dtype)                          # same precision as a stock K cache
         ttnn.deallocate(k_rot)
