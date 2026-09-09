@@ -66,7 +66,7 @@ class PaluAttention(LightweightModule):
         self.wo_dtype = opt.get_tensor_dtype(decoder_id=layer_num, tensor=TensorGroup.WO)
         self.kv_cache_dtype = opt.get_tensor_dtype(decoder_id=layer_num, tensor=TensorGroup.KV_CACHE)
         # latent caches may be kept wider than the stock KV cache dtype (spec 5, "Latent dtype")
-        self.latent_dtype = self.palu.latent_dtype or self.kv_cache_dtype
+        self.latent_dtype = self.palu.latent_dtype if self.palu.latent_dtype is not None else self.kv_cache_dtype
         fid = lambda op: opt.get_math_fidelity(decoder_id=layer_num, op=op, configuration=configuration)
         self.li_qkv_decode_compute_kernel_cfg = fid(OpGroup.LI_QKV_DECODE)
         self.sdpa_decode_compute_kernel_cfg = fid(OpGroup.SDPA_DECODE)
@@ -133,13 +133,12 @@ class PaluAttention(LightweightModule):
 
         # --- latent caches ---------------------------------------------------------------------------
         self.layer_past = []
-        lat_tag = getattr(self.latent_dtype, "name", str(self.latent_dtype))  # keep bf16/bfp8 caches apart
         for r, nm in ((self.r_k, "k"), (self.r_v, "v")):
             z = torch.zeros(B, self.n_local_kv_heads, self.max_seq_len, r)
             self.layer_past.append(ttnn.as_tensor(
                 z, dtype=self.latent_dtype, layout=ttnn.TILE_LAYOUT, device=mesh_device,
                 memory_config=ttnn.DRAM_MEMORY_CONFIG, mesh_mapper=ttnn.ReplicateTensorToMesh(mesh_device),
-                cache_file_name=cache_name(f"{tag}_latcache_{nm}_{lat_tag}_{tuple(z.shape)}") if weight_cache_path else None,
+                cache_file_name=cache_name(f"{tag}_latcache_{nm}_{tuple(z.shape)}") if weight_cache_path else None,
             ))
 
         # --- prefill-mode cos/sin for K reconstruction in decode ---------------------------------------
