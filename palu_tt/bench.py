@@ -16,6 +16,7 @@ import json
 import os
 import statistics
 import time
+import traceback
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -31,8 +32,21 @@ from palu_tt import convert, device as dev, hf, model as pm
 from palu_tt.attention import PaluAttention
 
 RAW = Path("docs/results/raw")
+
+
+def _parse_contexts(s):
+    """Parse PALU_BENCH_CONTEXTS ("1024,4096,8192" -> (1024, 4096, 8192)).
+
+    Empty items are ignored, so a trailing/doubled comma (e.g. "1024,4096,") does not crash;
+    ``None`` or an empty string falls back to the default matrix used by the results table.
+    """
+    if not s:
+        s = "1024,4096,8192"
+    return tuple(int(x) for x in s.split(",") if x.strip())
+
+
 # PALU_BENCH_CONTEXTS=1024,4096 shortens a smoke run; the default is what the results table uses.
-CONTEXTS = tuple(int(c) for c in os.environ.get("PALU_BENCH_CONTEXTS", "1024,4096,8192").split(","))
+CONTEXTS = _parse_contexts(os.environ.get("PALU_BENCH_CONTEXTS"))
 BATCH = 32
 
 
@@ -82,11 +96,15 @@ def _kv_bytes(attn, args):
 
 def _decode_one(md, kind, palu_dir, ctx):
     """One (kind, context) decode cell. A function so every device tensor it holds dies on return."""
-    args, model, cfg = pm.build_model(md, kind, palu_dir, max_batch_size=BATCH, max_seq_len=ctx)
-    tokens = torch.randint(0, args.vocab_size, (BATCH,))
-    current_pos = torch.full((BATCH,), ctx - 1)
-    pm.set_recon_len(cfg, current_pos)  # fixed for the whole timed loop -> no recompiles inside it
-    host = model.prepare_decode_inputs_host(tokens, current_pos)
+    try:
+        args, model, cfg = pm.build_model(md, kind, palu_dir, max_batch_size=BATCH, max_seq_len=ctx)
+        tokens = torch.randint(0, args.vocab_size, (BATCH,))
+        current_pos = torch.full((BATCH,), ctx - 1)
+        pm.set_recon_len(cfg, current_pos)  # fixed for the whole timed loop -> no recompiles inside it
+        host = model.prepare_decode_inputs_host(tokens, current_pos)
+    except Exception as e:
+        e.phase = "build"
+        raise
 
     def step():
         tok_d, pos_d, rope_d, _ = copy_host_to_device(host, mesh_device=md)
@@ -94,7 +112,11 @@ def _decode_one(md, kind, palu_dir, ctx):
         dev.sync(md)
         ttnn.deallocate(logits)
 
-    row = _time(step)
+    try:
+        row = _time(step)
+    except Exception as e:
+        e.phase = "timing"
+        raise
     row["kv_bytes_per_token_per_layer_per_chip"] = pm.kv_bytes_per_token_per_layer(model, args)
     del model
     return row
@@ -102,7 +124,7 @@ def _decode_one(md, kind, palu_dir, ctx):
 
 def bench_decode(mesh, kind, palu_dir):
     """Whole decode step at batch 32 for each context; the model is rebuilt per context (max_seq_len == context)."""
-    rows = {}
+    rows = {}  # keys are ints here; json.dumps() below turns them into strings ("1024") -- Task 10's reader must expect that
     failed = False
     for ctx in CONTEXTS:
         reopened = False
@@ -112,7 +134,8 @@ def bench_decode(mesh, kind, palu_dir):
         try:
             rows[ctx] = _decode_one(mesh.md, kind, palu_dir, ctx)
         except Exception as e:  # allocation failure -> report and continue
-            rows[ctx] = {"error": str(e)[:200]}
+            traceback.print_exc()  # keep the details in the log; the JSON cell only gets 200 chars
+            rows[ctx] = {"error": str(e)[:200], "phase": getattr(e, "phase", "unknown"), "exc": type(e).__name__}
             failed = True
         rows[ctx]["mesh_reopened_first"] = reopened
         gc.collect()  # ttnn deallocates device tensors on collection
@@ -122,27 +145,31 @@ def bench_decode(mesh, kind, palu_dir):
 def _attention_one(md, kind, palu_dir, ctx):
     """One attention layer, decode, batch 32. A function so the 16 GB state dict and the layer's
     device tensors are freed before the next context is built."""
-    args = ModelArgs(md, instruct=True, max_batch_size=BATCH, max_seq_len=ctx, cache_hf=False)
-    args.use_qk_fused = False
-    args.n_layers = 1
-    sd = args.load_state_dict()
-    cls = Attention
-    if kind == "palu":
-        args.palu = convert.add_palu_to_state_dict(sd, hf.snapshot_dir(), palu_dir, 1, args.n_heads,
-                                                   args.n_kv_heads, args.head_dim)
-        cls = PaluAttention
-    rope = RotarySetup(md, BATCH, args.head_dim, ctx, args.rope_theta, args.rope_scaling, False)
-    attn = cls(md, TT_CCL(md), args, sd, weight_cache_path=args.weight_cache_path(ttnn.bfloat8_b), layer_num=0,
-               dtype=ttnn.bfloat8_b, transformation_mats=rope.get_both_trans_mats(), configuration=args)
-    del sd
-    gc.collect()
-    current_pos = torch.full((BATCH,), ctx - 1)
-    if kind == "palu":
-        pm.set_recon_len(args.palu, current_pos)
-    pos_tt = ttnn.from_torch(current_pos, device=md, dtype=ttnn.int32,
-                             mesh_mapper=ttnn.ShardTensor2dMesh(md, dims=(None, None), mesh_shape=args.cluster_shape))
-    rot = rope.get_rot_mats(current_pos)
-    x = torch.randn(BATCH, 1, args.dim) * 0.05
+    try:
+        args = ModelArgs(md, instruct=True, max_batch_size=BATCH, max_seq_len=ctx, cache_hf=False)
+        args.use_qk_fused = False
+        args.n_layers = 1
+        sd = args.load_state_dict()
+        cls = Attention
+        if kind == "palu":
+            args.palu = convert.add_palu_to_state_dict(sd, hf.snapshot_dir(), palu_dir, 1, args.n_heads,
+                                                       args.n_kv_heads, args.head_dim)
+            cls = PaluAttention
+        rope = RotarySetup(md, BATCH, args.head_dim, ctx, args.rope_theta, args.rope_scaling, False)
+        attn = cls(md, TT_CCL(md), args, sd, weight_cache_path=args.weight_cache_path(ttnn.bfloat8_b), layer_num=0,
+                   dtype=ttnn.bfloat8_b, transformation_mats=rope.get_both_trans_mats(), configuration=args)
+        del sd
+        gc.collect()
+        current_pos = torch.full((BATCH,), ctx - 1)
+        if kind == "palu":
+            pm.set_recon_len(args.palu, current_pos)
+        pos_tt = ttnn.from_torch(current_pos, device=md, dtype=ttnn.int32,
+                                 mesh_mapper=ttnn.ShardTensor2dMesh(md, dims=(None, None), mesh_shape=args.cluster_shape))
+        rot = rope.get_rot_mats(current_pos)
+        x = torch.randn(BATCH, 1, args.dim) * 0.05
+    except Exception as e:
+        e.phase = "build"
+        raise
 
     def step():
         x_tt = args.prepare_residual_tensor_decode(x, args.get_attn_input_mem_config(Mode.DECODE, None), force_replicated=True)
@@ -150,7 +177,11 @@ def _attention_one(md, kind, palu_dir, ctx):
         dev.sync(md)
         ttnn.deallocate(y)
 
-    row = _time(step, iters=20)
+    try:
+        row = _time(step, iters=20)
+    except Exception as e:
+        e.phase = "timing"
+        raise
     row["kv_bytes_per_token_per_layer_per_chip"] = _kv_bytes(attn, args)
     del attn
     return row
@@ -158,7 +189,7 @@ def _attention_one(md, kind, palu_dir, ctx):
 
 def bench_attention(mesh, kind, palu_dir):
     """One attention layer, decode, batch 32, per context. Isolates the K-reconstruction cost."""
-    rows = {}
+    rows = {}  # keys are ints here; json.dumps() below turns them into strings ("1024") -- Task 10's reader must expect that
     failed = False
     for ctx in CONTEXTS:
         reopened = False
@@ -168,7 +199,8 @@ def bench_attention(mesh, kind, palu_dir):
         try:
             rows[ctx] = _attention_one(mesh.md, kind, palu_dir, ctx)
         except Exception as e:
-            rows[ctx] = {"error": str(e)[:200]}
+            traceback.print_exc()  # keep the details in the log; the JSON cell only gets 200 chars
+            rows[ctx] = {"error": str(e)[:200], "phase": getattr(e, "phase", "unknown"), "exc": type(e).__name__}
             failed = True
         rows[ctx]["mesh_reopened_first"] = reopened
         gc.collect()
@@ -178,8 +210,12 @@ def bench_attention(mesh, kind, palu_dir):
 def bench_prefill(mesh, kind, palu_dir):
     """Time to first token: a single-user prefill of L tokens (batch 1)."""
     md = mesh.md
-    rows = {}
-    args, model, _ = pm.build_model(md, kind, palu_dir, max_batch_size=1, max_seq_len=8192)
+    try:
+        args, model, _ = pm.build_model(md, kind, palu_dir, max_batch_size=1, max_seq_len=8192)
+    except Exception as e:  # allocation failure -> report both lengths and stop, like the other modes
+        traceback.print_exc()
+        return {L: {"error": str(e)[:200], "phase": "build", "exc": type(e).__name__} for L in (2048, 8192)}
+    rows = {}  # keys are ints here; json.dumps() below turns them into strings ("2048") -- Task 10's reader must expect that
     for L in (2048, 8192):
         ids = torch.randint(0, args.vocab_size, (1, L))
 
@@ -193,7 +229,8 @@ def bench_prefill(mesh, kind, palu_dir):
         try:
             rows[L] = _time(step, iters=5, warmup=2)
         except Exception as e:
-            rows[L] = {"error": str(e)[:200]}
+            traceback.print_exc()
+            rows[L] = {"error": str(e)[:200], "phase": "timing", "exc": type(e).__name__}
     del model
     gc.collect()
     return rows
@@ -210,8 +247,10 @@ def bench_maxctx(mesh, kind, palu_dir):
             del model, args
             gc.collect()
         except Exception as e:
+            traceback.print_exc()
             gc.collect()
             return {"max_context_batch32": ok, "failed_at": ctx, "error": str(e)[:200],
+                    "phase": "build", "exc": type(e).__name__,
                     "kv_bytes_per_token_per_layer_per_chip": kv if ok else None}
     return {"max_context_batch32": ok, "kv_bytes_per_token_per_layer_per_chip": kv}
 
@@ -226,11 +265,14 @@ def main():
     RAW.mkdir(parents=True, exist_ok=True)
     mesh = Mesh()
     try:
-        r = {"decode": bench_decode, "attention": bench_attention, "prefill": bench_prefill,
-             "maxctx": bench_maxctx}[a.what](mesh, a.kind, a.palu_dir)
+        data = {"decode": bench_decode, "attention": bench_attention, "prefill": bench_prefill,
+                "maxctx": bench_maxctx}[a.what](mesh, a.kind, a.palu_dir)
     finally:
         mesh.close()
-    r = {"row": a.row, "kind": a.kind, "palu_dir": a.palu_dir, "what": a.what, "contexts": list(CONTEXTS), "data": r}
+    r = {"row": a.row, "kind": a.kind, "palu_dir": a.palu_dir, "what": a.what}
+    if a.what in ("decode", "attention"):  # prefill/maxctx use their own fixed lengths, not CONTEXTS
+        r["contexts"] = list(CONTEXTS)
+    r["data"] = data
     (RAW / f"bench_{a.what}_{a.row}.json").write_text(json.dumps(r, indent=1))
     print(json.dumps(r))
 

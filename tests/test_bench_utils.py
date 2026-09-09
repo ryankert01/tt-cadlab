@@ -23,8 +23,20 @@ def test_time_runs_warmup_plus_iters_and_reports_median(monkeypatch):
     assert r["min_ms"] == pytest.approx(10.0)
 
 
-def test_time_defaults_and_contexts():
+def test_time_defaults():
     calls = []
     r = bench._time(lambda: calls.append(1))
     assert len(calls) == 13 and r["iters"] == 10  # defaults: warmup=3, iters=10
-    assert bench.CONTEXTS == (1024, 4096, 8192)
+
+
+@pytest.mark.parametrize("env_value, expected", [
+    (None, (1024, 4096, 8192)),  # unset -> default matrix used by the results table
+    ("", (1024, 4096, 8192)),  # empty string -> same default
+    ("1024,4096", (1024, 4096)),
+    ("1024", (1024,)),
+    ("1024,,4096", (1024, 4096)),  # doubled comma -> empty item ignored, not a crash
+    ("1024,4096,", (1024, 4096)),  # trailing comma -> empty item ignored
+    (" 1024 , 4096 ", (1024, 4096)),  # incidental whitespace
+])
+def test_parse_contexts(env_value, expected):
+    assert bench._parse_contexts(env_value) == expected
