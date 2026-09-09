@@ -1,6 +1,8 @@
 """Turn Palu low-rank factors into the tensors PaluAttention loads (see plan header for key layout)."""
+import hashlib
 import json
 import math
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -22,6 +24,11 @@ class PaluRuntime:
 class PaluConfig:
     rank_k: List[int]
     rank_v: List[int]
+    # Identifies the *weight set* these factors came from. The on-disk weight cache is keyed by
+    # name/shape/dtype only, so two dumps with the same per-layer ranks would otherwise silently
+    # share cache entries (and one would be loaded with the other's tensors). No default: every
+    # producer must say which weights it built.
+    cache_id: str
     runtime: PaluRuntime = field(default_factory=PaluRuntime)
     # Optional ttnn dtype override for the latent K/V caches (default: the model's KV_CACHE dtype,
     # bfp8). Kept as a plain object so this module stays ttnn-free.
@@ -90,6 +97,23 @@ def load_palu_dir(palu_dir: Path, n_layers: int, n_kv_heads: int, head_dim: int,
     return out
 
 
+def palu_dir_cache_id(palu_dir: Path) -> str:
+    """Filesystem-safe id for a Palu dump: directory name + 8 hex chars of a cheap content hash.
+
+    The hash covers the bytes of config.json (the head-wise ranks) and the name/size/mtime of every
+    shard -- enough to tell a re-generated dump from the one whose tensors are already cached,
+    without reading tens of GB.
+    """
+    palu_dir = Path(palu_dir)
+    h = hashlib.sha256()
+    h.update((palu_dir / "config.json").read_bytes())
+    for f in sorted(palu_dir.glob("*.safetensors")):
+        st = f.stat()
+        h.update(f"{f.name}:{st.st_size}:{st.st_mtime_ns}\n".encode())
+    name = re.sub(r"[^A-Za-z0-9._-]", "_", palu_dir.resolve().name)
+    return f"{name}-{h.hexdigest()[:8]}"
+
+
 def palu_layer_tensors(hf_attn: Dict[str, torch.Tensor], lr: LowRank, n_heads: int, n_kv_heads: int, head_dim: int):
     dim = hf_attn["q"].shape[1]
     r_k, r_v = lr.r_k, lr.r_v
@@ -142,4 +166,5 @@ def add_palu_to_state_dict(state_dict: dict, hf_dir: Path, palu_dir: Optional[Pa
             state_dict[f"layers.{i}.attention.palu.{name}"] = t
         rank_k.append(lr.r_k)
         rank_v.append(lr.r_v)
-    return PaluConfig(rank_k=rank_k, rank_v=rank_v)
+    cache_id = "identity" if palu_dir is None else palu_dir_cache_id(palu_dir)
+    return PaluConfig(rank_k=rank_k, rank_v=rank_v, cache_id=cache_id)

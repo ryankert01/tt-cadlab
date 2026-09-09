@@ -152,3 +152,77 @@ def test_load_palu_dir_pads_ranks_to_layer_max(tmp_path):
     x = torch.randn(3, DIM)
     ref = x @ tensors["model.layers.0.self_attn.k_proj.VT.weight"][8:12].T @ tensors["model.layers.0.self_attn.k_proj.U.1.weight"].T
     assert torch.allclose(x @ lr.k_VT[1].T @ lr.k_U[1].T, ref, atol=1e-5)
+
+
+# --- weight-set identity in cache names (Task 13) --------------------------------------------------
+
+# load_palu_dir rounds ranks up to a multiple of 32, so these use head_dim 32 (not the module's 16).
+HDR = 32
+
+
+def _tiny_hf_dir(tmp_path, n_layers=1):
+    """Minimal HF snapshot: one shard, no index, just the attention projections."""
+    from safetensors.torch import save_file
+    d = tmp_path / "hf"
+    d.mkdir()
+    t = {}
+    for i in range(n_layers):
+        p = f"model.layers.{i}.self_attn."
+        t[p + "q_proj.weight"] = torch.randn(NH * HDR, DIM)
+        t[p + "k_proj.weight"] = torch.randn(NKV * HDR, DIM)
+        t[p + "v_proj.weight"] = torch.randn(NKV * HDR, DIM)
+        t[p + "o_proj.weight"] = torch.randn(DIM, NH * HDR)
+    save_file(t, str(d / "model.safetensors"))
+    return d
+
+
+def _tiny_palu_dir(path, r=HDR, n_layers=1):
+    import json
+    from safetensors.torch import save_file
+    path.mkdir(parents=True, exist_ok=True)
+    tensors, ranks = {}, {}
+    for i in range(n_layers):
+        key = f"model.layers.{i}.self_attn."
+        for proj in ("k_proj", "v_proj"):
+            tensors[key + proj + ".VT.weight"] = torch.randn(NKV * r, DIM)
+            for h in range(NKV):
+                tensors[key + proj + f".U.{h}.weight"] = torch.randn(HDR, r)
+            ranks[key + proj] = [r] * NKV
+    save_file(tensors, str(path / "palu_attn.safetensors"))
+    (path / "config.json").write_text(json.dumps({"head_wise_ranks": ranks}))
+    return path
+
+
+def test_cache_id_is_identity_without_a_palu_dir(tmp_path):
+    cfg = convert.add_palu_to_state_dict({}, _tiny_hf_dir(tmp_path), None, 1, NH, NKV, HDR)
+    assert cfg.cache_id == "identity"
+
+
+def test_cache_id_is_dirname_plus_content_hash(tmp_path):
+    import re
+    hf_dir = _tiny_hf_dir(tmp_path)
+    pd = _tiny_palu_dir(tmp_path / "my_dump_0.5")
+    cfg = convert.add_palu_to_state_dict({}, hf_dir, pd, 1, NH, NKV, HDR)
+    assert re.fullmatch(r"my_dump_0\.5-[0-9a-f]{8}", cfg.cache_id), cfg.cache_id
+    # stable across calls when nothing changed
+    again = convert.add_palu_to_state_dict({}, hf_dir, pd, 1, NH, NKV, HDR)
+    assert again.cache_id == cfg.cache_id
+
+
+def test_cache_id_changes_when_a_byte_of_config_json_changes(tmp_path):
+    hf_dir = _tiny_hf_dir(tmp_path)
+    pd = _tiny_palu_dir(tmp_path / "dump")
+    before = convert.add_palu_to_state_dict({}, hf_dir, pd, 1, NH, NKV, HDR).cache_id
+    cj = pd / "config.json"
+    cj.write_text(cj.read_text() + " ")          # one byte, still valid JSON
+    after = convert.add_palu_to_state_dict({}, hf_dir, pd, 1, NH, NKV, HDR).cache_id
+    assert after != before, f"{after} == {before}"
+    assert after.startswith("dump-")
+
+
+def test_cache_id_differs_between_two_dumps_with_the_same_ranks(tmp_path):
+    hf_dir = _tiny_hf_dir(tmp_path)
+    a = convert.add_palu_to_state_dict({}, hf_dir, _tiny_palu_dir(tmp_path / "a"), 1, NH, NKV, HDR)
+    b = convert.add_palu_to_state_dict({}, hf_dir, _tiny_palu_dir(tmp_path / "b"), 1, NH, NKV, HDR)
+    assert a.rank_k == b.rank_k and a.rank_v == b.rank_v
+    assert a.cache_id != b.cache_id

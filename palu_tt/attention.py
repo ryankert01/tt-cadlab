@@ -12,6 +12,18 @@ from models.tt_transformers.tt.model_config import OpGroup, TensorGroup, num_to_
 from models.tt_transformers.tt.rope import get_rot_mats
 
 
+def cache_tag(cache_id: str, r_k: int, r_v: int) -> str:
+    """Prefix for every Palu-specific weight-cache entry.
+
+    ttnn.as_tensor reuses an on-disk cache file whenever name/shape/dtype match -- it never looks at
+    the content -- so the ranks alone are not enough: two weight sets with the same per-layer ranks
+    (a re-generated calibration dump and the dump it replaced, say) would share entries and one
+    would silently load the other's tensors. PaluConfig.cache_id identifies the weight set.
+    """
+    assert isinstance(cache_id, str) and cache_id, f"PaluConfig.cache_id must be a non-empty string, got {cache_id!r}"
+    return f"palu_{cache_id}_rk{r_k}_rv{r_v}"
+
+
 class PaluAttention(LightweightModule):
     def __init__(self, mesh_device, tt_ccl, args, state_dict, weight_cache_path, layer_num, dtype,
                  transformation_mats, configuration, paged_attention_config=None, use_paged_kv_cache=False,
@@ -85,7 +97,7 @@ class PaluAttention(LightweightModule):
         self.li_o_prefill_compute_kernel_cfg = fid(OpGroup.LI_O_PREFILL)
 
         layer_name = configuration.get_state_dict_prefix("Attention", layer_num)
-        tag = f"palu_rk{self.r_k}_rv{self.r_v}"
+        tag = cache_tag(self.palu.cache_id, self.r_k, self.r_v)
         # "_kstock2" marks the V-only fast path: same ranks, *different* K block in the fused QKV
         # weight (the full per-head K weight rebuilt from the factors, not the padded latent). The
         # on-disk weight cache is keyed by name/shape/dtype only, so without this an existing cache
