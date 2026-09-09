@@ -4,6 +4,7 @@ import pytest
 import torch
 import ttnn
 from loguru import logger
+from transformers.models.llama.modeling_llama import apply_rotary_pos_emb
 
 from models.common.utility_functions import comp_pcc
 from models.tt_transformers.tt.attention import Attention
@@ -44,7 +45,24 @@ def _to_torch(mesh_device, args, t):
     return ttnn.to_torch(t, mesh_composer=ttnn.ConcatMesh2dToTensor(mesh_device, dims=(1, 3), mesh_shape=args.cluster_shape))
 
 
-@pytest.mark.parametrize("palu_dir,pcc", [(None, 0.999), ("compressed/svd_r64", 0.99)], ids=["identity", "r64"])
+def _ref_k_cache(ref, tt, S):
+    """What the reference says the module's K cache should hold at position 0..S-1.
+
+    r_k < head_dim: the K latent, verbatim. r_k == head_dim (V-only fast path): the stock K cache,
+    i.e. RoPE'd K in tt_transformers' Meta interleaved head order (meta[2i] = hf[i],
+    meta[2i+1] = hf[hd/2+i], the transpose reverse_permute applies to the weight rows)."""
+    if tt.recon_k:
+        return ref.cache_k_lat[:, :, :S, :]
+    K = torch.einsum("bhtr,hdr->bhtd", ref.cache_k_lat[:, :, :S, :], ref.lr.k_U)
+    cos, sin = ref.rotary(K, torch.arange(S)[None])
+    _, K = apply_rotary_pos_emb(K, K, cos, sin)
+    hd = K.shape[-1]
+    return torch.stack([K[..., : hd // 2], K[..., hd // 2:]], dim=-1).flatten(-2)
+
+
+@pytest.mark.parametrize("palu_dir,pcc", [(None, 0.999), ("compressed/svd_r64", 0.99),
+                                          ("compressed/svd_rk128_rv64", 0.99)],
+                         ids=["identity", "r64", "rk128_rv64"])
 def test_prefill_matches_reference(mesh_device, palu_dir, pcc):
     args, sd, rope, tt_ccl, ref = _setup(mesh_device, palu_dir, batch=1, max_seq_len=SEQ)
     tt = _tt_attention(PaluAttention, mesh_device, args, sd, rope, tt_ccl)
@@ -57,11 +75,12 @@ def test_prefill_matches_reference(mesh_device, palu_dir, pcc):
     ok, msg = comp_pcc(y_ref, y, pcc)
     logger.info(msg)
     assert ok, msg
-    # latent caches hold what the reference holds
-    k_lat = ttnn.to_torch(tt.layer_past[0], mesh_composer=ttnn.ConcatMesh2dToTensor(mesh_device, dims=(0, 1), mesh_shape=args.cluster_shape))
-    k_lat = k_lat[:1, : args.n_kv_heads, :SEQ, :]
-    ok, msg = comp_pcc(ref.cache_k_lat, k_lat, 0.99)
-    assert ok, f"k latent cache {msg}"
+    # K cache holds what the reference holds (latent, or stock rotated K on the V-only fast path)
+    k_cache = ttnn.to_torch(tt.layer_past[0], mesh_composer=ttnn.ConcatMesh2dToTensor(mesh_device, dims=(0, 1), mesh_shape=args.cluster_shape))
+    k_cache = k_cache[:1, : args.n_kv_heads, :SEQ, :]
+    ok, msg = comp_pcc(_ref_k_cache(ref, tt, SEQ), k_cache, 0.99)
+    logger.info(f"k cache {msg}")
+    assert ok, f"k cache {msg}"
 
 
 def test_identity_prefill_equals_stock_attention(mesh_device):
@@ -86,7 +105,9 @@ def _decode_inputs(mesh_device, args, rope, x_bd, current_pos):
     return x_tt, pos_tt, rope.get_rot_mats(current_pos)
 
 
-@pytest.mark.parametrize("palu_dir,pcc", [(None, 0.999), ("compressed/svd_r64", 0.99)], ids=["identity", "r64"])
+@pytest.mark.parametrize("palu_dir,pcc", [(None, 0.999), ("compressed/svd_r64", 0.99),
+                                          ("compressed/svd_rk128_rv64", 0.99)],
+                         ids=["identity", "r64", "rk128_rv64"])
 def test_decode_after_prefill_matches_reference(mesh_device, palu_dir, pcc):
     batch = 32
     args, sd, rope, tt_ccl, ref = _setup(mesh_device, palu_dir, batch=batch, max_seq_len=SEQ)

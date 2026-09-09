@@ -59,6 +59,15 @@ class PaluAttention(LightweightModule):
         self.r_k = self.palu.rank_k[layer_num]
         self.r_v = self.palu.rank_v[layer_num]
         assert self.r_k % 32 == 0 and self.r_v % 32 == 0 and self.r_k <= self.head_dim and self.r_v <= self.head_dim
+        # r_k == head_dim (the V-only row and the identity row) buys nothing on the K side: the
+        # converter then puts the plain Meta-permuted wk in the fused QKV weight, so the "latent"
+        # already *is* K in the order the stock RoPE and SDPA want. Run the stock K path in that
+        # case -- no per-step reconstruction, no prefill-mode RoPE over the whole context.
+        self.recon_k = self.r_k < self.head_dim
+        # Same argument on the V side: at r_v == head_dim (only the identity row) the prefill
+        # up-projection is an identity matmul, and routing the latent through it costs a
+        # bfp8 -> bf16 -> bfp8 round trip that stock does not do.
+        self.recon_v = self.r_v < self.head_dim
 
         opt = self.args.decoders_optimizations
         self.activation_dtype = opt.get_tensor_dtype(decoder_id=layer_num, tensor=TensorGroup.ACTIVATION)
@@ -76,7 +85,10 @@ class PaluAttention(LightweightModule):
         self.li_o_prefill_compute_kernel_cfg = fid(OpGroup.LI_O_PREFILL)
 
         layer_name = configuration.get_state_dict_prefix("Attention", layer_num)
-        tag = f"palu_rk{self.r_k}_rv{self.r_v}"
+        # "_kstock" marks the V-only fast path: same ranks, *different* K block in the fused QKV
+        # weight (stock permuted wk, not the padded latent). The on-disk weight cache is keyed by
+        # name/shape/dtype only, so without this an existing cache would be silently reused.
+        tag = f"palu_rk{self.r_k}_rv{self.r_v}" + ("" if self.recon_k else "_kstock")
         if configuration.dummy_weights or weight_cache_path is None:
             cache_name = lambda _: None
         else:
@@ -200,29 +212,32 @@ class PaluAttention(LightweightModule):
             xqkv, num_heads=self.n_local_heads, num_kv_heads=self.n_local_kv_heads, transpose_k_heads=False, memory_config=ttnn.DRAM_MEMORY_CONFIG)
         ttnn.deallocate(xqkv)
 
-        # reconstruct full K and V from the padded latents ([1, nkv, S, 128] @ [1, nkv, 128, 128]) -------
-        k_full = ttnn.matmul(k_lat_pad, self.u_k_prefill, dtype=ttnn.bfloat16, memory_config=ttnn.DRAM_MEMORY_CONFIG,
-                             compute_kernel_config=self.compute_kernel_config_hifi2)
+        # reconstruct V (and K, unless the V-only fast path applies) from the padded latents ---------
+        # ([1, nkv, S, 128] @ [1, nkv, 128, 128]); at r_k == head_dim k_lat_pad is already full K.
+        k_pre = ttnn.matmul(k_lat_pad, self.u_k_prefill, dtype=ttnn.bfloat16, memory_config=ttnn.DRAM_MEMORY_CONFIG,
+                            compute_kernel_config=self.compute_kernel_config_hifi2) if self.recon_k else k_lat_pad
         v_full = ttnn.matmul(v_lat_pad, self.u_v_prefill, dtype=ttnn.bfloat16, memory_config=ttnn.DRAM_MEMORY_CONFIG,
-                             compute_kernel_config=self.compute_kernel_config_hifi2)
+                             compute_kernel_config=self.compute_kernel_config_hifi2) if self.recon_v else v_lat_pad
 
-        # RoPE on q and reconstructed K (stock prefill op) --------------------------------------------
+        # RoPE on q and K (stock prefill op) ------------------------------------------------------------
         q = ttnn.experimental.rotary_embedding_llama(q_pre, rot_mats[0], rot_mats[1], self.transformation_mats["prefill"], is_decode_mode=False)
-        k_rot = ttnn.experimental.rotary_embedding_llama(k_full, rot_mats[0], rot_mats[1], self.transformation_mats["prefill"], is_decode_mode=False)
+        k_rot = ttnn.experimental.rotary_embedding_llama(k_pre, rot_mats[0], rot_mats[1], self.transformation_mats["prefill"], is_decode_mode=False)
         ttnn.deallocate(q_pre)
-        ttnn.deallocate(k_full)
+        ttnn.deallocate(k_pre)          # the fast path's k_pre *is* k_lat_pad; the RoPE has consumed it
 
-        # latents -> caches ------------------------------------------------------------------------
+        # caches: latents, except the fast path's K cache which holds rotated full K like stock --------
         keys, values = self.layer_past
-        for lat_pad, r, cache in ((k_lat_pad, self.r_k, keys), (v_lat_pad, self.r_v, values)):
-            lat = lat_pad[:, :, :, :r] if r < self.head_dim else lat_pad
+        for src, r, cache in (((k_lat_pad if self.recon_k else k_rot), self.r_k, keys), (v_lat_pad, self.r_v, values)):
+            lat = src[:, :, :, :r] if r < self.head_dim else src
             lat = ttnn.typecast(lat, dtype=cache.dtype)
             if seq_len >= self.min_kv_prefill_shard_seqlen:
                 lat = ttnn.interleaved_to_sharded(lat, self._kv_prefill_shard_cfg(seq_len, r))
             ttnn.fill_cache(cache, lat, user_id % self.batch_size_per_device_group)
             ttnn.deallocate(lat)
-        ttnn.deallocate(k_lat_pad)
-        ttnn.deallocate(v_lat_pad)
+        if self.recon_k:
+            ttnn.deallocate(k_lat_pad)
+        if self.recon_v:
+            ttnn.deallocate(v_lat_pad)      # otherwise v_lat_pad *is* v_full, freed after the SDPA
 
         # SDPA (stock, with reconstructed K/V) -----------------------------------------------------------
         q8 = ttnn.typecast(q, dtype=self.activation_dtype or ttnn.bfloat8_b)
@@ -297,46 +312,59 @@ class PaluAttention(LightweightModule):
 
         # latents -> caches -----------------------------------------------------------------------------
         keys, values = self.layer_past
-        k_lat = self._slice_latent(k_lat_pad, self.r_k)
         v_lat = self._slice_latent(v_lat_pad, self.r_v)
-        ttnn.experimental.paged_update_cache(keys, k_lat, update_idxs_tensor=current_pos)
+        if self.recon_k:
+            k_new = self._slice_latent(k_lat_pad, self.r_k)
+        else:
+            # V-only fast path: the K "latent" is full K in Meta order, so this is the stock K path
+            # -- decode-mode RoPE straight into a head_dim cache.
+            k_new = ttnn.experimental.rotary_embedding_llama(
+                k_lat_pad, rot_mats[0], rot_mats[1], self.transformation_mats["decode"], is_decode_mode=True)
+            ttnn.deallocate(k_lat_pad)
+        ttnn.experimental.paged_update_cache(keys, k_new, update_idxs_tensor=current_pos)
         ttnn.experimental.paged_update_cache(values, v_lat, update_idxs_tensor=current_pos)
-        ttnn.deallocate(k_lat)
+        ttnn.deallocate(k_new)
         ttnn.deallocate(v_lat)
 
-        # K reconstruction (the naive Palu path; stage 2 fuses this) -------------------------------------
-        S = self._recon_len(current_pos)
-        k_lat_S = keys[:, :, :S, :] if S < self.max_seq_len else keys                     # [B, nkv, S, r_k]
-        v_lat_S = values[:, :, :S, :] if S < self.max_seq_len else values                 # [B, nkv, S, r_v]
-        k_rec = ttnn.matmul(k_lat_S, self.u_k_decode, dtype=ttnn.bfloat16, memory_config=ttnn.DRAM_MEMORY_CONFIG,
-                            compute_kernel_config=self.compute_kernel_config_hifi2)       # [B, nkv, S, 128]
-        if S < self.max_seq_len:
-            ttnn.deallocate(k_lat_S)
-        k_rec = ttnn.reshape(k_rec, (1, B * self.n_local_kv_heads, S, self.head_dim))
-        # A full-range ttnn slice is a no-op that returns the *same* tensor (see the "No-op check"
-        # in ttnn::slice), so at S == max_seq_len -- the case a decode at the end of the context
-        # window hits -- these alias the persistent prefill cos/sin and must not be deallocated.
-        sliced = S < self.max_seq_len
-        cos = self.cos_prefill[:, :, :S, :] if sliced else self.cos_prefill
-        sin = self.sin_prefill[:, :, :S, :] if sliced else self.sin_prefill
-        k_rot = ttnn.experimental.rotary_embedding_llama(k_rec, cos, sin, self.transformation_mats["prefill"], is_decode_mode=False)
-        ttnn.deallocate(k_rec)
-        if sliced:
-            ttnn.deallocate(cos)
-            ttnn.deallocate(sin)
-        k_rot = ttnn.reshape(k_rot, (B, self.n_local_kv_heads, S, self.head_dim))
-        k_rot8 = ttnn.typecast(k_rot, dtype=self.kv_cache_dtype)                          # same precision as a stock K cache
-        ttnn.deallocate(k_rot)
+        if self.recon_k:
+            # K reconstruction (the naive Palu path; stage 2 fuses this) ---------------------------------
+            S = self._recon_len(current_pos)
+            k_lat_S = keys[:, :, :S, :] if S < self.max_seq_len else keys                 # [B, nkv, S, r_k]
+            v_att = values[:, :, :S, :] if S < self.max_seq_len else values               # [B, nkv, S, r_v]
+            k_rec = ttnn.matmul(k_lat_S, self.u_k_decode, dtype=ttnn.bfloat16, memory_config=ttnn.DRAM_MEMORY_CONFIG,
+                                compute_kernel_config=self.compute_kernel_config_hifi2)   # [B, nkv, S, 128]
+            if S < self.max_seq_len:
+                ttnn.deallocate(k_lat_S)
+            k_rec = ttnn.reshape(k_rec, (1, B * self.n_local_kv_heads, S, self.head_dim))
+            # A full-range ttnn slice is a no-op that returns the *same* tensor (see the "No-op check"
+            # in ttnn::slice), so at S == max_seq_len -- the case a decode at the end of the context
+            # window hits -- these alias the persistent prefill cos/sin and must not be deallocated.
+            sliced = S < self.max_seq_len
+            cos = self.cos_prefill[:, :, :S, :] if sliced else self.cos_prefill
+            sin = self.sin_prefill[:, :, :S, :] if sliced else self.sin_prefill
+            k_rot = ttnn.experimental.rotary_embedding_llama(k_rec, cos, sin, self.transformation_mats["prefill"], is_decode_mode=False)
+            ttnn.deallocate(k_rec)
+            if sliced:
+                ttnn.deallocate(cos)
+                ttnn.deallocate(sin)
+            k_rot = ttnn.reshape(k_rot, (B, self.n_local_kv_heads, S, self.head_dim))
+            k_att = ttnn.typecast(k_rot, dtype=self.kv_cache_dtype)                       # same precision as a stock K cache
+            ttnn.deallocate(k_rot)
+        else:
+            # Both caches carry seq dim max_seq_len, which is what the MLA op's equal-seq-len check
+            # wants -- exactly how stock hands its full caches to SDPA decode.
+            S, k_att, v_att = self.max_seq_len, keys, values
 
-        # attention on reconstructed K and the V latent --------------------------------------------------
+        # attention on K (reconstructed, or the cache itself) and the V latent ---------------------------
         attn = ttnn.transformer.flash_multi_latent_attention_decode(
-            q, k_rot8, v_lat_S, head_dim_v=self.r_v, cur_pos_tensor=current_pos, scale=self.scale,
+            q, k_att, v_att, head_dim_v=self.r_v, cur_pos_tensor=current_pos, scale=self.scale,
             program_config=self.args.get_attn_sdpa_decode_program_config(None),
             compute_kernel_config=self.sdpa_decode_compute_kernel_cfg, memory_config=ttnn.DRAM_MEMORY_CONFIG)  # [1, B, nh, r_v]
         ttnn.deallocate(q)
-        ttnn.deallocate(k_rot8)
-        if S < self.max_seq_len:
-            ttnn.deallocate(v_lat_S)
+        if self.recon_k:
+            ttnn.deallocate(k_att)
+            if S < self.max_seq_len:
+                ttnn.deallocate(v_att)
         if self.r_v < self.head_dim:
             attn_p = ttnn.pad(attn, padding=[(0, 0), (0, 0), (0, 0), (0, self.head_dim - self.r_v)], value=0.0)
             ttnn.deallocate(attn)

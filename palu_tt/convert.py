@@ -103,6 +103,14 @@ def palu_layer_tensors(hf_attn: Dict[str, torch.Tensor], lr: LowRank, n_heads: i
         # K leaves the latent in Meta-permuted head order (RoPE convention of tt_transformers)
         u_k[h] = reverse_permute(lr.k_U[h], 1, head_dim, r_k).T
         u_v[h] = lr.v_U[h].T
+    if r_k == head_dim:
+        # V-only configuration (and the identity row): the K factorisation saves nothing, so
+        # PaluAttention runs the *stock* K path -- stock decode RoPE straight into a head_dim
+        # cache. That path needs the K block of the fused QKV weight to be the plain
+        # Meta-permuted wk, built exactly as tt_transformers' convert_hf_qkv_to_meta_format
+        # does for k_proj.weight. `u_k` above is then dead on device but still emitted so
+        # every rank produces the same tensor shapes.
+        wk_lat_pad = reverse_permute(hf_attn["k"].float(), n_kv_heads, n_kv_heads * head_dim, dim)
     wo = hf_attn["o"].float()                       # [dim, n_heads*hd]
     wo_fused = torch.zeros_like(wo)
     rep = n_heads // n_kv_heads
