@@ -23,6 +23,9 @@ class PaluConfig:
     rank_k: List[int]
     rank_v: List[int]
     runtime: PaluRuntime = field(default_factory=PaluRuntime)
+    # Optional ttnn dtype override for the latent K/V caches (default: the model's KV_CACHE dtype,
+    # bfp8). Kept as a plain object so this module stays ttnn-free.
+    latent_dtype: Optional[object] = None
 
 
 @dataclass

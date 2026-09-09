@@ -11,7 +11,9 @@ from palu_tt.attention import PaluAttention
 
 
 def build_model(mesh_device, kind: str, palu_dir: Optional[str] = None, max_batch_size: int = 1, max_seq_len: int = 2048,
-                n_layers: Optional[int] = None, dtype=ttnn.bfloat8_b):
+                n_layers: Optional[int] = None, dtype=ttnn.bfloat8_b, latent_dtype=None):
+    """latent_dtype: optional ttnn dtype for the Palu latent K/V caches (None = the model's KV cache
+    dtype, i.e. bfp8). Only meaningful for kind="palu"."""
     assert kind in ("stock", "palu")
     args = ModelArgs(mesh_device, instruct=True, max_batch_size=max_batch_size, max_seq_len=max_seq_len, cache_hf=False)
     args.use_qk_fused = False          # same RoPE path for both kinds
@@ -22,6 +24,7 @@ def build_model(mesh_device, kind: str, palu_dir: Optional[str] = None, max_batc
     if kind == "palu":
         cfg = convert.add_palu_to_state_dict(state_dict, hf.snapshot_dir(), palu_dir, args.n_layers,
                                              args.n_heads, args.n_kv_heads, args.head_dim)
+        cfg.latent_dtype = latent_dtype
         args.palu = cfg
     model = Transformer(args=args, mesh_device=mesh_device, dtype=dtype, state_dict=state_dict,
                         weight_cache_path=args.weight_cache_path(dtype),

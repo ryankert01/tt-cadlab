@@ -29,7 +29,10 @@ def prefill_hidden_states(args, model, ids: torch.Tensor) -> torch.Tensor:
     """ids [1, L] (L multiple of 128) -> pre-final-norm hidden states [L, dim]."""
     x, rot_g, rot_l, *_ = model.prepare_inputs_prefill(ids, start_pos=0)
     h = model.ttnn_prefill_forward(x, rot_mats_global=rot_g, rot_mats_local=rot_l, user_id=0, get_last_token=-1)
-    out = ttnn.to_torch(ttnn.get_device_tensors(h)[0]).float()[0, 0, : ids.shape[1], : args.dim]
+    # With get_last_token=-1 the returned tensor is the pre-final-norm residual, which between decoder
+    # layers is column-sharded across the mesh ([1, 1, S, dim/num_devices] per chip on N300), NOT
+    # replicated. concat_host_output stitches the shards back on the last dim (cluster_shape [1, 2]).
+    out = model.concat_host_output(h.cpu()).float()[0, 0, : ids.shape[1], : args.dim]
     ttnn.deallocate(h)
     return out
 
