@@ -27,23 +27,50 @@ def test_identity_lowrank_reproduces_stock_k_and_v():
 
 
 def test_full_rank_k_emits_stock_permuted_wk():
-    """r_k == head_dim (identity row and any Palu dump with rank 128): the K block must be the
-    stock permuted wk, exactly as convert_hf_qkv_to_meta_format builds it for k_proj.weight."""
+    """r_k == head_dim with a factorisation that is genuinely full rank (identity row, or a Palu
+    dump whose every head rank is 128): U_h @ VT_h reproduces the head's K weight, so the K block
+    must come out as the stock permuted wk, exactly as convert_hf_qkv_to_meta_format builds it for
+    k_proj.weight."""
     w = _hf_attn()
     r_v = 8
+    # non-identity but exact: U_h random invertible, VT_h = U_h^-1 @ wk_h  ->  U_h @ VT_h == wk_h
+    k_U = torch.randn(NKV, HD, HD).double() + 3 * torch.eye(HD).double()
+    wk_heads = w["k"].double().reshape(NKV, HD, DIM)
+    k_VT = torch.linalg.solve(k_U, wk_heads)
     lr = convert.LowRank(
-        k_VT=torch.randn(NKV, HD, DIM), k_U=torch.randn(NKV, HD, HD),      # full-rank, non-identity
+        k_VT=k_VT.float(), k_U=k_U.float(),
         v_VT=torch.randn(NKV, r_v, DIM), v_U=torch.randn(NKV, HD, r_v),
     )
     t = convert.palu_layer_tensors(w, lr, NH, NKV, HD)
     assert lr.r_k == HD
-    assert torch.allclose(t["wk_lat_pad"], reverse_permute(w["k"], NKV, NKV * HD, DIM), atol=1e-6)
+    assert torch.allclose(t["wk_lat_pad"], reverse_permute(w["k"], NKV, NKV * HD, DIM), atol=1e-4)
     assert t["u_k"].shape == (NKV, HD, HD)   # still emitted so device shapes stay uniform
     # the V side is untouched by the fast path
     x = torch.randn(5, DIM)
     lat_v = x @ t["wv_lat_pad"].T
     for h in range(NKV):
         assert torch.allclose(lat_v[:, h * HD:h * HD + r_v], x @ lr.v_VT[h].T, atol=1e-5)
+
+
+def test_padded_full_rank_k_uses_the_factors_not_the_original_wk():
+    """r_k == head_dim can also mean "head-wise ranks zero-padded up to head_dim" (load_palu_dir
+    rounds the layer max rank up to a multiple of 32, so a dump whose max head rank is in
+    (96, 128] lands here with genuinely truncating factors). The K block must then be the
+    factorised weight reverse_permute(U_h @ VT_h), never the original wk."""
+    w = _hf_attn()
+    r_true = 8
+    k_VT = torch.zeros(NKV, HD, DIM)
+    k_U = torch.zeros(NKV, HD, HD)
+    k_VT[:, :r_true] = torch.randn(NKV, r_true, DIM)      # padded to HD columns/rows -> r_k == HD
+    k_U[:, :, :r_true] = torch.randn(NKV, HD, r_true)
+    lr = convert.LowRank(k_VT=k_VT, k_U=k_U, v_VT=torch.randn(NKV, HD, DIM), v_U=torch.randn(NKV, HD, HD))
+    t = convert.palu_layer_tensors(w, lr, NH, NKV, HD)
+    assert lr.r_k == HD
+    for h in range(NKV):
+        blk = t["wk_lat_pad"][h * HD:(h + 1) * HD]
+        assert torch.allclose(blk, reverse_permute(k_U[h] @ k_VT[h], 1, HD, DIM), atol=1e-6)
+    # ... and emphatically not the uncompressed K weight (that would silently disable compression)
+    assert not torch.allclose(t["wk_lat_pad"], reverse_permute(w["k"], NKV, NKV * HD, DIM), atol=1e-3)
 
 
 def test_low_rank_k_block_is_padded_latent():

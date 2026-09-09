@@ -97,20 +97,24 @@ def palu_layer_tensors(hf_attn: Dict[str, torch.Tensor], lr: LowRank, n_heads: i
     wv_lat_pad = torch.zeros(n_kv_heads * head_dim, dim)
     u_k = torch.zeros(n_kv_heads, r_k, head_dim)
     u_v = torch.zeros(n_kv_heads, r_v, head_dim)
+    # r_k == head_dim (the V-only rows and the identity row): the K factorisation saves nothing, so
+    # PaluAttention runs the *stock* K path -- stock RoPE straight into a head_dim cache. That path
+    # needs the K block of the fused QKV weight to be the full Meta-permuted K weight of the head,
+    # so build it from the factors themselves: reverse_permute(U_h @ VT_h). When the factorisation
+    # really is full rank this equals the stock permuted wk block byte-for-byte (what
+    # tt_transformers' convert_hf_qkv_to_meta_format produces for k_proj.weight); when the ranks are
+    # head-wise and merely *padded* up to head_dim it stays the correct truncated weight instead of
+    # silently restoring uncompressed K. `u_k` is then dead on device but still emitted so every
+    # rank produces the same tensor shapes.
     for h in range(n_kv_heads):
-        wk_lat_pad[h * head_dim:h * head_dim + r_k] = lr.k_VT[h]
+        if r_k == head_dim:
+            wk_lat_pad[h * head_dim:(h + 1) * head_dim] = reverse_permute(lr.k_U[h] @ lr.k_VT[h], 1, head_dim, dim)
+        else:
+            wk_lat_pad[h * head_dim:h * head_dim + r_k] = lr.k_VT[h]
         wv_lat_pad[h * head_dim:h * head_dim + r_v] = lr.v_VT[h]
         # K leaves the latent in Meta-permuted head order (RoPE convention of tt_transformers)
         u_k[h] = reverse_permute(lr.k_U[h], 1, head_dim, r_k).T
         u_v[h] = lr.v_U[h].T
-    if r_k == head_dim:
-        # V-only configuration (and the identity row): the K factorisation saves nothing, so
-        # PaluAttention runs the *stock* K path -- stock decode RoPE straight into a head_dim
-        # cache. That path needs the K block of the fused QKV weight to be the plain
-        # Meta-permuted wk, built exactly as tt_transformers' convert_hf_qkv_to_meta_format
-        # does for k_proj.weight. `u_k` above is then dead on device but still emitted so
-        # every rank produces the same tensor shapes.
-        wk_lat_pad = reverse_permute(hf_attn["k"].float(), n_kv_heads, n_kv_heads * head_dim, dim)
     wo = hf_attn["o"].float()                       # [dim, n_heads*hd]
     wo_fused = torch.zeros_like(wo)
     rep = n_heads // n_kv_heads

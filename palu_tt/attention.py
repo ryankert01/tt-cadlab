@@ -85,10 +85,13 @@ class PaluAttention(LightweightModule):
         self.li_o_prefill_compute_kernel_cfg = fid(OpGroup.LI_O_PREFILL)
 
         layer_name = configuration.get_state_dict_prefix("Attention", layer_num)
-        # "_kstock" marks the V-only fast path: same ranks, *different* K block in the fused QKV
-        # weight (stock permuted wk, not the padded latent). The on-disk weight cache is keyed by
-        # name/shape/dtype only, so without this an existing cache would be silently reused.
-        tag = f"palu_rk{self.r_k}_rv{self.r_v}" + ("" if self.recon_k else "_kstock")
+        tag = f"palu_rk{self.r_k}_rv{self.r_v}"
+        # "_kstock2" marks the V-only fast path: same ranks, *different* K block in the fused QKV
+        # weight (the full per-head K weight rebuilt from the factors, not the padded latent). The
+        # on-disk weight cache is keyed by name/shape/dtype only, so without this an existing cache
+        # would be silently reused. It applies to the fused wqkv alone -- every other cached tensor
+        # (u_k, u_v, wo_fused, the latent caches) has identical content on both paths.
+        wqkv_tag = tag + ("" if self.recon_k else "_kstock2")
         if configuration.dummy_weights or weight_cache_path is None:
             cache_name = lambda _: None
         else:
@@ -111,7 +114,7 @@ class PaluAttention(LightweightModule):
             qkv_cat, dtype=self.wqkv_dtype, layout=ttnn.TILE_LAYOUT, device=mesh_device,
             memory_config=configuration.create_dram_sharded_mem_config(configuration.dim, configuration.qkv_size // self.num_devices),
             mesh_mapper=ttnn.ShardTensor2dMesh(mesh_device, dims=(2, 3), mesh_shape=configuration.cluster_shape),
-            cache_file_name=cache_name(f"{tag}_wqkv_sharded_2d"),
+            cache_file_name=cache_name(f"{wqkv_tag}_wqkv_sharded_2d"),
         )
 
         # --- up-projections -------------------------------------------------------------------------
