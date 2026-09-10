@@ -190,3 +190,49 @@ def test_decode_at_full_context_keeps_prefill_cos_sin(mesh_device):
         ys.append(_to_torch(mesh_device, args, y)[:, 0:1, :batch, : args.dim].view(batch, 1, args.dim))
     ok, msg = comp_pcc(ys[0], ys[1], 0.999)  # same input at the same position -> same output
     assert ok, msg
+
+
+def _cache_torch(mesh_device, args, m, i):
+    return ttnn.to_torch(m.layer_past[i], mesh_composer=ttnn.ConcatMesh2dToTensor(mesh_device, dims=(0, 1), mesh_shape=args.cluster_shape))
+
+
+@pytest.mark.parametrize("phase", [1, 2])
+@pytest.mark.parametrize("palu_dir", ["compressed/svd_r64", "compressed/svd_rk32_rv128"], ids=["r64", "rk32_rv128"])
+def test_fused_decode_matches_naive(mesh_device, palu_dir, phase):
+    """Stage 2 acceptance at the layer level: fused K path == stage-1 naive path (spec §7.2)."""
+    batch = 32
+    args, sd, rope, tt_ccl, _ = _setup(mesh_device, palu_dir, batch=batch, max_seq_len=SEQ)
+    args.palu.runtime.check = True
+    naive = _tt_attention(PaluAttention, mesh_device, args, sd, rope, tt_ccl)
+    args.palu.runtime.use_fused_k, args.palu.runtime.cs_recurrence = True, phase == 2
+    fusedm = _tt_attention(PaluAttention, mesh_device, args, sd, rope, tt_ccl)
+    assert not naive.use_fused_k and fusedm.use_fused_k and fusedm.phase2 == (phase == 2)
+    assert not hasattr(fusedm, "u_k_decode") and not hasattr(fusedm, "cos_prefill")
+    P = 128
+    x_pre = torch.randn(1, P, args.dim) * 0.05
+    rot = [rope.cos_matrix_prefill[:, :, :P, :], rope.sin_matrix_prefill[:, :, :P, :]]
+    for m in (naive, fusedm):
+        m.forward(args.prepare_residual_tensor_prefill(x_pre, force_replicated=True), None, rot_mats=rot, user_id=0, mode=Mode.PREFILL)
+    for step in range(6):
+        pos = P + step
+        x = torch.randn(batch, 1, args.dim) * 0.05
+        current_pos = torch.full((batch,), pos)
+        args.palu.runtime.recon_len = ((pos + 1 + 31) // 32) * 32
+        ys = []
+        for m in (naive, fusedm):
+            x_tt, pos_tt, rot_mats = _decode_inputs(mesh_device, args, rope, x, current_pos)
+            y = m.forward(x_tt, pos_tt, rot_mats=rot_mats, mode=Mode.DECODE)
+            ys.append(_to_torch(mesh_device, args, y)[:, 0:1, :batch, : args.dim].view(batch, 1, args.dim))
+        ok, msg = comp_pcc(ys[0], ys[1], 0.99)
+        logger.info(f"phase={phase} pos={pos} {msg}")
+        assert ok, f"step={step} {msg}"
+    for i in range(2):
+        assert torch.equal(_cache_torch(mesh_device, args, naive, i), _cache_torch(mesh_device, args, fusedm, i)), f"cache {i}"
+
+
+def test_fused_flag_is_ignored_on_the_v_only_row(mesh_device):
+    args, sd, rope, tt_ccl, _ = _setup(mesh_device, "compressed/svd_rk128_rv64", batch=1, max_seq_len=SEQ)
+    args.palu.runtime.use_fused_k = True
+    m = _tt_attention(PaluAttention, mesh_device, args, sd, rope, tt_ccl)
+    assert not m.recon_k and not m.use_fused_k and not hasattr(m, "w_rot")
+

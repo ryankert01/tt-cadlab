@@ -32,6 +32,10 @@ class PaluRuntime:
     # stage 2 Phase 2: chunk-relative rotation with the query advanced on core per chunk, so the
     # cos/sin table is read once per core instead of once per chunk. Needs use_fused_k.
     cs_recurrence: bool = False
+    # stage 2: override the fused op's K chunk (positions; power of two, multiple of 32). None = the
+    # op's own choice (largest power of two dividing max_seq_len, capped at 512), which is what the
+    # stock decode op uses too.
+    fused_k_chunk: Optional[int] = None
 
 
 @dataclass

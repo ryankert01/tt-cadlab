@@ -331,5 +331,6 @@ def test_convert_version_is_3_and_runtime_flags_default_off():
     assert convert.CONVERT_VERSION == 3
     rt = convert.PaluRuntime()
     assert rt.use_fused_k is False and rt.cs_recurrence is False
+    assert rt.fused_k_chunk is None
     cfg = convert.PaluConfig(rank_k=[32], rank_v=[64], cache_id="x")
     assert cfg.device_tables == {}

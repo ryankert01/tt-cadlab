@@ -9,6 +9,7 @@ from models.tt_transformers.tt.common import Mode
 from models.tt_transformers.tt.model_config import OpGroup, TensorGroup, num_to_corerange
 from models.tt_transformers.tt.rope import get_rot_mats
 
+from palu_tt import fused
 from palu_tt.convert import CONVERT_VERSION
 
 
@@ -25,6 +26,28 @@ def cache_tag(cache_id: str, r_k: int, r_v: int) -> str:
     """
     assert isinstance(cache_id, str) and cache_id, f"PaluConfig.cache_id must be a non-empty string, got {cache_id!r}"
     return f"palu_v{CONVERT_VERSION}_{cache_id}_rk{r_k}_rv{r_v}"
+
+
+def _fused_tables(configuration, mesh_device, chunk):
+    """Device tensors the fused kernel shares across layers: the [cos | sin] table (bf16) and, for
+    Phase 2, the R_{-chunk} step constants (fp32) and the 32x32 pair-rotation tile (bf16). Built once
+    per model and kept on PaluConfig.device_tables; a second layer with the same key reuses them."""
+    rt = configuration.palu.runtime
+    key = ("fused", id(mesh_device), configuration.max_seq_len, int(chunk), bool(rt.cs_recurrence))
+    tabs = configuration.palu.device_tables
+    if key not in tabs:
+        rep = ttnn.ReplicateTensorToMesh(mesh_device)
+        up = lambda t, dt: ttnn.from_torch(t, dtype=dt, layout=ttnn.TILE_LAYOUT, device=mesh_device,
+                                           memory_config=ttnn.DRAM_MEMORY_CONFIG, mesh_mapper=rep)
+        cos, sin = fused.cos_sin_tables(configuration.head_dim, configuration.max_seq_len, configuration.rope_theta,
+                                        configuration.rope_scaling)
+        cs = up(fused.cs_table(cos, sin, configuration.max_seq_len)[None, None], ttnn.bfloat16)
+        step = tm = None
+        if rt.cs_recurrence:
+            step = up(fused.rot_step_table(cos, sin, chunk)[None, None], ttnn.float32)
+            tm = up(fused.trans_mat_tile(), ttnn.bfloat16)
+        tabs[key] = (cs, step, tm)
+    return tabs[key]
 
 
 class PaluAttention(LightweightModule):
@@ -83,6 +106,12 @@ class PaluAttention(LightweightModule):
         # up-projection is an identity matmul, and routing the latent through it costs a
         # bfp8 -> bf16 -> bfp8 round trip that stock does not do.
         self.recon_v = self.r_v < self.head_dim
+
+        rt = self.palu.runtime
+        # stage 2: fused K reconstruction. Only where K really is low rank; on the V-only and identity
+        # rows the stock K path stays, flag or no flag.
+        self.use_fused_k = self.recon_k and bool(rt.use_fused_k)
+        self.phase2 = self.use_fused_k and bool(rt.cs_recurrence)
 
         opt = self.args.decoders_optimizations
         self.activation_dtype = opt.get_tensor_dtype(decoder_id=layer_num, tensor=TensorGroup.ACTIVATION)
@@ -147,14 +176,20 @@ class PaluAttention(LightweightModule):
             return t.unsqueeze(0)
         if self.recon_k:
             u_k = state_dict[f"{P}.u_k"]  # [n_kv, r_k, hd]
-            # decode: batched (non-broadcast) matmul needs matching batch dims -> replicate over batch
-            self.u_k_decode = ttnn.as_tensor(
-                u_k.unsqueeze(0).expand(B, -1, -1, -1).contiguous(), dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
-                device=mesh_device, memory_config=ttnn.DRAM_MEMORY_CONFIG, mesh_mapper=shard_heads,
-                cache_file_name=cache_name(f"{tag}_u_k_decode_b{B}"),
-            )
             self.u_k_prefill = ttnn.as_tensor(pad_u(u_k, self.r_k), dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT, device=mesh_device,
                                               memory_config=ttnn.DRAM_MEMORY_CONFIG, mesh_mapper=shard_heads, cache_file_name=cache_name(f"{tag}_u_k_prefill"))
+            if self.use_fused_k:
+                # decode: the kernel's packed rotation weight [1, n_kv, r_k, 2*hd] = [u_k | u_k T], head-sharded like u_k
+                self.w_rot = ttnn.as_tensor(
+                    state_dict[f"{P}.w_rot"].unsqueeze(0), dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT, device=mesh_device,
+                    memory_config=ttnn.DRAM_MEMORY_CONFIG, mesh_mapper=shard_heads, cache_file_name=cache_name(f"{tag}_w_rot"))
+            else:
+                # decode: batched (non-broadcast) matmul needs matching batch dims -> replicate over batch
+                self.u_k_decode = ttnn.as_tensor(
+                    u_k.unsqueeze(0).expand(B, -1, -1, -1).contiguous(), dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
+                    device=mesh_device, memory_config=ttnn.DRAM_MEMORY_CONFIG, mesh_mapper=shard_heads,
+                    cache_file_name=cache_name(f"{tag}_u_k_decode_b{B}"),
+                )
         if self.recon_v:
             u_v = state_dict[f"{P}.u_v"]  # [n_kv, r_v, hd]
             self.u_v_prefill = ttnn.as_tensor(pad_u(u_v, self.r_v), dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT, device=mesh_device,
@@ -182,11 +217,29 @@ class PaluAttention(LightweightModule):
                 cache_file_name=cache_name(f"{tag}_latcache_{nm}_{tuple(z.shape)}") if weight_cache_path else None,
             ))
 
-        # --- prefill-mode cos/sin for K reconstruction in decode ---------------------------------------
-        self.cos_prefill, self.sin_prefill = get_rot_mats(
-            head_dim=self.head_dim, device=mesh_device, seq_len=self.max_seq_len, theta=configuration.rope_theta,
-            rope_scaling=configuration.rope_scaling, datatype=ttnn.bfloat16, rot_mats_layout=ttnn.TILE_LAYOUT,
-        )
+        if self.recon_k and not self.use_fused_k:
+            # prefill-mode cos/sin for the naive K reconstruction in decode
+            self.cos_prefill, self.sin_prefill = get_rot_mats(
+                head_dim=self.head_dim, device=mesh_device, seq_len=self.max_seq_len, theta=configuration.rope_theta,
+                rope_scaling=configuration.rope_scaling, datatype=ttnn.bfloat16, rot_mats_layout=ttnn.TILE_LAYOUT,
+            )
+        if self.use_fused_k:
+            if self.phase2:
+                # Phase 2: an explicit override, else the model's stock decode config (k_chunk_size 0
+                # lets the op pick its own, up to 512)
+                pc = ttnn.SDPAProgramConfig(compute_with_storage_grid_size=(8, 8), exp_approx_mode=False,
+                                            q_chunk_size=0, k_chunk_size=int(rt.fused_k_chunk)) if rt.fused_k_chunk \
+                    else self.args.get_attn_sdpa_decode_program_config(None)
+            else:
+                # Phase 1: the op's streamed cos/sin table does not fit L1 above k_chunk_size 128
+                pc = ttnn.SDPAProgramConfig(compute_with_storage_grid_size=(8, 8), exp_approx_mode=False,
+                                            q_chunk_size=0, k_chunk_size=int(rt.fused_k_chunk or 128))
+            self.fused_program_config = pc
+            chunk = pc.k_chunk_size or fused.chunk_size(self.max_seq_len)   # what the op will actually use
+            self.cs_tab, self.rot_step, self.trans_mat = _fused_tables(configuration, mesh_device, chunk)
+            cfg = self.sdpa_decode_compute_kernel_cfg
+            # Phase 2 keeps the rotated query in fp32 and needs an fp32 dest; the HiFi4 preset has it
+            self.fused_compute_cfg = cfg if (not self.phase2 or cfg.fp32_dest_acc_en) else configuration.compute_kernel_config_hifi4
 
     # ------------------------------------------------------------------------------------------------
     def kv_bytes_per_token(self):
@@ -360,45 +413,54 @@ class PaluAttention(LightweightModule):
         ttnn.deallocate(k_new)
         ttnn.deallocate(v_lat)
 
-        if self.recon_k:
-            # K reconstruction (the naive Palu path; stage 2 fuses this) ---------------------------------
-            S = self._recon_len(current_pos)
-            k_lat_S = keys[:, :, :S, :] if S < self.max_seq_len else keys                 # [B, nkv, S, r_k]
-            v_att = values[:, :, :S, :] if S < self.max_seq_len else values               # [B, nkv, S, r_v]
-            k_rec = ttnn.matmul(k_lat_S, self.u_k_decode, dtype=ttnn.bfloat16, memory_config=ttnn.DRAM_MEMORY_CONFIG,
-                                compute_kernel_config=self.compute_kernel_config_hifi2)   # [B, nkv, S, 128]
-            if S < self.max_seq_len:
-                ttnn.deallocate(k_lat_S)
-            k_rec = ttnn.reshape(k_rec, (1, B * self.n_local_kv_heads, S, self.head_dim))
-            # A full-range ttnn slice is a no-op that returns the *same* tensor (see the "No-op check"
-            # in ttnn::slice), so at S == max_seq_len -- the case a decode at the end of the context
-            # window hits -- these alias the persistent prefill cos/sin and must not be deallocated.
-            sliced = S < self.max_seq_len
-            cos = self.cos_prefill[:, :, :S, :] if sliced else self.cos_prefill
-            sin = self.sin_prefill[:, :, :S, :] if sliced else self.sin_prefill
-            k_rot = ttnn.experimental.rotary_embedding_llama(k_rec, cos, sin, self.transformation_mats["prefill"], is_decode_mode=False)
-            ttnn.deallocate(k_rec)
-            if sliced:
-                ttnn.deallocate(cos)
-                ttnn.deallocate(sin)
-            k_rot = ttnn.reshape(k_rot, (B, self.n_local_kv_heads, S, self.head_dim))
-            k_att = ttnn.typecast(k_rot, dtype=self.kv_cache_dtype)                       # same precision as a stock K cache
-            ttnn.deallocate(k_rot)
+        if self.use_fused_k:
+            # stage 2: K rebuilt and rotated inside the kernel; the caches go in as they are
+            attn = ttnn.transformer.palu_sdpa_decode(
+                q, keys, self.w_rot, self.cs_tab, values, self.r_v, current_pos,
+                rot_step=self.rot_step, trans_mat=self.trans_mat, scale=self.scale,
+                program_config=self.fused_program_config, compute_kernel_config=self.fused_compute_cfg,
+                memory_config=ttnn.DRAM_MEMORY_CONFIG)                                        # [1, B, nh, r_v]
+            ttnn.deallocate(q)
         else:
-            # Both caches carry seq dim max_seq_len, which is what the MLA op's equal-seq-len check
-            # wants -- exactly how stock hands its full caches to SDPA decode.
-            S, k_att, v_att = self.max_seq_len, keys, values
+            if self.recon_k:
+                # K reconstruction (the naive Palu path; stage 2 fuses this) ---------------------------------
+                S = self._recon_len(current_pos)
+                k_lat_S = keys[:, :, :S, :] if S < self.max_seq_len else keys                 # [B, nkv, S, r_k]
+                v_att = values[:, :, :S, :] if S < self.max_seq_len else values               # [B, nkv, S, r_v]
+                k_rec = ttnn.matmul(k_lat_S, self.u_k_decode, dtype=ttnn.bfloat16, memory_config=ttnn.DRAM_MEMORY_CONFIG,
+                                    compute_kernel_config=self.compute_kernel_config_hifi2)   # [B, nkv, S, 128]
+                if S < self.max_seq_len:
+                    ttnn.deallocate(k_lat_S)
+                k_rec = ttnn.reshape(k_rec, (1, B * self.n_local_kv_heads, S, self.head_dim))
+                # A full-range ttnn slice is a no-op that returns the *same* tensor (see the "No-op check"
+                # in ttnn::slice), so at S == max_seq_len -- the case a decode at the end of the context
+                # window hits -- these alias the persistent prefill cos/sin and must not be deallocated.
+                sliced = S < self.max_seq_len
+                cos = self.cos_prefill[:, :, :S, :] if sliced else self.cos_prefill
+                sin = self.sin_prefill[:, :, :S, :] if sliced else self.sin_prefill
+                k_rot = ttnn.experimental.rotary_embedding_llama(k_rec, cos, sin, self.transformation_mats["prefill"], is_decode_mode=False)
+                ttnn.deallocate(k_rec)
+                if sliced:
+                    ttnn.deallocate(cos)
+                    ttnn.deallocate(sin)
+                k_rot = ttnn.reshape(k_rot, (B, self.n_local_kv_heads, S, self.head_dim))
+                k_att = ttnn.typecast(k_rot, dtype=self.kv_cache_dtype)                       # same precision as a stock K cache
+                ttnn.deallocate(k_rot)
+            else:
+                # Both caches carry seq dim max_seq_len, which is what the MLA op's equal-seq-len check
+                # wants -- exactly how stock hands its full caches to SDPA decode.
+                S, k_att, v_att = self.max_seq_len, keys, values
 
-        # attention on K (reconstructed, or the cache itself) and the V latent ---------------------------
-        attn = ttnn.transformer.flash_multi_latent_attention_decode(
-            q, k_att, v_att, head_dim_v=self.r_v, cur_pos_tensor=current_pos, scale=self.scale,
-            program_config=self.args.get_attn_sdpa_decode_program_config(None),
-            compute_kernel_config=self.sdpa_decode_compute_kernel_cfg, memory_config=ttnn.DRAM_MEMORY_CONFIG)  # [1, B, nh, r_v]
-        ttnn.deallocate(q)
-        if self.recon_k:
-            ttnn.deallocate(k_att)
-            if S < self.max_seq_len:
-                ttnn.deallocate(v_att)
+            # attention on K (reconstructed, or the cache itself) and the V latent ---------------------------
+            attn = ttnn.transformer.flash_multi_latent_attention_decode(
+                q, k_att, v_att, head_dim_v=self.r_v, cur_pos_tensor=current_pos, scale=self.scale,
+                program_config=self.args.get_attn_sdpa_decode_program_config(None),
+                compute_kernel_config=self.sdpa_decode_compute_kernel_cfg, memory_config=ttnn.DRAM_MEMORY_CONFIG)  # [1, B, nh, r_v]
+            ttnn.deallocate(q)
+            if self.recon_k:
+                ttnn.deallocate(k_att)
+                if S < self.max_seq_len:
+                    ttnn.deallocate(v_att)
         if self.r_v < self.head_dim:
             attn_p = ttnn.pad(attn, padding=[(0, 0), (0, 0), (0, 0), (0, self.head_dim - self.r_v)], value=0.0)
             ttnn.deallocate(attn)
