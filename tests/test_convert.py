@@ -316,3 +316,20 @@ def test_cache_id_differs_between_two_dumps_with_the_same_ranks(tmp_path):
     b = convert.add_palu_to_state_dict({}, hf_dir, _tiny_palu_dir(tmp_path / "b"), 1, NH, NKV, HDR)
     assert a.rank_k == b.rank_k and a.rank_v == b.rank_v
     assert a.cache_id != b.cache_id
+
+
+def test_layer_tensors_include_w_rot_built_from_u_k():
+    from palu_tt import fused
+    w = _hf_attn()
+    lr = convert.identity_lowrank(w, NKV, HD)
+    t = convert.palu_layer_tensors(w, lr, NH, NKV, HD)
+    assert t["w_rot"].shape == (NKV, HD, 2 * HD)
+    torch.testing.assert_close(t["w_rot"], fused.w_rot_from_u_k(t["u_k"]))
+
+
+def test_convert_version_is_3_and_runtime_flags_default_off():
+    assert convert.CONVERT_VERSION == 3
+    rt = convert.PaluRuntime()
+    assert rt.use_fused_k is False and rt.cs_recurrence is False
+    cfg = convert.PaluConfig(rank_k=[32], rank_v=[64], cache_id="x")
+    assert cfg.device_tables == {}

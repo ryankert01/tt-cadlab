@@ -11,19 +11,27 @@ import torch
 from safetensors import safe_open
 
 from models.tt_transformers.tt.load_checkpoints import reverse_permute
-from palu_tt import hf
+from palu_tt import fused, hf
 
 # Bumped whenever palu_layer_tensors changes the *content* of a tensor without changing its name,
 # shape, dtype or the weight-set id -- the on-disk ttnn weight cache keys on those alone, so an old
 # entry would otherwise be served for the new tensor. attention.cache_tag() puts it in every
 # Palu-specific cache file name. v2: full-rank V is collapsed into the QKV weight (see below).
-CONVERT_VERSION = 2
+# v3: adds w_rot = [u_k | u_k T] for the fused decode kernel (stage 2).
+CONVERT_VERSION = 3
 
 
 @dataclass
 class PaluRuntime:
     recon_len: Optional[int] = None
     check: bool = False
+    # stage 2: decode through ttnn.transformer.palu_sdpa_decode (K reconstructed and rotated on
+    # core) instead of matmul + prefill-mode RoPE + the MLA op. Only applies to layers with
+    # r_k < head_dim; the V-only rows keep the stock K path either way.
+    use_fused_k: bool = False
+    # stage 2 Phase 2: chunk-relative rotation with the query advanced on core per chunk, so the
+    # cos/sin table is read once per core instead of once per chunk. Needs use_fused_k.
+    cs_recurrence: bool = False
 
 
 @dataclass
@@ -39,6 +47,10 @@ class PaluConfig:
     # Optional ttnn dtype override for the latent K/V caches (default: the model's KV_CACHE dtype,
     # bfp8). Kept as a plain object so this module stays ttnn-free.
     latent_dtype: Optional[object] = None
+    # Device tensors shared by every layer of one model on the fused path (the [cos | sin] table,
+    # the Phase-2 step constants and transformation tile), keyed by attention.py; never compared
+    # or printed.
+    device_tables: dict = field(default_factory=dict, repr=False, compare=False)
 
 
 @dataclass
@@ -171,7 +183,8 @@ def palu_layer_tensors(hf_attn: Dict[str, torch.Tensor], lr: LowRank, n_heads: i
     for qh in range(n_heads):
         kv = qh // rep
         wo_fused[:, qh * head_dim:qh * head_dim + r_v] = wo[:, qh * head_dim:(qh + 1) * head_dim] @ u_v_eff[kv]
-    return {"wk_lat_pad": wk_lat_pad, "wv_lat_pad": wv_lat_pad, "u_k": u_k, "u_v": u_v, "wo_fused": wo_fused}
+    return {"wk_lat_pad": wk_lat_pad, "wv_lat_pad": wv_lat_pad, "u_k": u_k, "u_v": u_v, "wo_fused": wo_fused,
+            "w_rot": fused.w_rot_from_u_k(u_k)}
 
 
 def hf_attn_weights(hf_dir: Path, layer: int) -> Dict[str, torch.Tensor]:
