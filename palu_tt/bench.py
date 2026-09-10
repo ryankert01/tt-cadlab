@@ -130,8 +130,13 @@ def _decode_one(md, kind, palu_dir, ctx):
     return row
 
 
-def bench_decode(mesh, kind, palu_dir):
-    """Whole decode step at batch 32 for each context; the model is rebuilt per context (max_seq_len == context)."""
+def bench_decode(mesh, kind, palu_dir, stop_after_oom=False):
+    """Whole decode step at batch 32 for each context; the model is rebuilt per context (max_seq_len == context).
+
+    ``stop_after_oom``: break out of the context loop right after the first error cell instead of
+    trying every remaining (larger) context -- used by the context-scaling scan, where a failure at
+    one power-of-two context means every later (larger) one will fail too.
+    """
     rows = {}  # keys are ints here; json.dumps() below turns them into strings ("1024") -- Task 10's reader must expect that
     failed = False
     for ctx in CONTEXTS:
@@ -147,6 +152,8 @@ def bench_decode(mesh, kind, palu_dir):
             failed = True
         rows[ctx]["mesh_reopened_first"] = reopened
         gc.collect()  # ttnn deallocates device tensors on collection
+        if failed and stop_after_oom:
+            break
     return rows
 
 
@@ -249,24 +256,89 @@ def bench_prefill(mesh, kind, palu_dir):
     return rows
 
 
+# Llama-3.1-8B's max_position_embeddings. bench_maxctx probes powers of two up to here, then
+# bisects (multiples of 1024) between the last success and the first failure.
+MODEL_MAX_CTX = 131072
+
+
+def _maxctx_probe(mesh, kind, palu_dir, ctx):
+    """One build-and-teardown at ``max_seq_len=ctx``. ``(ok, kv_bytes, err_dict_or_None)``."""
+    try:
+        args, model, _ = pm.build_model(mesh.md, kind, palu_dir, max_batch_size=BATCH, max_seq_len=ctx, **FUSED)
+        kv = pm.kv_bytes_per_token_per_layer(model, args)
+        del model, args
+        gc.collect()
+        return True, kv, None
+    except Exception as e:
+        traceback.print_exc()  # keep the details in the log; the JSON cell only gets 200 chars
+        gc.collect()
+        return False, None, {"error": str(e)[:200], "phase": "build", "exc": type(e).__name__}
+
+
+def _is_oom(err):
+    """``err["error"]`` names an allocation failure vs. tt_transformers rejecting the value itself
+    (e.g. a hard-coded cap below the model's ``max_position_embeddings``) -- same heuristic
+    ``report._timing`` already uses to tell OOM cells apart from other build errors."""
+    return bool(err) and "Out of Memory" in str(err.get("error", ""))
+
+
 def bench_maxctx(mesh, kind, palu_dir):
-    """Largest max_seq_len (power of two from 1k) at batch 32 that allocates."""
-    ok, kv = None, None
-    for ctx in (1024, 2048, 4096, 8192, 16384, 32768):
-        try:
-            args, model, _ = pm.build_model(mesh.md, kind, palu_dir, max_batch_size=BATCH, max_seq_len=ctx,
-                                            **FUSED)
-            ok = ctx
-            kv = pm.kv_bytes_per_token_per_layer(model, args)
-            del model, args
-            gc.collect()
-        except Exception as e:
-            traceback.print_exc()
-            gc.collect()
-            return {"max_context_batch32": ok, "failed_at": ctx, "error": str(e)[:200],
-                    "phase": "build", "exc": type(e).__name__,
-                    "kv_bytes_per_token_per_layer_per_chip": kv if ok else None}
-    return {"max_context_batch32": ok, "kv_bytes_per_token_per_layer_per_chip": kv}
+    """Largest ``max_seq_len`` that allocates, at ``BATCH``.
+
+    Probes powers of two from 1k up to ``MODEL_MAX_CTX`` (Llama-3.1's ``max_position_embeddings``);
+    on the first failure, bisects on multiples of 1024 between the last success and the first
+    failure to pin the boundary down to 1k granularity. A failed build can leave the allocator
+    fragmented (see the ``Mesh`` class docstring), so every failure -- in the power-of-two scan or
+    during bisection -- is followed by ``mesh.reset()`` before the next probe.
+
+    ``limit`` is ``"model"`` when every power of two up to ``MODEL_MAX_CTX`` allocated (the true
+    architectural ceiling, not a resource limit) *or* when the failure that bounded the search was
+    not an out-of-memory error (tt_transformers refusing the value outright); otherwise ``"oom"``.
+    """
+    probes = []  # [ctx, ok] in probe order, power-of-two scan then bisection
+    ok_ctx, ok_kv = None, None
+    fail_ctx, fail_err = None, None
+    for ctx in (1024, 2048, 4096, 8192, 16384, 32768, 65536, MODEL_MAX_CTX):
+        success, kv, err = _maxctx_probe(mesh, kind, palu_dir, ctx)
+        probes.append([ctx, success])
+        if success:
+            ok_ctx, ok_kv = ctx, kv
+        else:
+            fail_ctx, fail_err = ctx, err
+            mesh.reset()
+            break
+    else:
+        result = {"max_context": ok_ctx, "batch": BATCH, "limit": "model", "failed_at": None,
+                  "error": None, "phase": None, "exc": None,
+                  "kv_bytes_per_token_per_layer_per_chip": ok_kv, "probes": probes}
+        if BATCH == 32:
+            result["max_context_batch32"] = ok_ctx
+        return result
+
+    if ok_ctx is not None:  # bisect (ok_ctx, fail_ctx) on multiples of 1024; skip if 1024 itself failed
+        lo, hi = ok_ctx, fail_ctx
+        while hi - lo > 1024:
+            mid = lo + round((hi - lo) / 2 / 1024) * 1024
+            mid = min(max(mid, lo + 1024), hi - 1024)
+            success, kv, err = _maxctx_probe(mesh, kind, palu_dir, mid)
+            probes.append([mid, success])
+            if success:
+                lo, ok_kv = mid, kv
+            else:
+                hi, fail_ctx, fail_err = mid, mid, err
+                mesh.reset()
+        ok_ctx = lo
+
+    result = {"max_context": ok_ctx, "batch": BATCH,
+              "limit": "model" if not _is_oom(fail_err) else "oom",
+              "failed_at": fail_ctx,
+              "error": fail_err["error"] if fail_err else None,
+              "phase": fail_err["phase"] if fail_err else None,
+              "exc": fail_err["exc"] if fail_err else None,
+              "kv_bytes_per_token_per_layer_per_chip": ok_kv, "probes": probes}
+    if BATCH == 32:
+        result["max_context_batch32"] = ok_ctx
+    return result
 
 
 def _out_name(what, row, batch):
@@ -294,6 +366,9 @@ def main():
                         "tt_transformers accepts any value <= 32. prefill is single-user by "
                         "definition and ignores this flag (always batch 1); the flag still "
                         "selects the output file name in every case.")
+    p.add_argument("--stop-after-oom", action="store_true", default=False,
+                   help="decode only: stop the context loop right after the first error cell "
+                        "instead of trying every remaining (larger) context.")
     a = p.parse_args()
     if a.kind == "stock" and a.fused != "off":
         p.error("--fused is a Palu-path flag; --kind stock has no K reconstruction to fuse")
@@ -304,8 +379,11 @@ def main():
     RAW.mkdir(parents=True, exist_ok=True)
     mesh = Mesh()
     try:
-        data = {"decode": bench_decode, "attention": bench_attention, "prefill": bench_prefill,
-                "maxctx": bench_maxctx}[a.what](mesh, a.kind, a.palu_dir)
+        if a.what == "decode":
+            data = bench_decode(mesh, a.kind, a.palu_dir, stop_after_oom=a.stop_after_oom)
+        else:
+            data = {"attention": bench_attention, "prefill": bench_prefill,
+                    "maxctx": bench_maxctx}[a.what](mesh, a.kind, a.palu_dir)
     finally:
         mesh.close()
     r = {"row": a.row, "kind": a.kind, "palu_dir": a.palu_dir, "what": a.what,

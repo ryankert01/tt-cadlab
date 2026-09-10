@@ -69,6 +69,11 @@ PREFILLS = ("2048", "8192")
 # (1, 2, 4, 8, 16, 32) to (1, 4, 16, 32) mid-run by the user; batches 2 and 8 were never measured.
 SWEEP_BATCHES = (1, 4, 16, 32)
 SWEEP_ROWS = ("baseline", "palu_full_50", "palu_full_50_fk2", "palu_full_70_fk2")
+# Stage 2 context scaling (Task 8): one request (batch 1) and a small serving batch (batch 8),
+# scaled out to the model's max_position_embeddings. Same four rows as the batch sweep.
+SCALING_BATCHES = (1, 8)
+SCALING_ROWS = SWEEP_ROWS
+SCALING_CONTEXTS = (1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072)
 HEAD_DIM = 128
 LAYERS = 32
 CHIPS = 2
@@ -277,6 +282,36 @@ def _sweep_display(raw, row, batch, ctx):
     return f"{_fmt(min_ms, 1)} ({round(batch * 1000 / min_ms)})"
 
 
+def _scaling_filename(what, row, batch):
+    """``bench_<what>_<row>_b<batch>.json``, except batch 32's unsuffixed name (unused by the
+    context-scaling scan itself, but kept so the helper matches ``_out_name``/``_sweep_filename``)."""
+    return f"bench_{what}_{row}" if batch == 32 else f"bench_{what}_{row}_b{batch}"
+
+
+def _scaling_decode_cell(raw, row, batch, ctx):
+    """Decode ``min_ms`` for one context-scaling cell, or ``None`` (missing file/context, or an
+    errored cell -- mirrors ``_sweep_cell``)."""
+    cell = _cell(_load(raw, _scaling_filename("decode", row, batch)), str(ctx))
+    return cell.get("min_ms") if cell and "min_ms" in cell else None
+
+
+def _scaling_decode_display(raw, row, batch, ctx):
+    """``"min ms"``, ``"OOM"`` for an error cell, ``"-"`` when the cell is simply missing."""
+    cell = _cell(_load(raw, _scaling_filename("decode", row, batch)), str(ctx))
+    if cell and "error" in cell:
+        return "OOM"
+    min_ms = _scaling_decode_cell(raw, row, batch, ctx)
+    return "-" if min_ms is None else _fmt(min_ms, 1)
+
+
+def _scaling_maxctx(raw, row, batch):
+    """``(max_context, limit)`` for one (row, batch) from its ``bench_maxctx_*`` JSON, or
+    ``("-", "-")`` when that file does not exist."""
+    data = (_load(raw, _scaling_filename("maxctx", row, batch)) or {}).get("data") or {}
+    mc = data.get("max_context")
+    return (mc if mc is not None else "-"), (data.get("limit") or "-")
+
+
 def _steps(files):
     """The decode-check step counts present, as a header string (mirrors ``_windows``)."""
     ss = sorted({f["steps"] for f in files if f and f.get("steps") is not None})
@@ -426,6 +461,33 @@ def main(raw=RAW, out=OUT, rows=ROWS):
             "Tokens per second is the whole batch's throughput at that step time; per-user "
             "latency is the step time itself."
         )
+
+        lines += ["", "## Context scaling: one request (batch 1) and a small serving batch (batch 8)", ""]
+        ctx_header = " | ".join(f"{c // 1024}k" for c in SCALING_CONTEXTS)
+        for b in SCALING_BATCHES:
+            lines += [
+                f"### Batch {b}",
+                "",
+                f"| row | max context | limit | {ctx_header} |",
+                "|---|---|---|" + "---|" * len(SCALING_CONTEXTS),
+            ]
+            for row in SCALING_ROWS:
+                mc, limit = _scaling_maxctx(raw, row, b)
+                cells = " | ".join(_scaling_decode_display(raw, row, b, c) for c in SCALING_CONTEXTS)
+                lines.append(f"| {row} | {mc} | {limit} | {cells} |")
+            lines.append("")
+        lines += [
+            "`max context` is the largest `max_seq_len` that allocated (bisected to 1k granularity); "
+            "`limit` is `oom` when a build failed there, `model` when it is the model's own "
+            f"`max_position_embeddings` ({SCALING_CONTEXTS[-1]}) or a non-memory build rejection. Decode "
+            "step cells are `min_ms`, `OOM` for a context whose build failed, `-` for a context not run "
+            "(the scan stops after the first failure).",
+            "",
+            "![Decode step vs context, batch 1](ctx_scaling_b1.png)",
+            "",
+            "![Decode step vs context, batch 8](ctx_scaling_b8.png)",
+            "",
+        ]
 
     lines += [
         "",

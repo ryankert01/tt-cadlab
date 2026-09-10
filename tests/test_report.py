@@ -282,3 +282,64 @@ def test_sweep_cell_and_display_distinguish_missing_from_errored(tmp_path):
 
     assert report._sweep_display(raw, "baseline", 1, "8192") == "OOM"
     assert report._sweep_display(raw, "baseline", 1, "1024") == "-"
+
+
+def test_context_scaling_table_renders_maxctx_and_an_oom_cell(tmp_path):
+    """Task 8: the batch-1/batch-8 tables read ``bench_decode_<row>_b<B>.json`` for the per-context
+    cells and ``bench_maxctx_<row>_b<B>.json`` for the max-context/limit columns."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    _write(raw, "bench_decode_baseline", {   # batch 32, unsuffixed: satisfies main()'s any-data guard
+        "row": "baseline", "kind": "stock", "palu_dir": None, "what": "decode", "batch": 32,
+        "data": {"1024": {"p50_ms": 38.0, "min_ms": 38.0, "iters": 10}},
+    })
+    _write(raw, "bench_decode_baseline_b1", {
+        "row": "baseline", "kind": "stock", "palu_dir": None, "what": "decode", "batch": 1,
+        "data": {"1024": {"p50_ms": 31.3, "min_ms": 31.0, "iters": 10},
+                 "2048": {"p50_ms": 31.8, "min_ms": 31.5, "iters": 10},
+                 "4096": {"error": "TT_FATAL ... Out of Memory: Not enough space",
+                          "phase": "build", "exc": "RuntimeError"}},
+    })
+    _write(raw, "bench_maxctx_baseline_b1", {
+        "row": "baseline", "kind": "stock", "palu_dir": None, "what": "maxctx", "batch": 1,
+        "data": {"max_context": 3072, "batch": 1, "limit": "oom", "failed_at": 4096,
+                 "error": "TT_FATAL ... Out of Memory: Not enough space", "phase": "build",
+                 "exc": "RuntimeError", "kv_bytes_per_token_per_layer_per_chip": 1088.0,
+                 "probes": [[1024, True], [2048, True], [4096, False], [3072, True]]},
+    })
+    out = tmp_path / "stage2.md"
+
+    md = report.main(raw=raw, out=out, rows=report.ROWS2)
+
+    assert out.read_text() == md
+    assert "## Context scaling: one request (batch 1) and a small serving batch (batch 8)" in md
+    assert "### Batch 1" in md and "### Batch 8" in md
+    assert "| baseline | 3072 | oom | 31.0 | 31.5 | OOM | - | - | - | - | - |" in md
+    # batch 8 was never run in this fixture: every cell dashes, no max context
+    assert "| baseline | - | - | - | - | - | - | - | - | - | - |" in md
+    assert "![Decode step vs context, batch 1](ctx_scaling_b1.png)" in md
+    assert "![Decode step vs context, batch 8](ctx_scaling_b8.png)" in md
+
+
+def test_scaling_helpers_distinguish_missing_from_errored_and_read_maxctx(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    _write(raw, "bench_decode_baseline_b1", {
+        "row": "baseline", "kind": "stock", "palu_dir": None, "what": "decode", "batch": 1,
+        "data": {"4096": {"error": "TT_FATAL ... Out of Memory: Not enough space",
+                          "phase": "build", "exc": "RuntimeError"}},
+    })
+    _write(raw, "bench_maxctx_baseline_b1", {
+        "row": "baseline", "kind": "stock", "palu_dir": None, "what": "maxctx", "batch": 1,
+        "data": {"max_context": 131072, "batch": 1, "limit": "model", "failed_at": None,
+                 "error": None, "phase": None, "exc": None,
+                 "kv_bytes_per_token_per_layer_per_chip": 42.0, "probes": []},
+    })
+
+    assert report._scaling_decode_cell(raw, "baseline", 1, "4096") is None       # errored
+    assert report._scaling_decode_cell(raw, "baseline", 1, "1024") is None       # missing context
+    assert report._scaling_decode_cell(raw, "baseline", 8, "4096") is None       # missing file
+    assert report._scaling_decode_display(raw, "baseline", 1, "4096") == "OOM"
+    assert report._scaling_decode_display(raw, "baseline", 1, "1024") == "-"
+    assert report._scaling_maxctx(raw, "baseline", 1) == (131072, "model")
+    assert report._scaling_maxctx(raw, "baseline", 8) == ("-", "-")

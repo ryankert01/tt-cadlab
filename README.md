@@ -111,6 +111,15 @@ Each harness writes one JSON to `docs/results/raw/`; `palu_tt.report` reads only
 render when none are present. The samples (`docs/results/raw/samples.json`) come from
 `palu_tt.generate.greedy` driven by a short ad-hoc runner, not a committed script.
 
+`--what maxctx` probes powers of two from 1k up to Llama-3.1's 131072 `max_position_embeddings`, then
+bisects on multiples of 1024 between the last success and the first failure to pin the boundary down
+to 1k granularity (`limit: "oom"` for an allocation failure, `"model"` for the architectural ceiling
+or a non-memory build rejection). `--stop-after-oom` on `--what decode` stops the context loop right
+after the first error cell instead of trying every remaining (larger) context -- used by the
+context-scaling scan (`docs/results/raw/bench_{decode,maxctx}_<row>_b{1,8}.json`). `python -m
+palu_tt.plots --batch 1 --batch 8` renders `docs/results/ctx_scaling_b{1,8}.png` (decode step vs
+context, one line per row) from those files.
+
 ## Tests
 
 ```bash
