@@ -290,9 +290,10 @@ def main():
                    help="override the fused op's K chunk (default: the op's own choice; Phase 1 is "
                         "pinned to 128 by PaluAttention).")
     p.add_argument("--batch", type=int, default=32,
-                   help="decode/attention batch size (default: 32). tt_transformers accepts any "
-                        "value <= 32; prefill/maxctx are unaffected (prefill is always batch 1, "
-                        "maxctx probes batch 32) but the flag still selects the output file name.")
+                   help="batch size for decode, attention and maxctx (default: 32). "
+                        "tt_transformers accepts any value <= 32. prefill is single-user by "
+                        "definition and ignores this flag (always batch 1); the flag still "
+                        "selects the output file name in every case.")
     a = p.parse_args()
     if a.kind == "stock" and a.fused != "off":
         p.error("--fused is a Palu-path flag; --kind stock has no K reconstruction to fuse")

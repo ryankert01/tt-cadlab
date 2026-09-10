@@ -79,10 +79,10 @@ python -m palu_tt.report                                                        
 
 `--fused p1|p2` switches `palu_tt.bench` onto the fused decode kernel (Phase 1 = streamed cos/sin,
 Phase 2 = chunk-relative rotation); it is a Palu-path flag and is rejected with `--kind stock`.
-`--fused-k-chunk N` overrides the op's K chunk. `--batch B` (default 32, decode/attention only)
-sweeps the batch size; the output file is `bench_<what>_<row>.json` at the default 32 and
-`bench_<what>_<row>_b<B>.json` otherwise, so the stage-1/2 files never move. The stage-2 rows are
-named `<stage-1 row>_fk1` / `_fk2`:
+`--fused-k-chunk N` overrides the op's K chunk. `--batch B` (default 32) sweeps the batch size for
+decode, attention and maxctx (prefill is single-user by definition and ignores it); the output file
+is `bench_<what>_<row>.json` at the default 32 and `bench_<what>_<row>_b<B>.json` otherwise, so the
+stage-1/2 files never move. The stage-2 rows are named `<stage-1 row>_fk1` / `_fk2`:
 
 ```bash
 scripts/run_device.sh python -m palu_tt.bench --row palu_full_50_fk2 --kind palu \
