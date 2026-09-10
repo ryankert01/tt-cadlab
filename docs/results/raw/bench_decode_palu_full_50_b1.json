@@ -8,27 +8,67 @@
  "batch": 1,
  "contexts": [
   1024,
+  2048,
   4096,
-  8192
+  8192,
+  16384,
+  32768,
+  65536,
+  131072
  ],
  "data": {
   "1024": {
-   "p50_ms": 34.17477454058826,
-   "min_ms": 34.05318385921419,
+   "p50_ms": 34.06595904380083,
+   "min_ms": 34.028299851343036,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 680.0,
+   "mesh_reopened_first": false
+  },
+  "2048": {
+   "p50_ms": 35.89559660758823,
+   "min_ms": 35.84802197292447,
    "iters": 10,
    "kv_bytes_per_token_per_layer_per_chip": 680.0,
    "mesh_reopened_first": false
   },
   "4096": {
-   "p50_ms": 39.13038189057261,
-   "min_ms": 39.027993101626635,
+   "p50_ms": 39.10098294727504,
+   "min_ms": 39.031518157571554,
    "iters": 10,
    "kv_bytes_per_token_per_layer_per_chip": 680.0,
    "mesh_reopened_first": false
   },
   "8192": {
-   "p50_ms": 47.26276802830398,
-   "min_ms": 47.131729079410434,
+   "p50_ms": 47.23517154343426,
+   "min_ms": 47.205622075125575,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 680.0,
+   "mesh_reopened_first": false
+  },
+  "16384": {
+   "p50_ms": 61.418294440954924,
+   "min_ms": 61.3096181768924,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 680.0,
+   "mesh_reopened_first": false
+  },
+  "32768": {
+   "p50_ms": 89.349634363316,
+   "min_ms": 89.29327595978975,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 680.0,
+   "mesh_reopened_first": false
+  },
+  "65536": {
+   "p50_ms": 145.2872419031337,
+   "min_ms": 145.18175181001425,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 680.0,
+   "mesh_reopened_first": false
+  },
+  "131072": {
+   "p50_ms": 256.2902164645493,
+   "min_ms": 256.0920149553567,
    "iters": 10,
    "kv_bytes_per_token_per_layer_per_chip": 680.0,
    "mesh_reopened_first": false

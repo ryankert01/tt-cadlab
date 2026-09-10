@@ -1,0 +1,69 @@
+{
+ "row": "palu_full_50",
+ "kind": "palu",
+ "palu_dir": "compressed/palu_full_0.5",
+ "what": "maxctx",
+ "fused": "off",
+ "fused_k_chunk": null,
+ "batch": 8,
+ "data": {
+  "max_context": 48128,
+  "batch": 8,
+  "limit": "oom",
+  "failed_at": 49152,
+  "error": "TT_FATAL @ /home/user01/tt-cadlab/.claude/worktrees/bright-elm-xum9/third_party/tt-metal/tt_metal/impl/allocator/bank_manager.cpp:462: false\ninfo:\nOut of Memory: Not enough space to allocate 8208384 B",
+  "phase": "build",
+  "exc": "RuntimeError",
+  "kv_bytes_per_token_per_layer_per_chip": 680.0,
+  "probes": [
+   [
+    1024,
+    true
+   ],
+   [
+    2048,
+    true
+   ],
+   [
+    4096,
+    true
+   ],
+   [
+    8192,
+    true
+   ],
+   [
+    16384,
+    true
+   ],
+   [
+    32768,
+    true
+   ],
+   [
+    65536,
+    false
+   ],
+   [
+    49152,
+    false
+   ],
+   [
+    40960,
+    true
+   ],
+   [
+    45056,
+    true
+   ],
+   [
+    47104,
+    true
+   ],
+   [
+    48128,
+    true
+   ]
+  ]
+ }
+}

@@ -1,0 +1,53 @@
+{
+ "row": "palu_full_70_fk2",
+ "kind": "palu",
+ "palu_dir": "compressed/palu_full_0.7",
+ "what": "maxctx",
+ "fused": "p2",
+ "fused_k_chunk": null,
+ "batch": 1,
+ "data": {
+  "max_context": 131072,
+  "batch": 1,
+  "limit": "model",
+  "failed_at": null,
+  "error": null,
+  "phase": null,
+  "exc": null,
+  "kv_bytes_per_token_per_layer_per_chip": 680.0,
+  "probes": [
+   [
+    1024,
+    true
+   ],
+   [
+    2048,
+    true
+   ],
+   [
+    4096,
+    true
+   ],
+   [
+    8192,
+    true
+   ],
+   [
+    16384,
+    true
+   ],
+   [
+    32768,
+    true
+   ],
+   [
+    65536,
+    true
+   ],
+   [
+    131072,
+    true
+   ]
+  ]
+ }
+}

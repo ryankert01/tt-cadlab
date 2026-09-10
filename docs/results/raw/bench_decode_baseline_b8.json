@@ -1,0 +1,62 @@
+{
+ "row": "baseline",
+ "kind": "stock",
+ "palu_dir": null,
+ "what": "decode",
+ "fused": "off",
+ "fused_k_chunk": null,
+ "batch": 8,
+ "contexts": [
+  1024,
+  2048,
+  4096,
+  8192,
+  16384,
+  32768,
+  65536,
+  131072
+ ],
+ "data": {
+  "1024": {
+   "p50_ms": 32.97190205194056,
+   "min_ms": 32.8843011520803,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 1088.0,
+   "mesh_reopened_first": false
+  },
+  "2048": {
+   "p50_ms": 34.62625737302005,
+   "min_ms": 34.527399111539125,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 1088.0,
+   "mesh_reopened_first": false
+  },
+  "4096": {
+   "p50_ms": 37.77236246969551,
+   "min_ms": 37.69961907528341,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 1088.0,
+   "mesh_reopened_first": false
+  },
+  "8192": {
+   "p50_ms": 43.680374044924974,
+   "min_ms": 43.58452185988426,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 1088.0,
+   "mesh_reopened_first": false
+  },
+  "16384": {
+   "p50_ms": 55.17992039676756,
+   "min_ms": 54.982337169349194,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 1088.0,
+   "mesh_reopened_first": false
+  },
+  "32768": {
+   "error": "TT_FATAL @ /home/user01/tt-cadlab/.claude/worktrees/bright-elm-xum9/third_party/tt-metal/tt_metal/impl/allocator/bank_manager.cpp:462: false\ninfo:\nOut of Memory: Not enough space to allocate 142606336",
+   "phase": "build",
+   "exc": "RuntimeError",
+   "mesh_reopened_first": false
+  }
+ }
+}

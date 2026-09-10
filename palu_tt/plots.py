@@ -58,6 +58,7 @@ def ctx_scaling_figure(raw_dir, batch, out_png, rows=SCALING_ROWS):
     raw_dir = Path(raw_dir)
     fig, ax = plt.subplots(figsize=(8, 5.5), dpi=150)
 
+    annotations = []  # (y_last, log_x_last, note, color) -- stacked after the loop to avoid overlap
     for row in rows:
         dec = _load(raw_dir, _fname("decode", row, batch))
         data = (dec or {}).get("data") or {}
@@ -80,7 +81,13 @@ def ctx_scaling_figure(raw_dir, batch, out_png, rows=SCALING_ROWS):
             note += " (OOM)"
         elif limit == "model":
             note += " (model limit)"
-        ax.annotate(note, (log_xs[-1], ys[-1]), textcoords="offset points", xytext=(6, 4),
+        annotations.append((ys[-1], log_xs[-1], note, color))
+
+    # Two lines can end almost on top of each other (e.g. the two fused rows hitting the same
+    # model limit); stack their labels by rank rather than at an identical offset so they never
+    # overlap, regardless of how close the underlying values are.
+    for i, (y_last, log_x_last, note, color) in enumerate(sorted(annotations, reverse=True)):
+        ax.annotate(note, (log_x_last, y_last), textcoords="offset points", xytext=(8, 4 + 14 * i),
                     fontsize=9, color=color)
 
     ax.set_xlabel("Context (tokens)")
