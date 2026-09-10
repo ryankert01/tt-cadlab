@@ -120,11 +120,26 @@ Using `c_10` means Q must arrive in TILE layout (it does from `rotary_embedding_
 the host asserts it. `c_12` is free because the zero tile only feeds the dynamic-chunk mask
 fusion, which the unpaged path never takes; the copied writer no longer produces it.
 
+**Annotations (final review).** `c_4` is sized `2 × (Rt·Wt + 1)` in Phase 2 (`w_rot_block = Rt·Wt +
+1`, doubled so the reader's per-head push always lands back on a block boundary -- see the CB-size
+`TT_FATAL` in `palu_sdpa_decode_program_factory.cpp`) rather than `Rt·Wt + 1`; Phase 1 drops the `+1`
+T tile since it never rotates the query. `c_12` is `4n` tiles (`n = PNHt·DHt`), not `2n`: the CB's
+push/pop granule is the `2n`-tile `[q~ | q~ T]` block, and `4n` keeps both the block being read and
+the block being written contiguous so an operand index never wraps the CB -- the same "whole number
+of reader push blocks" constraint the `TT_FATAL` above checks for `c_4`/`c_9`/`c_13` (reader-pushed
+CBs); `c_12` is compute-pushed but sized by the identical rule. Compute-operand reads (the CBs above
+that only the compute kernel indexes into, `c_1`/`c_9`/`c_13`'s resident form) do not need to avoid
+wrapping the way a reader's linear push does; only the push/pop granule matters.
+
 Extra L1 at c = 512, r_k = 96 is about 500 KB in Phase 2 on top of the stock footprint
 (Wormhole L1 is 1.5 MB); Phase 1's streamed table needs 512 KB by itself at c = 512, so
 Phase 1 runs at c = 128. The program factory fails loudly on overflow, so the fit is verified
 at first run; if Phase 2 does not fit at 8k, the fused op runs at c = 128 (`fused_k_chunk`)
 and the results include a stock row at c = 128 for comparison. The last-chunk masking code keeps reading the mask from `c_3` exactly as in stock.
+**Correction (final review):** measured Phase 2 L1 at c = 512, r_k = 96 is about **990 KB total**
+new/changed CBs, not the ~500 KB estimated here -- roughly 700 KB of new Palu CBs plus ~120 KB from
+`c_1` widening (bfp8 K in the stock op vs bf16 `K_rot` here). The estimate above was a lower bound on
+the new CBs alone and did not include the `c_1` dtype change; see `docs/results/stage2.md` §3.
 
 **Reader.** Per KV head: read `w_rot` once into `c_4`. Per chunk: read the latent
 chunk `[c, r_k]` into `c_9` and (Phase 1) the `cs` chunk `[c, 256]` into `c_13`. Phase 2
@@ -165,6 +180,14 @@ at 8k drift by well under a bf16 ulp. The query already carries its own position
 the stock decode RoPE, so the first state is a copy of Q rotated `k_chunk_start` times
 (cores that own a later slice of the context start at their first chunk). The QK matmul reads
 its in0 from this state instead of `c_0`; nothing downstream changes.
+
+**Caveat (final review):** "fp32" here describes the CB's tile format, not the multiply's actual
+precision. Wormhole's FPU unpacks fp32 operands into 19-bit Src registers -- about 11 mantissa bits
+per multiply, close to bf16 -- so each `palu_step_q` update is not full fp32 accuracy; keeping the
+*state* in fp32 tiles is what keeps rounding error from compounding additively across the 16 steps at
+8k, not per-step precision. The same caveat applies to the query step's matmuls in §4 (`palu_step_q`
+in `palu_compute_common.hpp`, which now carries this note) and is why the measured drift, not the
+tile dtype, is the thing to trust (Task 4; also `docs/results/stage2.md` §3).
 
 Cost per chunk on the query side: 4 tiny matmuls, 8 broadcast multiplies, 4 subtractions.
 The chunk length `c` is static for an unpaged cache (`fused.chunk_size(max_seq_len)`, or the
@@ -210,6 +233,12 @@ replaced by the query-side formulation at planning time.)
    × batch `{1, 32}` × Phase `{1, 2}`. Pass: PCC ≥ 0.99 against the reference and ≥ 0.995
    against the stock MLA op fed the host-rotated K. Batch-1 cases are the default smoke set
    so a run holds the board for seconds.
+   **Deviation (final review):** the implemented suite is 20 tests, not this full grid --
+   `r_k ∈ {32, 64, 96}` is only exercised at `S = 1024` (both phases, both batches); the long
+   contexts (`4096`, `8192`) run Phase 2 only, at `r_k = 64` (batch 1) and, at `8192`, `r_k = 32`
+   (batch 32). `r_k = 96` at `S ∈ {4096, 8192}` is not covered at the op level (see
+   `docs/results/stage2.md` §4 for how it is covered empirically instead). See §7.3 below for the
+   corresponding correction to the decode-fidelity step count.
 2. **Attention level, device** (`tests/test_attention_device.py`): one decode step on
    the same `PaluAttention` with the naive and the fused path; output PCC ≥ 0.99 and
    byte-identical caches.
@@ -217,6 +246,10 @@ replaced by the query-side formulation at planning time.)
    see the decode kernel, so the model-level check is `palu_tt.decode_check`: naive vs fused
    Palu model, same 512-token prompt, 64 teacher-forced decode steps, per-step logits PCC
    and argmax agreement. `palu_tt.bench` produces the fused timing rows.
+   **Correction (final review):** the shared prefill logit that seeds the 64 steps is
+   bit-identical on both paths (the fused kernel only replaces decode), so it was inflating
+   agreement by 1/64; PCC and argmax are now computed over the 63 *decode* steps only, and the
+   JSON's `"steps"` field records that count.
 4. **CPU**: `tests/test_convert.py` covers `w_rot` construction (`w_rot[:, :128] == u_k`,
    `w_rot[:, 128:] == u_k·T`, and that `(lat·u_k)·T == lat·w_rot[:, 128:]`) and the
    version bump.
@@ -228,6 +261,12 @@ Re-run the stage-1 harness rows for `palu_full_0.5`, `palu_full_0.7`, and the sy
 and batch 32; `decode_check` for the calibrated rows and `svd_r64`; perplexity, prefill,
 KV bytes and max context are unchanged from stage 1 by construction and are not re-measured. Results go to `docs/results/stage2.md`
 with raw JSON in `docs/results/raw/`, rendered by the existing `report.py`.
+**Correction (final review):** perplexity and prefill hold *by construction* (the fused kernel only
+changes decode), but KV bytes and max context turned out not to always be stage-1's numbers — two
+rows were re-probed at 16k and the reconstruction-scratch ceiling stage 1 predicted was found to have
+moved, not disappeared (`docs/results/stage2.md` §4). The rule actually implemented is: KV bytes and
+max context are inherited from the base row unless the row has its own `bench_maxctx_*` probe, in
+which case that measurement wins.
 
 ## 9. Risks
 

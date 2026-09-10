@@ -3,8 +3,8 @@
  "palu_dir": "compressed/svd_r64",
  "fused": "p2",
  "fused_k_chunk": null,
- "steps": 64,
- "pcc_mean": 0.9985682492422021,
+ "steps": 63,
+ "pcc_mean": 0.9985455230396973,
  "pcc_min": 0.9972446819746776,
- "argmax_agree": 0.953125
+ "argmax_agree": 0.9523809552192688
 }

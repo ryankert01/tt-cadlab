@@ -6,6 +6,12 @@ same next ``steps`` tokens one decode step at a time, and compares the per-step 
 and how often the argmax agrees. The two models are built one after the other (two 8B models do not
 both fit next to their caches).
 
+The prefill logit (index 0 of ``_logits``' output) is produced by the same prefill path on both the
+naive and fused model -- the fused kernel only replaces *decode* -- so it is bit-identical between
+runs and is excluded from the comparison; including it would silently inflate agreement by 1/steps.
+``steps`` in the JSON is the number of *decode* steps compared, i.e. ``--steps`` minus the one
+prefill step that seeds them.
+
 Usage: python -m palu_tt.decode_check --row palu_full_50_fk2 --palu-dir compressed/palu_full_0.5 --fused p2
 """
 import argparse
@@ -67,10 +73,14 @@ def main():
                         fused_k_chunk=a.fused_k_chunk)
     finally:
         dev.close(md)
-    pccs = [_pcc(naive[i], fused[i]) for i in range(a.steps)]
-    r = {"row": a.row, "palu_dir": a.palu_dir, "fused": a.fused, "fused_k_chunk": a.fused_k_chunk, "steps": a.steps,
+    # Index 0 of both stacks is the shared prefill logit (bit-identical on both paths, since the
+    # fused kernel only replaces decode) -- drop it so the comparison is over decode steps only.
+    naive_decode, fused_decode = naive[1:], fused[1:]
+    pccs = [_pcc(naive_decode[i], fused_decode[i]) for i in range(naive_decode.shape[0])]
+    r = {"row": a.row, "palu_dir": a.palu_dir, "fused": a.fused, "fused_k_chunk": a.fused_k_chunk,
+         "steps": naive_decode.shape[0],
          "pcc_mean": sum(pccs) / len(pccs), "pcc_min": min(pccs),
-         "argmax_agree": float((naive.argmax(-1) == fused.argmax(-1)).float().mean())}
+         "argmax_agree": float((naive_decode.argmax(-1) == fused_decode.argmax(-1)).float().mean())}
     (RAW / f"decode_check_{a.row}.json").write_text(json.dumps(r, indent=1))
     print(json.dumps(r))
 

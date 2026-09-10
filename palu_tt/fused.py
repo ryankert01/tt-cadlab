@@ -51,6 +51,7 @@ def w_rot_from_u_k(u_k: torch.Tensor) -> torch.Tensor:
 def chunk_size(seq_len: int) -> int:
     """The K chunk ttnn's unpaged flash decode picks for a cache of seq_len rows (sdpa_decode.cpp
     get_chunk_size): the largest power of two dividing seq_len, capped at MAX_CHUNK."""
+    assert seq_len > 0, f"chunk_size requires seq_len > 0, got {seq_len} (chunk 0 gives an identity rot_step and a silently wrong Phase 2)"
     c = seq_len & -seq_len
     return min(MAX_CHUNK, c)
 

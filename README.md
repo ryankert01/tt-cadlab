@@ -89,8 +89,10 @@ scripts/run_device.sh python -m palu_tt.bench --row palu_full_50_fk2 --kind palu
 
 Perplexity is measured through prefill windows and therefore cannot see the decode kernel at all,
 so decode-path fidelity has its own harness: `palu_tt.decode_check` runs the naive and the fused
-model over the same 512-token prompt plus 64 teacher-forced decode steps and records the per-step
-logit PCC and argmax agreement.
+model over the same 512-token prompt plus `--steps` (default 64) teacher-forced steps, then compares
+per-step logits over the *decode* steps only (63 by default) -- the shared prefill logit is
+bit-identical on both paths and is dropped rather than counted -- recording PCC and argmax
+agreement.
 
 ```bash
 scripts/run_device.sh python -m palu_tt.decode_check --row palu_full_50_fk2 \
@@ -98,9 +100,10 @@ scripts/run_device.sh python -m palu_tt.decode_check --row palu_full_50_fk2 \
 python -m palu_tt.report --stage 2                                    # -> docs/results/stage2.md
 ```
 
-A fused row's perplexity, prefill time, KV bytes and max context are its base row's by construction
-(the kernel changes decode only), so they are not re-measured; `report.py` reads them from the base
-row's JSONs.
+A fused row's perplexity and prefill time are its base row's by construction (the kernel changes
+decode only), so they are not re-measured; KV bytes and max context are inherited unless the row has
+its own probe (a `bench_maxctx_*` JSON), in which case that measurement wins. `report.py` reads the
+base row's JSONs for whatever a row does not measure itself.
 
 Each harness writes one JSON to `docs/results/raw/`; `palu_tt.report` reads only those and refuses to
 render when none are present. The samples (`docs/results/raw/samples.json`) come from

@@ -31,9 +31,16 @@ def cache_tag(cache_id: str, r_k: int, r_v: int) -> str:
 def _fused_tables(configuration, mesh_device, chunk):
     """Device tensors the fused kernel shares across layers: the [cos | sin] table (bf16) and, for
     Phase 2, the R_{-chunk} step constants (fp32) and the 32x32 pair-rotation tile (bf16). Built once
-    per model and kept on PaluConfig.device_tables; a second layer with the same key reuses them."""
+    per model and kept on PaluConfig.device_tables; a second layer with the same key reuses them.
+
+    The cache (and the ``id(mesh_device)`` term in the key) assumes it lives on the same
+    ``configuration``/model for its whole lifetime -- head_dim, rope_theta and rope_scaling are part
+    of the key precisely so a second, differently-configured model reusing the same mesh handle
+    cannot be served stale tables; it is not meant to survive a config change on the same model.
+    """
     rt = configuration.palu.runtime
-    key = ("fused", id(mesh_device), configuration.max_seq_len, int(chunk), bool(rt.cs_recurrence))
+    key = ("fused", id(mesh_device), configuration.max_seq_len, int(chunk), bool(rt.cs_recurrence),
+           configuration.head_dim, configuration.rope_theta, repr(configuration.rope_scaling))
     tabs = configuration.palu.device_tables
     if key not in tabs:
         rep = ttnn.ReplicateTensorToMesh(mesh_device)
@@ -225,17 +232,19 @@ class PaluAttention(LightweightModule):
             )
         if self.use_fused_k:
             if self.phase2:
-                # Phase 2: an explicit override, else the model's stock decode config (k_chunk_size 0
-                # lets the op pick its own, up to 512)
-                pc = ttnn.SDPAProgramConfig(compute_with_storage_grid_size=(8, 8), exp_approx_mode=False,
-                                            q_chunk_size=0, k_chunk_size=int(rt.fused_k_chunk)) if rt.fused_k_chunk \
-                    else self.args.get_attn_sdpa_decode_program_config(None)
+                # Phase 2: an explicit override, else the model's stock decode config's chunk (falling
+                # back to the op's own default if that config leaves it at 0 too)
+                chunk = int(rt.fused_k_chunk) if rt.fused_k_chunk else (
+                    self.args.get_attn_sdpa_decode_program_config(None).k_chunk_size or fused.chunk_size(self.max_seq_len))
             else:
                 # Phase 1: the op's streamed cos/sin table does not fit L1 above k_chunk_size 128
-                pc = ttnn.SDPAProgramConfig(compute_with_storage_grid_size=(8, 8), exp_approx_mode=False,
-                                            q_chunk_size=0, k_chunk_size=int(rt.fused_k_chunk or 128))
+                chunk = int(rt.fused_k_chunk or 128)
+            # Always pin the chunk explicitly (never 0) so the op takes the program-config override
+            # path instead of deriving its own chunk a second time -- a mismatch between this host
+            # derivation and the op's internal get_chunk_size would otherwise be silently wrong.
+            pc = ttnn.SDPAProgramConfig(compute_with_storage_grid_size=(8, 8), exp_approx_mode=False,
+                                        q_chunk_size=0, k_chunk_size=chunk)
             self.fused_program_config = pc
-            chunk = pc.k_chunk_size or fused.chunk_size(self.max_seq_len)   # what the op will actually use
             self.cs_tab, self.rot_step, self.trans_mat = _fused_tables(configuration, mesh_device, chunk)
             cfg = self.sdpa_decode_compute_kernel_cfg
             # Phase 2 keeps the rotated query in fp32 and needs an fp32 dest; the HiFi4 preset has it

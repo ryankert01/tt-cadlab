@@ -3,8 +3,8 @@
  "palu_dir": "compressed/palu_full_0.7",
  "fused": "p2",
  "fused_k_chunk": null,
- "steps": 64,
- "pcc_mean": 0.99935141054019,
+ "steps": 63,
+ "pcc_mean": 0.9993411154693994,
  "pcc_min": 0.9987806877819405,
- "argmax_agree": 0.984375
+ "argmax_agree": 0.9841269850730896
 }
