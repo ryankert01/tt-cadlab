@@ -1,7 +1,7 @@
 # Palu on Tenstorrent — Stage 2: Fused K-Reconstruction Decode Kernel
 
 Date: 2026-09-10
-Status: design approved in conversation, pending written review
+Status: approved 2026-09-10 ("Lgtm"); amended at planning time -- §3 (`rot_step`/`trans_mat`), §4 CB table, §5 rewritten (query-side rotation), §6-§9
 Depends on: stage 1 (`docs/superpowers/specs/2026-09-09-palu-tt-stage1-design.md`, merged at 44f24a9)
 
 ## 1. Goal and success bar
@@ -19,7 +19,8 @@ and rotation inside the attention kernel so the full K is never materialised.
 2. The calibrated rows (`palu_full_0.5`, `palu_full_0.7`) decode **no slower than
    stock** at 1k and 4k context, batch 32, and **run at 8k** where stock is out of
    memory.
-3. Perplexity of the fused rows matches the stage-1 device numbers within ±0.02.
+3. Decode fidelity: per-step logits PCC ≥ 0.99 (min over 64 teacher-forced steps) and
+   argmax agreement ≥ 0.95 between the fused and the naive Palu model.
 
 All numbers come from the stage-1 harness (`palu_tt.bench`, `palu_tt.eval_ppl`) with
 new rows, on the same device, same batch, same contexts.
@@ -46,8 +47,8 @@ A new op, copied from `sdpa_decode` (flash decode) and registered under
 
 ```
 palu_sdpa_decode(q, k_latent, w_rot, cs_tab, v_latent, head_dim_v, cur_pos_tensor,
-                 scale=None, program_config=None, compute_kernel_config=None,
-                 memory_config=None) -> [1, B, n_q_pad, head_dim_v_pad]
+                 rot_step=None, trans_mat=None, scale=None, program_config=None,
+                 compute_kernel_config=None, memory_config=None) -> [1, B, n_q, head_dim_v]
 ```
 
 | Tensor | Shape | dtype | Notes |
@@ -55,18 +56,21 @@ palu_sdpa_decode(q, k_latent, w_rot, cs_tab, v_latent, head_dim_v, cur_pos_tenso
 | `q` | `[1, B, n_q_pad, 128]` | bf16 | already RoPE'd, as for the stock op |
 | `k_latent` | `[B, n_kv, max_seq_len, r_k]` | bf16 | the stage-1 K latent cache, unchanged |
 | `w_rot` | `[1, n_kv, r_k, 256]` | bf16 | `[u_k \| u_k·T]` per KV head; `T` is the 128×128 interleaved-RoPE transformation matrix the stock `rotary_embedding_llama` op uses |
-| `cs_tab` | `[1, 1, max_seq_len, 256]` | bf16 | `[cos \| sin]` per position, Meta-interleaved layout (each frequency in two adjacent columns) |
+| `cs_tab` | `[1, 1, max_seq_len, 256]` | bf16 | `[cos \| sin]` per position, Meta-interleaved layout (each frequency in two adjacent columns); Phase 2 reads only rows 0..c-1 |
 | `v_latent` | `[B, n_kv, max_seq_len, r_v]` | bf16 | the stage-1 V latent cache, as consumed by `flash_multi_latent_attention_decode` today |
 | `cur_pos_tensor` | `[B]` | int32 | current position per batch row |
+| `rot_step` | `[1, 1, 32, 256]` | fp32 | optional; `[cos(c·f) \| sin(c·f)]` on every row, c = the op's K chunk. Passing it selects Phase 2. |
+| `trans_mat` | `[1, 1, 32, 32]` | bf16 | required with `rot_step`; the pair-rotation tile the RoPE op uses |
 
 Envelope (asserted on the host, `TT_FATAL` on the device op):
 
 - head_dim = 128, `r_k ∈ {32, 64, 96}`, `r_v ≤ 128`, batch ≤ 32
 - causal, non-paged, no attention mask tensor, no sink, no sliding window, no
   block padding, `cur_pos_tensor` required
-- `compute_kernel_config` with `fp32_dest_acc_en=True` (what tt_transformers uses
-  for SDPA decode at HiFi4); chunk size follows the stock dynamic rule (4 tiles with
-  fp32 dest)
+- `compute_kernel_config` with `fp32_dest_acc_en=True` for Phase 2 (the HiFi4 preset has
+  it); the K chunk follows the stock unpaged rule (largest power of two dividing the cache
+  length, capped at 512) unless the program config overrides it; the 16-row Q tile
+  optimisation is off (all Q-side tiles are full tiles)
 
 Semantics: for every valid position `p ≤ cur_pos`, `K[p] = RoPE_p(k_latent[p] · u_k)`
 and the output is `softmax(q·Kᵀ·scale) · v_latent`, exactly what stage 1 computes with
@@ -77,11 +81,14 @@ matmul + `rotary_embedding_llama` + `flash_multi_latent_attention_decode`.
 Per (batch, KV head) work item the compute kernel loops over K chunks of `c`
 positions (c = 128 at fp32 dest). Per chunk:
 
-1. `AB = lat_chunk @ w_rot` with `matmul_blocks` (inner dim `r_k/32` tiles, N = 8
-   tiles). `AB` is `[c, 256] = [A | Bm]` where `A = lat·u_k` and `Bm = lat·u_k·T`.
-2. `AB *= cs_chunk` in place (`mul_block_inplace`), giving `[A⊙cos | Bm⊙sin]`.
-3. For row tile `i` and column tile `j < 4`: `K_rot[i,j] = AB[i,j] + AB[i,j+4]`,
-   packed into the K slot (`c_1`) with `add_tiles` from one CB at two indices.
+1. Row tile by row tile: `AB_i = lat_i @ w_rot` (inner dim `r_k/32` tiles, 8 output tiles)
+   into a small ping-pong CB; `AB_i = [A_i | Bm_i]` where `A = lat·u_k` and `Bm = lat·u_k·T`.
+2. For row tile `i` and column tile `j < 4`, in one dest acquisition: `A[i,j]⊙cos[i,j]` and
+   `Bm[i,j]⊙sin[i,j]` with two FPU `mul_tiles`, summed with the SFPU `add_binary_tile`, and
+   packed into the K slot (`c_1`) at index `j·Sk_chunk_t + i` -- the column-major tile order the
+   stock QK matmul reads K in. `w_rot` is the matmul's in1 and must survive the chunk, so the
+   matmul is a copy of `matmul_blocks` without its final in1 pop.
+3. (merged into 2)
 4. Stock code, unchanged: QK matmul, on-core causal mask on the last chunk, online
    softmax, QK·V with the V latent, tree reduction across cores when a head spans
    several cores.
@@ -89,74 +96,101 @@ positions (c = 128 at fp32 dest). Per chunk:
 This reproduces the stock RoPE identity `out = x⊙cos + (x·T)⊙sin` with `x = lat·u_k`,
 using `(lat·u_k)·T = lat·(u_k·T)`.
 
-**Circular buffers.** The stock op uses all 32 indices; in the envelope above five
-are idle and four are reassigned. Sizes are at c = 128 in bf16 tiles (2 KB each):
+**Circular buffers.** The stock op uses all 32 indices. In the envelope above five are
+idle -- but `c_3` is *not* one of them: the writer generates the causal mask into `c_3` for
+the last chunk, and that stays. The idle five are the sink, page-table, row-major-Q,
+sliding-window and block-padding slots. Sizes are at c = 128 in tiles:
 
-| Slot | Stock use | Palu use | Tiles |
+| Slot | Stock use | Palu use | Tiles (c = 512, r_k = 96) |
 |---|---|---|---|
-| `c_1` | K chunk | receives `K_rot` from step 3 | unchanged |
-| `c_3` | attention mask | latent chunk `[c, r_k]` | `4 × r_k/32`, double buffered |
-| `c_4` | attention sink | `w_rot` for the current KV head, resident | `r_k/32 × 8` |
-| `c_9` | page table | `AB` | `4 × 8` |
-| `c_13` | sliding window | `cs_chunk` (Phase 1: bf16; Phase 2: fp32) | `4 × 8`, double buffered |
-| `c_14` | block padding | Phase 2 rotation constants `[cosΔ \| sinΔ]` | 8 |
+| `c_1` | K chunk | receives `K_rot` (bf16) | unchanged |
+| `c_3` | causal mask | causal mask (unchanged) | unchanged |
+| `c_4` | attention sink | `[u_k \| u_k·T]` for the current KV head (+ the T tile in Phase 2), resident (bf16) | `3 × 8 + 1` |
+| `c_9` | page table | latent chunk `[c, r_k]` (cache dtype, bfp8 by default), double buffered | `2 × 16 × 3` |
+| `c_10` | row-major Q (`tilize_q`) | one `AB` row block, ping-pong (bf16) | `2 × 8` |
+| `c_12` | zero scalar (mask fusion only) | Phase 2: rotated-query state `[q̃ \| q̃·T \| q̃']` (fp32) | `3 × PNHt × 4` |
+| `c_13` | sliding window | Phase 1: streamed `[cos \| sin]` chunk ×2; Phase 2: chunk-relative table rows 0..c-1, resident (bf16) | `16 × 8` (P2) |
+| `c_14` | block padding | Phase 2: `rot_step` (fp32) | 8 |
 
-Extra L1 at r_k = 96 is about 240 KB on top of the stock footprint (Wormhole L1 is
-1.5 MB); the program factory fails loudly on overflow, so this is verified at first
-run. The mask CB index inside the copied compute kernel becomes its own compile-time
-define so the last-chunk masking code never reads `c_3`.
+Using `c_10` means Q must arrive in TILE layout (it does from `rotary_embedding_llama`);
+the host asserts it. `c_12` is free because the zero tile only feeds the dynamic-chunk mask
+fusion, which the unpaged path never takes; the copied writer no longer produces it.
+
+Extra L1 at c = 512, r_k = 96 is about 500 KB in Phase 2 on top of the stock footprint
+(Wormhole L1 is 1.5 MB); Phase 1's streamed table needs 512 KB by itself at c = 512, so
+Phase 1 runs at c = 128. The program factory fails loudly on overflow, so the fit is verified
+at first run; if Phase 2 does not fit at 8k, the fused op runs at c = 128 (`fused_k_chunk`)
+and the results include a stock row at c = 128 for comparison. The last-chunk masking code keeps reading the mask from `c_3` exactly as in stock.
 
 **Reader.** Per KV head: read `w_rot` once into `c_4`. Per chunk: read the latent
-chunk `[c, r_k]` into `c_3` and (Phase 1) the `cs` chunk `[c, 256]` into `c_13`. The V
-path, writer, and reduction are untouched. DRAM traffic per chunk goes from
-`c × 128` (stock K) to `c × (r_k + 256)` in Phase 1 and `c × r_k` in Phase 2, so
-Phase 1 only wins at r_k = 32 and Phase 2 is what the success bar is judged on.
+chunk `[c, r_k]` into `c_9` and (Phase 1) the `cs` chunk `[c, 256]` into `c_13`. Phase 2
+reads the chunk-relative table (`cs_tab` rows 0..c-1) and `rot_step` once per core. The V
+path, writer, and reduction are untouched. K-side DRAM traffic per position goes from
+128 elements (stock K, bfp8: 136 B) to `r_k + 256` in Phase 1 (worse than stock) and
+`r_k` in Phase 2 (bfp8: 34/68/102 B at r_k 32/64/96), so Phase 1 is only a checkpoint and
+Phase 2 is what the success bar is judged on.
 
-**Compute.** The added work per chunk is one matmul with inner dim ≤ 3 tiles and
-32 output tiles, 32 multiplies, and 16 adds. With two work items per core at batch 32
-this hides behind DRAM time.
+**Compute.** Per K row tile: one matmul with inner dim ≤ 3 tiles and 8 output tiles, then 8
+multiplies and 4 SFPU adds. Phase 2 adds, per chunk, 4 single-tile matmuls, 8 broadcast
+multiplies and 4 subtractions on the query. Whether this hides behind DRAM time is what the
+attention-only benchmark measures.
 
-## 5. Phase 2: on-core cos/sin recurrence
+## 5. Phase 2: chunk-relative rotation, query advanced on core
 
-Phase 1 streams `cs_tab` per chunk. Phase 2 reads only the first chunk's rows and
-advances on core. For column `j` the chunk-to-chunk angle step `Δ_j = c·θ_j` is the
-same for every row, so the constants are eight tiles `[cosΔ | sinΔ]`, resident in
-`c_14`, built on the host from the same rope generator. Per chunk:
+Phase 1 streams `[cos | sin]` rows per chunk: 256 values per position, twice the size of
+the K it replaces, so it cannot win. Phase 2 removes that traffic with the relative-position
+property of RoPE. Two-dimensional rotations commute, so for a chunk starting at `s0` and a
+position `s0 + t` inside it
 
 ```
-cos' = cos·cosΔ − sin·sinΔ
-sin' = sin·cosΔ + cos·sinΔ
+q R_p · (k R_{s0+t})ᵀ = (q R_{p−s0}) · (k R_t)ᵀ
 ```
 
-Four multiplies, one subtract, one add per tile pair, computed in an fp32 dest and
-packed back into `c_13` as fp32 tiles. At 8k context that is 64 steps; the fp32 drift
-(~64 × 2⁻²⁴) vanishes under the bf16 rounding that already applies when `cs`
-multiplies `AB`. bf16 storage would not be accurate enough, which is why `c_13` is fp32
-in Phase 2 and why the envelope requires `fp32_dest_acc_en`. The `cs` chunk read in
-step 2 of §4 then uses a bf16→fp32 data-format reconfigure, exactly as the stock
-kernel does for its fp32 statistics CBs.
+The K side therefore uses the *chunk-relative* angles `t = 0..c−1`: the first `c` rows of the
+ordinary table, read once per core and resident in L1 (`c_13`). The chunk base moves to the
+query: `q̃_k = q R_{−k·c}`, advanced once per chunk by the constant rotation `R_{−c}`:
 
-The partial last chunk needs no special case: the recurrence advances by a full chunk
-regardless of how many rows are valid, and the causal mask zeroes the invalid rows.
+```
+q̃ ← q̃ ⊙ cos(c·f) − (q̃ · T) ⊙ sin(c·f)
+```
 
-Phase 2 is a compile-time kernel define (`PALU_CS_RECURRENCE`) selected from the
-program config, so Phase 1 remains the reference path and both are covered by the same
-tests. The reader in Phase 2 skips the `cs` read after the first chunk.
+`cos(c·f)` and `sin(c·f)` are one table row (`rot_step`, position `c`), applied as a row
+broadcast; `q̃ · T` is four single-tile matmuls with the same 32×32 pair-rotation tile the
+RoPE op uses (`trans_mat`). The state is `PNHt × 4` tiles kept in fp32 (`c_12`), so 16 steps
+at 8k drift by well under a bf16 ulp. The query already carries its own position `p` from
+the stock decode RoPE, so the first state is a copy of Q rotated `k_chunk_start` times
+(cores that own a later slice of the context start at their first chunk). The QK matmul reads
+its in0 from this state instead of `c_0`; nothing downstream changes.
+
+Cost per chunk on the query side: 4 tiny matmuls, 8 broadcast multiplies, 4 subtractions.
+The chunk length `c` is static for an unpaged cache (`fused.chunk_size(max_seq_len)`, or the
+program-config override), so the host builds `rot_step` for exactly that `c`.
+
+Phase 2 is a compile-time kernel define (`PALU_PHASE2`), selected by passing `rot_step` (and
+`trans_mat`) to the op, so Phase 1 remains the reference path and both are covered by the
+same tests. (The approved design described a K-side cos/sin recurrence instead; at the op's
+default chunk that state is 512 KB of fp32 tiles and ~100 SFPU ops per chunk, so it was
+replaced by the query-side formulation at planning time.)
 
 ## 6. Host integration
 
 - `palu_tt/convert.py`: emit `w_rot` per layer under
   `layers.{i}.attention.palu.w_rot` (built from `u_k` and the stock transformation
-  matrix), only when `r_k < head_dim`. `CONVERT_VERSION` becomes 3.
-- `palu_tt/convert.py` `PaluRuntime` gains `use_fused_k: bool = False` and
-  `cs_recurrence: bool = False` (Phase 2 switch).
+  matrix) for every rank, like `u_k` itself; the attention uploads it only on the fused
+  path. `CONVERT_VERSION` becomes 3. The builders (`w_rot`, `cs_tab`, `rot_step`, `trans_mat`, and an fp32
+  torch reference of the op) live in a new `palu_tt/fused.py`.
+- `palu_tt/convert.py` `PaluRuntime` gains `use_fused_k: bool = False`,
+  `cs_recurrence: bool = False` (Phase 2 switch) and `fused_k_chunk: Optional[int] = None`
+  (K-chunk override for the fused op).
 - `palu_tt/attention.py`: `forward_decode` takes a fused branch when `recon_k` and
   `runtime.use_fused_k` are both set. The branch skips the reconstruction matmul, the
   RoPE call, and the cache slices, and calls `palu_sdpa_decode` on `keys`, `values`,
-  the resident `w_rot`, and `cs_tab`. `cache_tag` gains an `_fk` suffix so the
-  weight cache never serves stage-1 dumps (see the stage-1 cache lessons). `cs_tab`
-  is built once per model from the existing rope generator and lives on device next
-  to `cos_prefill`. Prefill, the V path, and the naive path are unchanged; the naive
+  the resident `w_rot`, `cs_tab` and, in Phase 2, `rot_step` and `trans_mat`. No cache-tag suffix is needed: `w_rot` is a new
+  tensor name, every other cached tensor has identical content on both paths, and the
+  `CONVERT_VERSION` bump already separates the dumps from stage 1. `cs_tab` (and
+  `rot_step`/`trans_mat` in Phase 2) are built once per model from the existing rope generator and
+  shared by all layers through `PaluConfig.device_tables`; the fused path does not build
+  `cos_prefill`/`sin_prefill` or `u_k_decode`. Prefill, the V path, and the naive path are unchanged; the naive
   path remains the correctness reference.
 - `recon_len` is irrelevant on the fused path: the op reads `cur_pos_tensor` and
   stops at the last valid chunk.
@@ -169,14 +203,16 @@ tests. The reader in Phase 2 skips the `cs` read after the first chunk.
 1. **Op level, device** (`tests/test_palu_sdpa_device.py`): random latents, `w_rot`,
    `cs_tab`, `q`; fused op vs an fp32 torch reference that reconstructs K, applies
    RoPE, and runs attention. Grid: `r_k ∈ {32, 64, 96}` × context `{1024, 4096, 8192}`
-   × batch `{1, 32}` × Phase `{1, 2}`. Pass: PCC ≥ 0.99 (the bar the stock
-   flash-decode tests use). Batch-1 cases are the default smoke set so a run holds the
-   board for seconds.
+   × batch `{1, 32}` × Phase `{1, 2}`. Pass: PCC ≥ 0.99 against the reference and ≥ 0.995
+   against the stock MLA op fed the host-rotated K. Batch-1 cases are the default smoke set
+   so a run holds the board for seconds.
 2. **Attention level, device** (`tests/test_attention_device.py`): one decode step on
    the same `PaluAttention` with the naive and the fused path; output PCC ≥ 0.99 and
    byte-identical caches.
-3. **Model level**: `tests/test_ppl_harness.py` gains a fused row; `palu_tt.bench`
-   and `palu_tt.eval_ppl` produce the fused rows for the results table.
+3. **Model level**: perplexity in this study is measured through prefill windows and cannot
+   see the decode kernel, so the model-level check is `palu_tt.decode_check`: naive vs fused
+   Palu model, same 512-token prompt, 64 teacher-forced decode steps, per-step logits PCC
+   and argmax agreement. `palu_tt.bench` produces the fused timing rows.
 4. **CPU**: `tests/test_convert.py` covers `w_rot` construction (`w_rot[:, :128] == u_k`,
    `w_rot[:, 128:] == u_k·T`, and that `(lat·u_k)·T == lat·w_rot[:, 128:]`) and the
    version bump.
@@ -185,21 +221,24 @@ tests. The reader in Phase 2 skips the `cs` read after the first chunk.
 
 Re-run the stage-1 harness rows for `palu_full_0.5`, `palu_full_0.7`, and the synthetic
 `svd_r64`/`svd_r96` rows with `use_fused_k` on, Phase 1 and Phase 2, at contexts 1k/4k/8k
-and batch 32; device perplexity for the two calibrated rows; KV bytes and max context
-are unchanged from stage 1 and are not re-measured. Results go to `docs/results/stage2.md`
+and batch 32; `decode_check` for the calibrated rows and `svd_r64`; perplexity, prefill,
+KV bytes and max context are unchanged from stage 1 by construction and are not re-measured. Results go to `docs/results/stage2.md`
 with raw JSON in `docs/results/raw/`, rendered by the existing `report.py`.
 
 ## 9. Risks
 
 1. **CB reassignment breaks a stock path we still use.** Mitigated by a separate
    mask-CB define and host-side envelope asserts.
-2. **fp32 dest halves the chunk to 128 positions**, doubling per-chunk overhead. This
-   is stock HiFi4 behaviour; if the fused path is slower than stock at 1k the first
-   knob is HiFi2 with bf16 dest for Phase 1, measured against perplexity.
+2. **L1 at the default chunk (512).** Phase 2 adds ~500 KB of CBs at r_k = 96; if it does
+   not fit at 8k the fused op runs at c = 128 and the stock sensitivity row at c = 128 is
+   measured too, so the comparison stays honest.
 3. **Phase 1 slower than stock at r_k = 96.** Expected; both phases are reported and
    the success bar is judged on Phase 2.
-4. **Program-factory complexity.** The copy strips paged, sink, sliding-window, block
-   padding, and mcast branches up front so the diff stays reviewable.
+4. **Program-factory complexity.** The copy is kept *verbatim* rather than stripped: the
+   unused feature branches (paged, sink, mask tensor, sliding window, block padding, mcast)
+   stay compiled out behind their existing flags, the envelope is enforced by host asserts,
+   and `diff -r sdpa_decode palu_sdpa_decode` then shows only the fusion. (Decision taken at
+   planning time; the approved design said "strip up front".)
 5. **Fork logistics.** No push credentials on the box; the submodule branch is local
    until the fork exists.
 6. **Shared server.** All device work through the `device_free.sh` gate; smoke tests
