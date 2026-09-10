@@ -31,6 +31,15 @@ source scripts/env.sh         # TT_METAL_HOME, PYTHONPATH, MESH_DEVICE=N300, HF_
 
 The model weights are read from the user's read-only HF cache (`HF_HUB_OFFLINE=1`).
 
+### Stage 2: fused kernel (tt-metal submodule branch)
+
+The fused K-reconstruction decode op lives in the tt-metal submodule on branch `palu-sdpa`
+(cut from `v0.78.0`); the superproject pins that branch's commit. Until the fork
+`ryankert01/tt-metal` exists and the pointer is pushed there, a fresh clone cannot fetch the
+submodule commit -- the working environment on the shared box has it. After editing host-side
+C++ (program factory, op, bindings) run `scripts/build_ttnn.sh`; kernel-only edits are picked up
+at the next op run (JIT).
+
 ## Producing the weight sets
 
 Plain per-head truncated SVD of `k_proj`/`v_proj` (group size 1, no calibration), CPU, a few minutes
