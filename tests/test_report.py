@@ -240,3 +240,45 @@ def test_stage2_falls_back_to_the_base_row_for_prefill_and_leaves_stage1_alone(t
     })
     md = report.main(raw=raw, out=None, rows=report.ROWS2)
     assert "| svd_r64_fk1 | 443.3 / 442.3 | - |" in md
+
+
+def test_batch_sweep_table_renders_present_and_missing_cells(tmp_path):
+    """Task 7: the sweep table reads ``bench_decode_<row>_b<B>.json``; batch 32 has no suffix."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    _write(raw, "ppl_baseline", {"ppl": 7.25, "windows": 141, "row": "baseline",
+                                 "kind": "stock", "palu_dir": None})
+    _write(raw, "bench_decode_baseline", {
+        "row": "baseline", "kind": "stock", "palu_dir": None, "what": "decode", "batch": 32,
+        "data": {"1024": {"p50_ms": 12.0, "min_ms": 10.0, "iters": 10}},
+    })
+    _write(raw, "bench_decode_baseline_b4", {
+        "row": "baseline", "kind": "stock", "palu_dir": None, "what": "decode", "batch": 4,
+        "data": {"1024": {"p50_ms": 41.0, "min_ms": 40.0, "iters": 10}},
+    })
+    out = tmp_path / "stage2.md"
+
+    md = report.main(raw=raw, out=out, rows=report.ROWS2)
+
+    assert out.read_text() == md
+    assert "## Decode step by batch size" in md
+    # b=4 -> 40.0 ms, 4 * 1000 / 40.0 = 100 tok/s; b=1/2/8/16 have no file -> "-"; b=32 is read
+    # from the unsuffixed file (the same one the latency table uses)
+    assert "| baseline | - | - | 40.0 (100) | - | - | 10.0 (3200) |" in md
+
+
+def test_sweep_cell_and_display_distinguish_missing_from_errored(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    _write(raw, "bench_decode_baseline_b1", {
+        "row": "baseline", "kind": "stock", "palu_dir": None, "what": "decode", "batch": 1,
+        "data": {"8192": {"error": "TT_FATAL ... Out of Memory: Not enough space",
+                          "phase": "build", "exc": "RuntimeError"}},
+    })
+
+    assert report._sweep_cell(raw, "baseline", 1, "8192") is None  # errored -> None
+    assert report._sweep_cell(raw, "baseline", 1, "1024") is None  # missing context -> None
+    assert report._sweep_cell(raw, "baseline", 32, "1024") is None  # missing file entirely -> None
+
+    assert report._sweep_display(raw, "baseline", 1, "8192") == "OOM"
+    assert report._sweep_display(raw, "baseline", 1, "1024") == "-"

@@ -47,6 +47,9 @@ def _parse_contexts(s):
 
 # PALU_BENCH_CONTEXTS=1024,4096 shortens a smoke run; the default is what the results table uses.
 CONTEXTS = _parse_contexts(os.environ.get("PALU_BENCH_CONTEXTS"))
+
+# Stage 2 batch sweep: the batch size for this process, set once by ``main`` from ``--batch`` (same
+# pattern as ``FUSED``). Defaults to 32, which reproduces every stage-1/stage-2 row exactly.
 BATCH = 32
 
 # Stage 2: the fused-kernel runtime flags for this process, set once by ``main`` from ``--fused``
@@ -266,7 +269,15 @@ def bench_maxctx(mesh, kind, palu_dir):
     return {"max_context_batch32": ok, "kv_bytes_per_token_per_layer_per_chip": kv}
 
 
+def _out_name(what, row, batch):
+    """``bench_<what>_<row>.json`` at the default batch (32, unchanged stage-1/2 naming), else
+    ``bench_<what>_<row>_b<batch>.json``."""
+    suffix = "" if batch == 32 else f"_b{batch}"
+    return f"bench_{what}_{row}{suffix}.json"
+
+
 def main():
+    global BATCH
     p = argparse.ArgumentParser()
     p.add_argument("--row", required=True)
     p.add_argument("--kind", choices=["stock", "palu"], required=True)
@@ -278,10 +289,17 @@ def main():
     p.add_argument("--fused-k-chunk", type=int, default=None,
                    help="override the fused op's K chunk (default: the op's own choice; Phase 1 is "
                         "pinned to 128 by PaluAttention).")
+    p.add_argument("--batch", type=int, default=32,
+                   help="decode/attention batch size (default: 32). tt_transformers accepts any "
+                        "value <= 32; prefill/maxctx are unaffected (prefill is always batch 1, "
+                        "maxctx probes batch 32) but the flag still selects the output file name.")
     a = p.parse_args()
     if a.kind == "stock" and a.fused != "off":
         p.error("--fused is a Palu-path flag; --kind stock has no K reconstruction to fuse")
+    if not 1 <= a.batch <= 32:
+        p.error("--batch must be between 1 and 32 (tt_transformers's cap)")
     FUSED.update(use_fused_k=a.fused != "off", cs_recurrence=a.fused == "p2", fused_k_chunk=a.fused_k_chunk)
+    BATCH = a.batch
     RAW.mkdir(parents=True, exist_ok=True)
     mesh = Mesh()
     try:
@@ -290,11 +308,11 @@ def main():
     finally:
         mesh.close()
     r = {"row": a.row, "kind": a.kind, "palu_dir": a.palu_dir, "what": a.what,
-         "fused": a.fused, "fused_k_chunk": a.fused_k_chunk}
+         "fused": a.fused, "fused_k_chunk": a.fused_k_chunk, "batch": a.batch}
     if a.what in ("decode", "attention"):  # prefill/maxctx use their own fixed lengths, not CONTEXTS
         r["contexts"] = list(CONTEXTS)
     r["data"] = data
-    (RAW / f"bench_{a.what}_{a.row}.json").write_text(json.dumps(r, indent=1))
+    (RAW / _out_name(a.what, a.row, a.batch)).write_text(json.dumps(r, indent=1))
     print(json.dumps(r))
 
 

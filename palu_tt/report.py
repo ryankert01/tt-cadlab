@@ -64,6 +64,10 @@ ROWS2 = {
 }
 CONTEXTS = ("1024", "4096", "8192")
 PREFILLS = ("2048", "8192")
+# Stage 2 batch sweep (Task 7): decode step time at these batch sizes, for these rows. 32 is the
+# stage-1/2 default batch and therefore has no ``_b<B>`` suffix on its JSON file.
+SWEEP_BATCHES = (1, 2, 4, 8, 16, 32)
+SWEEP_ROWS = ("baseline", "palu_full_50", "palu_full_50_fk2", "palu_full_70_fk2")
 HEAD_DIM = 128
 LAYERS = 32
 CHIPS = 2
@@ -245,6 +249,33 @@ def _fidelity(chk):
     return f"{chk['pcc_min']:.4f} / {chk['pcc_mean']:.4f}", f"{chk['argmax_agree']:.3f}"
 
 
+def _sweep_filename(row, batch):
+    """``bench_decode_<row>.json`` at batch 32 (the default, unsuffixed file), else ``_b<batch>``."""
+    return f"bench_decode_{row}" if batch == 32 else f"bench_decode_{row}_b{batch}"
+
+
+def _sweep_cell(raw, row, batch, ctx):
+    """Decode ``min_ms`` for one (row, batch, ctx) sweep cell.
+
+    ``None`` when the file does not exist, the context is missing, or the cell errored (an errored
+    cell has no ``min_ms``) -- the caller distinguishes "missing" from "errored" itself, by looking
+    at the same raw cell for an ``"error"`` key.
+    """
+    cell = _cell(_load(raw, _sweep_filename(row, batch)), str(ctx))
+    return cell.get("min_ms") if cell and "min_ms" in cell else None
+
+
+def _sweep_display(raw, row, batch, ctx):
+    """``"min ms (tok/s)"``, ``"OOM"`` for an error cell, ``"-"`` when the cell is simply missing."""
+    cell = _cell(_load(raw, _sweep_filename(row, batch)), str(ctx))
+    if cell and "error" in cell:
+        return "OOM"
+    min_ms = _sweep_cell(raw, row, batch, ctx)
+    if min_ms is None:
+        return "-"
+    return f"{_fmt(min_ms, 1)} ({round(batch * 1000 / min_ms)})"
+
+
 def _steps(files):
     """The decode-check step counts present, as a header string (mirrors ``_windows``)."""
     ss = sorted({f["steps"] for f in files if f and f.get("steps") is not None})
@@ -376,6 +407,24 @@ def main(raw=RAW, out=OUT, rows=ROWS):
             if stage2:
                 cells += f" {_vs_stock(stock_dec, dec, ctx)} |"
             lines.append(cells)
+
+    if stage2:
+        lines += ["", "## Decode step by batch size", ""]
+        for ctx in CONTEXTS:
+            lines += [
+                f"### Context {ctx}",
+                "",
+                "| row | " + " | ".join(f"b={b}" for b in SWEEP_BATCHES) + " |",
+                "|---|" + "---|" * len(SWEEP_BATCHES),
+            ]
+            for row in SWEEP_ROWS:
+                cells = " | ".join(_sweep_display(raw, row, b, ctx) for b in SWEEP_BATCHES)
+                lines.append(f"| {row} | {cells} |")
+            lines.append("")
+        lines.append(
+            "Tokens per second is the whole batch's throughput at that step time; per-user "
+            "latency is the step time itself."
+        )
 
     lines += [
         "",

@@ -40,3 +40,13 @@ def test_time_defaults():
 ])
 def test_parse_contexts(env_value, expected):
     assert bench._parse_contexts(env_value) == expected
+
+
+@pytest.mark.parametrize("batch, expected", [
+    (32, "bench_decode_baseline.json"),  # default batch: unsuffixed, so stage-1/2 names don't move
+    (1, "bench_decode_baseline_b1.json"),
+    (4, "bench_decode_baseline_b4.json"),
+    (16, "bench_decode_baseline_b16.json"),
+])
+def test_out_name(batch, expected):
+    assert bench._out_name("decode", "baseline", batch) == expected
