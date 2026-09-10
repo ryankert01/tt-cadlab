@@ -158,6 +158,32 @@ latents are written to the cache (`fill_cache`). Prefill is compute-bound, so
 reconstructing V costs little and avoids `flash_mla_prefill`, which takes V only as
 a slice of K.
 
+### Full-rank fast paths (as built)
+
+A rank equal to `head_dim` is not a compression, and forcing it through the latent
+machinery costs latency (K) or correctness (V). Both sides therefore short-circuit:
+
+- **`r_k == head_dim` — stock K path.** The converter emits `reverse_permute(U_k · VT_k)`
+  as the K block of the fused QKV weight (built from the *factors*, so a dump whose
+  head-wise ranks were merely padded up to 128 stays truncated), and the module writes
+  RoPE'd K straight into a full-width cache with the stock decode-mode rotation. No
+  `latent @ U_k` matmul, no scratch, no prefill-mode RoPE over the window, no
+  `recon_len` dependence. This is what makes V-only compression free (section 8's
+  `r_k=128/r_v=64` row decodes at stock speed and runs at 8k, where stock does not
+  allocate).
+- **`r_v == head_dim` — V collapsed into the QKV weight.** On this path prefill feeds
+  the V block of the QKV output directly to SDPA, the cache stores that tensor as V,
+  and decode applies `wo_fused` — all of which are correct **only if `U_v == I`**. That
+  is true for the identity factorisation but false for any genuine full-rank SVD or
+  whitened factorisation, i.e. for most layers of a calibrated dump. The converter
+  therefore emits `U_v · VT_v` as the V block, `u_v = I` and `wo_fused = wo` whenever
+  `r_v == head_dim`, restoring the invariant. Violating it cost prefill PCC 0.05 and
+  device perplexities of 2433/3399 before it was found.
+
+Because both changes alter the *content* of tensors whose name, shape and dtype are
+unchanged, and ttnn's on-disk weight cache keys only on those, every Palu cache file
+name carries a converter version (`CONVERT_VERSION`) and a weight-set id.
+
 ### Risks and fallbacks
 
 - **MLA decode op with GQA.** Upstream exercises it with one KV head; we use 4 KV
@@ -203,10 +229,20 @@ pool), group size > 1, latent quantisation, tracing of the decode step (S varies
    converter shapes; permutation correctness; `wo_fused` equivalence (section 4).
 2. Device, attention block: `PaluAttention` decode and prefill vs `reference.py`
    for one layer with real ranks, PCC ≥ 0.99. First milestone; surfaces the MLA/GQA
-   and dtype risks.
+   and dtype risks. **As built**, the parametrisation must cover all four combinations
+   of the full-rank fast paths: `identity` (fast K + fast V), `r64` (reconstruct both),
+   `rk128_rv64` (fast K + reconstruct V) and `rk32_rv128` (reconstruct K + fast V) —
+   the last is the only one that exercises a genuine, non-identity `U_v` on the fast-V
+   path, and it is the case that was wrong on device until it was added (PCC 0.05 →
+   0.9996). The prefill test must also assert the **contents of the K cache**, not only
+   the block output: at the tests' input scale the softmax is nearly uniform, so output
+   PCC stayed at 0.9994 with a completely wrong K cache.
 3. Device, baseline parity: the `r=128` path must match stock tt_transformers
    outputs (PCC ≥ 0.999 on logits), proving the plumbing adds no error. **Measured: 0.9994**
-   prefill logit PCC identity-vs-stock, with 32/32 identical teacher-forced tokens.
+   prefill logit PCC identity-vs-stock, with 32/32 identical teacher-forced tokens. Since the
+   full-rank fast paths landed, the identity attention block is **bit-identical** to stock
+   (max-abs difference 0.0 on caches and outputs), which is why the 32/32 equality is safe to
+   assert; before that it sat on knife-edge logit ties and was not a fidelity measurement.
 4. Device, model: full 8B Palu model vs the CPU Palu model on a ~128-token prompt
    plus 32 greedy tokens; logit PCC and top-1 match reported, compared against the
    same numbers for stock-vs-HF so the acceptance bar is "no worse than
@@ -220,8 +256,13 @@ pool), group size > 1, latent quantisation, tracing of the decode step (S varies
 ## 8. Evaluation: TT baseline vs TT Palu
 
 All headline numbers are measured on the n300 through `palu_tt/eval_ppl.py` and
-`palu_tt/bench.py`, for the rows: baseline (`r=128`), `r=96`, `r=64`,
-`r_k=128/r_v=64`. Later rows: calibrated weights from the full recipe; stage 2 kernel.
+`palu_tt/bench.py`. **Rows as built (seven):** `baseline` (stock attention), `identity`
+(the Palu path at `r=128`), the uncalibrated plain-SVD rows `svd_r96`, `svd_r64` and
+`svd_rk128_rv64`, and the two calibrated rows from Palu's full recipe (Fisher-uniform
+rank search + whitening, group size 1) at target ratios 0.5 and 0.7 — `palu_full_50`
+and `palu_full_70`. The calibrated dumps have **per-layer** ranks, so the results table
+reports a range and a mean, and the KV-bytes column is the mean over the 32 layers
+(`bench` reports layer 0). Stage 2's kernel is a later row.
 
 | Metric | Method |
 |---|---|
@@ -238,9 +279,31 @@ device state recorded.
 ## 9. Success criteria
 
 - Tests 1–4 pass; the `r=128` path is indistinguishable from stock.
-- All four rows produce a complete results table on device.
+  **Met** — identity 7.255 vs stock 7.254 perplexity over 141 windows, prefill logit
+  PCC 0.9994, 32/32 greedy tokens, and the attention block bit-identical to stock.
+- All rows produce a complete results table on device. **Met** — seven rows.
 - Perplexity degradation at `r=64` is in the same range as Palu reports for 50 %
   compression without calibration (their ablation baseline); with calibrated weights
-  it should approach their headline numbers.
-- Decode latency with V-only compression is no worse than baseline; the full
-  compression row quantifies the reconstruction cost that stage 2 targets.
+  it should approach their headline numbers. **Partly met** — uncalibrated plain SVD is
+  catastrophic here (`r64` 703.6, `r96` 79.4), and the calibrated recipe recovers the
+  model: 12.93 at 52.7 % of stock KV bytes and 9.03 at 69.9 %, against the paper's
+  per-head (M-LRD) 12.38 vs its own 8.28 baseline at 50 %. Our 50 % row is a 1.78x
+  degradation against the paper's 1.50x; closing that gap needs group size > 1 (the
+  paper's G-LRD reaches 10.11), which is out of scope for stage 1.
+- **V-only compression must not cost decode latency (restated as measured).** The
+  criterion as originally written was ambiguous: a rank-128 K that is still *stored as a
+  latent and reconstructed every step* pays the full reconstruction cost, and the first
+  measurement of `svd_rk128_rv64` was 105.5/278.3/500.1 ms — far above stock. With the
+  `r_k == head_dim` fast path (section 5) the row keeps K in the stock cache, and the
+  criterion is **met**: decode min 38.7 / 52.0 / 69.2 ms at 1k/4k/8k against stock
+  38.0 / 55.4 / OOM (faster at 4k, since the V cache is 25 % smaller; and it runs at 8k,
+  where stock does not allocate), with attention-only minima 1.52 / 1.27 / 1.85 against
+  stock 0.81 / 1.31 / 2.07.
+- **The calibrated recipe must reproduce on device, not just on CPU (added).** The device
+  perplexity of each calibrated row must agree with the fp32 CPU low-rank reference on the
+  same corpus to within the spread the harness already shows on the stock row (~2.0 % from
+  the window count alone). **Met**: `palu_full_50` device 12.931 vs CPU 12.759 (1.3 %),
+  `palu_full_70` device 9.028 vs CPU 9.059 (0.3 %).
+- The full compression rows quantify the reconstruction cost that stage 2 targets.
+  **Met** — 2.3–2.6x the stock decode step at 1k and 4.7–5.1x at 4k, with 32 x the
+  attention-only time accounting for essentially the whole step.
