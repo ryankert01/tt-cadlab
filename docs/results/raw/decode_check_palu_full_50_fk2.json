@@ -1,0 +1,10 @@
+{
+ "row": "palu_full_50_fk2",
+ "palu_dir": "compressed/palu_full_0.5",
+ "fused": "p2",
+ "fused_k_chunk": null,
+ "steps": 64,
+ "pcc_mean": 0.9993796142284872,
+ "pcc_min": 0.9979613034977239,
+ "argmax_agree": 0.921875
+}

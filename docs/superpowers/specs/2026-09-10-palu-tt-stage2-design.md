@@ -1,7 +1,11 @@
 # Palu on Tenstorrent — Stage 2: Fused K-Reconstruction Decode Kernel
 
 Date: 2026-09-10
-Status: approved 2026-09-10 ("Lgtm"); amended at planning time -- §3 (`rot_step`/`trans_mat`), §4 CB table, §5 rewritten (query-side rotation), §6-§9
+Status: **implemented and measured 2026-09-10** -- op, host integration, tests and the evaluation
+matrix are done; results and the success-bar verdict are in `docs/results/stage2.md`.
+Approved 2026-09-10 ("Lgtm"); amended at planning time -- §3 (`rot_step`/`trans_mat`), §4 CB table,
+§5 rewritten (query-side rotation), §6-§9. Deviations found while implementing are recorded below
+the marker in `docs/results/stage2.md`.
 Depends on: stage 1 (`docs/superpowers/specs/2026-09-09-palu-tt-stage1-design.md`, merged at 44f24a9)
 
 ## 1. Goal and success bar

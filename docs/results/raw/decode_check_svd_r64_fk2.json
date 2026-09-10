@@ -1,0 +1,10 @@
+{
+ "row": "svd_r64_fk2",
+ "palu_dir": "compressed/svd_r64",
+ "fused": "p2",
+ "fused_k_chunk": null,
+ "steps": 64,
+ "pcc_mean": 0.9985682492422021,
+ "pcc_min": 0.9972446819746776,
+ "argmax_agree": 0.953125
+}

@@ -1,0 +1,36 @@
+{
+ "row": "svd_r96_fk2",
+ "kind": "palu",
+ "palu_dir": "compressed/svd_r96",
+ "what": "attention",
+ "fused": "p2",
+ "fused_k_chunk": null,
+ "contexts": [
+  1024,
+  4096,
+  8192
+ ],
+ "data": {
+  "1024": {
+   "p50_ms": 1.5886215260252357,
+   "min_ms": 1.1315608862787485,
+   "iters": 20,
+   "kv_bytes_per_token_per_layer_per_chip": 816.0,
+   "mesh_reopened_first": false
+  },
+  "4096": {
+   "p50_ms": 2.654746058396995,
+   "min_ms": 2.0898100920021534,
+   "iters": 20,
+   "kv_bytes_per_token_per_layer_per_chip": 816.0,
+   "mesh_reopened_first": false
+  },
+  "8192": {
+   "p50_ms": 3.792922478169203,
+   "min_ms": 3.6689951084554195,
+   "iters": 20,
+   "kv_bytes_per_token_per_layer_per_chip": 816.0,
+   "mesh_reopened_first": false
+  }
+ }
+}

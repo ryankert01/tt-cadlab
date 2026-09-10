@@ -289,8 +289,9 @@ def main(raw=RAW, out=OUT, rows=ROWS):
             "",
             "A `_fk1`/`_fk2` row is the row above it re-run with `--fused p1` / `--fused p2`. Perplexity "
             "here is measured **through prefill windows**, which reconstruct K and V in flight and never "
-            "touch the decode kernel, so a fused row's perplexity, prefill time, KV bytes and max "
-            "context are its base row's by construction and are not re-measured; the decode path is "
+            "touch the decode kernel, so a fused row's perplexity and prefill time are its base row's by "
+            "construction and are not re-measured; KV bytes and max context are inherited too unless the "
+            "row has its own `bench_maxctx_*` file, in which case that measurement wins. The decode path is "
             "checked instead by `palu_tt.decode_check` (naive vs fused, teacher-forced), whose two "
             "columns are in the quality table.",
             "",
@@ -343,10 +344,16 @@ def main(raw=RAW, out=OUT, rows=ROWS):
         "",
         "## Decode and attention latency, batch 32",
         "",
-        "Measured on an idle host (device-idle gate passed, no other job of ours running); the "
-        "contended numbers from the first matrix run were discarded. Decode is untraced and therefore "
-        "partly host-dispatch-bound, so `p50` and `min` are both reported; `min` is the cleaner "
-        "signal and every ratio quoted below the marker uses it.",
+    ]
+    lines += [
+        ("Measured on an idle host (device-idle gate passed, no other job of ours running). Decode is "
+         "untraced and therefore partly host-dispatch-bound, so `p50` and `min` are both reported; "
+         "`min` is the cleaner signal and every ratio quoted below the marker uses it. The stage-1 "
+         "rows here are the stage-1 measurements, unchanged.") if stage2 else
+        ("Measured on an idle host (device-idle gate passed, no other job of ours running); the "
+         "contended numbers from the first matrix run were discarded. Decode is untraced and therefore "
+         "partly host-dispatch-bound, so `p50` and `min` are both reported; `min` is the cleaner "
+         "signal and every ratio quoted below the marker uses it."),
         "",
     ]
     if stage2:
