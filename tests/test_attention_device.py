@@ -60,9 +60,20 @@ def _ref_k_cache(ref, tt, S):
     return torch.stack([K[..., : hd // 2], K[..., hd // 2:]], dim=-1).flatten(-2)
 
 
+def _ref_v_cache(ref, tt, S):
+    """What the reference says the module's V cache should hold at position 0..S-1.
+
+    r_v < head_dim: the V latent, verbatim. r_v == head_dim (fast-V path): full V -- the converter
+    collapses U_v into the QKV weight there, so the head-split output that lands in the cache is V
+    itself, whatever the factorisation (identity_lowrank's U_v = I, or a full-rank SVD's U_v != I)."""
+    lat = ref.cache_v_lat[:, :, :S, :]
+    return lat if tt.recon_v else torch.einsum("bhtr,hdr->bhtd", lat, ref.lr.v_U)
+
+
 @pytest.mark.parametrize("palu_dir,pcc", [(None, 0.999), ("compressed/svd_r64", 0.99),
-                                          ("compressed/svd_rk128_rv64", 0.99)],
-                         ids=["identity", "r64", "rk128_rv64"])
+                                          ("compressed/svd_rk128_rv64", 0.99),
+                                          ("compressed/svd_rk32_rv128", 0.99)],
+                         ids=["identity", "r64", "rk128_rv64", "rk32_rv128"])
 def test_prefill_matches_reference(mesh_device, palu_dir, pcc):
     args, sd, rope, tt_ccl, ref = _setup(mesh_device, palu_dir, batch=1, max_seq_len=SEQ)
     tt = _tt_attention(PaluAttention, mesh_device, args, sd, rope, tt_ccl)
@@ -106,8 +117,9 @@ def _decode_inputs(mesh_device, args, rope, x_bd, current_pos):
 
 
 @pytest.mark.parametrize("palu_dir,pcc", [(None, 0.999), ("compressed/svd_r64", 0.99),
-                                          ("compressed/svd_rk128_rv64", 0.99)],
-                         ids=["identity", "r64", "rk128_rv64"])
+                                          ("compressed/svd_rk128_rv64", 0.99),
+                                          ("compressed/svd_rk32_rv128", 0.99)],
+                         ids=["identity", "r64", "rk128_rv64", "rk32_rv128"])
 def test_decode_after_prefill_matches_reference(mesh_device, palu_dir, pcc):
     batch = 32
     args, sd, rope, tt_ccl, ref = _setup(mesh_device, palu_dir, batch=batch, max_seq_len=SEQ)
@@ -132,9 +144,9 @@ def test_decode_after_prefill_matches_reference(mesh_device, palu_dir, pcc):
         ok, msg = comp_pcc(y_ref, y[0:1], pcc)
         logger.info(f"pos={pos} {msg}")
         assert ok, f"pos={pos} {msg}"
-    v_lat = ttnn.to_torch(tt.layer_past[1], mesh_composer=ttnn.ConcatMesh2dToTensor(mesh_device, dims=(0, 1), mesh_shape=args.cluster_shape))
-    ok, msg = comp_pcc(ref.cache_v_lat, v_lat[:1, : args.n_kv_heads, : P + 8, :], 0.99)
-    assert ok, f"v latent cache {msg}"
+    v_cache = ttnn.to_torch(tt.layer_past[1], mesh_composer=ttnn.ConcatMesh2dToTensor(mesh_device, dims=(0, 1), mesh_shape=args.cluster_shape))
+    ok, msg = comp_pcc(_ref_v_cache(ref, tt, P + 8), v_cache[:1, : args.n_kv_heads, : P + 8, :], 0.99)
+    assert ok, f"v cache {msg}"
 
 
 def test_identity_decode_equals_stock_attention(mesh_device):

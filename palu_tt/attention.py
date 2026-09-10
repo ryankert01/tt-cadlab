@@ -11,6 +11,8 @@ from models.tt_transformers.tt.common import Mode
 from models.tt_transformers.tt.model_config import OpGroup, TensorGroup, num_to_corerange
 from models.tt_transformers.tt.rope import get_rot_mats
 
+from palu_tt.convert import CONVERT_VERSION
+
 
 def cache_tag(cache_id: str, r_k: int, r_v: int) -> str:
     """Prefix for every Palu-specific weight-cache entry.
@@ -18,10 +20,13 @@ def cache_tag(cache_id: str, r_k: int, r_v: int) -> str:
     ttnn.as_tensor reuses an on-disk cache file whenever name/shape/dtype match -- it never looks at
     the content -- so the ranks alone are not enough: two weight sets with the same per-layer ranks
     (a re-generated calibration dump and the dump it replaced, say) would share entries and one
-    would silently load the other's tensors. PaluConfig.cache_id identifies the weight set.
+    would silently load the other's tensors. PaluConfig.cache_id identifies the weight set, and
+    convert.CONVERT_VERSION the converter that built the tensors -- a converter fix that changes a
+    tensor's content but neither its shape nor the weight set it came from (v1 -> v2 collapsed the
+    full-rank V factorisation into the QKV weight) must not be served an entry from the old scheme.
     """
     assert isinstance(cache_id, str) and cache_id, f"PaluConfig.cache_id must be a non-empty string, got {cache_id!r}"
-    return f"palu_{cache_id}_rk{r_k}_rv{r_v}"
+    return f"palu_v{CONVERT_VERSION}_{cache_id}_rk{r_k}_rv{r_v}"
 
 
 class PaluAttention(LightweightModule):

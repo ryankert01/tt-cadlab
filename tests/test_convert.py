@@ -73,6 +73,72 @@ def test_padded_full_rank_k_uses_the_factors_not_the_original_wk():
     assert not torch.allclose(t["wk_lat_pad"], reverse_permute(w["k"], NKV, NKV * HD, DIM), atol=1e-3)
 
 
+def test_full_rank_v_emits_the_product_and_an_identity_u_v():
+    """r_v == head_dim is PaluAttention's "fast V" path: prefill feeds the V head-split output
+    straight into SDPA and applies the *original* wo, the V cache stores that same tensor and decode
+    runs the MLA op on it with head_dim_v == head_dim followed by wo_fused. That is only correct if
+    the tensor the fused QKV weight produces really is V, i.e. if U_v == I. A genuine full-rank
+    factorisation has U_v != I, so the converter must collapse it: emit the per-head product
+    U_v @ VT_v as the V block, an identity u_v, and therefore wo_fused == wo."""
+    w = _hf_attn()
+    r_k = 8
+    # non-identity but exact: U_h random invertible, VT_h = U_h^-1 @ wv_h  ->  U_h @ VT_h == wv_h
+    v_U = torch.randn(NKV, HD, HD).double() + 3 * torch.eye(HD).double()
+    wv_heads = w["v"].double().reshape(NKV, HD, DIM)
+    v_VT = torch.linalg.solve(v_U, wv_heads)
+    lr = convert.LowRank(
+        k_VT=torch.randn(NKV, r_k, DIM), k_U=torch.randn(NKV, HD, r_k),
+        v_VT=v_VT.float(), v_U=v_U.float(),
+    )
+    t = convert.palu_layer_tensors(w, lr, NH, NKV, HD)
+    assert lr.r_v == HD
+    # no permutation on the V side: the block is the plain (unpermuted) V weight of the head
+    assert torch.allclose(t["wv_lat_pad"], w["v"], atol=1e-4)
+    eye = torch.eye(HD).expand(NKV, HD, HD)
+    assert torch.allclose(t["u_v"], eye, atol=1e-6)
+    assert torch.allclose(t["wo_fused"], w["o"], atol=1e-6)
+    # and the fast path is then exactly stock: the head-split output *is* V
+    x = torch.randn(5, DIM)
+    assert torch.allclose(x @ t["wv_lat_pad"].T, x @ w["v"].T, atol=1e-4)
+
+
+def test_padded_full_rank_v_uses_the_factors_not_the_original_wv():
+    """Same collapse when r_v == head_dim only because head-wise ranks were zero-padded up to it:
+    the V block must be the *factorised* weight U_v @ VT_v, never the uncompressed wv."""
+    w = _hf_attn()
+    r_true = 4
+    v_VT = torch.zeros(NKV, HD, DIM)
+    v_U = torch.zeros(NKV, HD, HD)
+    v_VT[:, :r_true] = torch.randn(NKV, r_true, DIM)
+    v_U[:, :, :r_true] = torch.randn(NKV, HD, r_true)
+    lr = convert.LowRank(k_VT=torch.randn(NKV, 8, DIM), k_U=torch.randn(NKV, HD, 8), v_VT=v_VT, v_U=v_U)
+    t = convert.palu_layer_tensors(w, lr, NH, NKV, HD)
+    assert lr.r_v == HD
+    for h in range(NKV):
+        assert torch.allclose(t["wv_lat_pad"][h * HD:(h + 1) * HD], v_U[h] @ v_VT[h], atol=1e-6)
+    assert not torch.allclose(t["wv_lat_pad"], w["v"], atol=1e-3)
+    assert torch.allclose(t["wo_fused"], w["o"], atol=1e-6)
+
+
+def test_full_rank_v_from_plain_svd_reproduces_wv():
+    """The real producer: compress.svd_per_head at rank == head_dim (U = U_r*sqrt(S),
+    VT = sqrt(S)*Vt_r) is exact but has U != I -- the case that made compressed/svd_rk32_rv128
+    score PCC 0.05 against the reference before this collapse existed."""
+    from palu_tt import compress
+    w = _hf_attn()
+    v_U, v_VT = compress.svd_per_head(w["v"], NKV, HD)
+    lr = convert.LowRank(k_VT=torch.randn(NKV, 8, DIM), k_U=torch.randn(NKV, HD, 8), v_VT=v_VT, v_U=v_U)
+    assert lr.r_v == HD
+    prod = torch.stack([v_U[h] @ v_VT[h] for h in range(NKV)]).reshape(NKV * HD, DIM)
+    assert torch.allclose(prod, w["v"], atol=1e-4)                       # the factorisation is exact
+    assert not torch.allclose(v_U, torch.eye(HD).expand(NKV, HD, HD), atol=1e-3)   # ... but U != I
+    t = convert.palu_layer_tensors(w, lr, NH, NKV, HD)
+    assert torch.allclose(t["wv_lat_pad"], prod, atol=1e-5)
+    assert torch.allclose(t["wv_lat_pad"], w["v"], atol=1e-4)
+    assert torch.allclose(t["u_v"], torch.eye(HD).expand(NKV, HD, HD), atol=1e-6)
+    assert torch.allclose(t["wo_fused"], w["o"], atol=1e-6)
+
+
 def test_low_rank_k_block_is_padded_latent():
     """r_k < head_dim keeps the Palu latent branch: rows are VT_k, the rest zero, and the latent
     times u_k reproduces the Meta-permuted low-rank K."""
@@ -127,6 +193,30 @@ def test_wo_fused_matches_attn_times_v_then_o():
     stock_in = torch.cat([attn[h] @ V[:, h // (NH // NKV)] for h in range(NH)], dim=-1)
     y_stock = stock_in @ w["o"].T
     assert torch.allclose(y_fused, y_stock, atol=1e-4)
+
+
+def test_wo_fused_matches_attn_times_v_then_o_low_rank():
+    """r_v < head_dim keeps the real Palu fusion (u_v = V_U^T, wo_fused = wo @ v_U): the fast-V
+    collapse must not touch it. Exact low-rank wv so the stock comparison is tight."""
+    w = _hf_attn()
+    r_v = 8
+    v_VT = torch.randn(NKV, r_v, DIM)
+    v_U = torch.randn(NKV, HD, r_v)
+    w["v"] = torch.cat([v_U[h] @ v_VT[h] for h in range(NKV)], dim=0)     # wv is exactly the product
+    lr = convert.LowRank(k_VT=torch.randn(NKV, HD, DIM), k_U=torch.randn(NKV, HD, HD), v_VT=v_VT, v_U=v_U)
+    t = convert.palu_layer_tensors(w, lr, NH, NKV, HD)
+    assert torch.allclose(t["u_v"], v_U.transpose(1, 2), atol=1e-6)       # untouched by the collapse
+    S, T = 3, 7
+    x = torch.randn(T, DIM)
+    lat_v = (x @ t["wv_lat_pad"].T).reshape(T, NKV, HD)
+    attn = torch.softmax(torch.randn(NH, S, T), dim=-1)
+    fused_in = torch.zeros(S, NH * HD)
+    for h in range(NH):
+        fused_in[:, h * HD:h * HD + r_v] = attn[h] @ lat_v[:, h // (NH // NKV), :r_v]
+    y_fused = fused_in @ t["wo_fused"].T
+    V = (x @ w["v"].T).reshape(T, NKV, HD)
+    stock_in = torch.cat([attn[h] @ V[:, h // (NH // NKV)] for h in range(NH)], dim=-1)
+    assert torch.allclose(y_fused, stock_in @ w["o"].T, atol=1e-4)
 
 
 def test_load_palu_dir_pads_ranks_to_layer_max(tmp_path):
