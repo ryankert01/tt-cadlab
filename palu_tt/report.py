@@ -6,7 +6,8 @@ deliberately tolerant of the real schema:
 
 * ``json.dumps`` stringifies the int context keys, so cells are looked up as ``"1024"``;
 * a context whose model did not allocate is an ``{"error", "phase", "exc"}`` cell, not a timing;
-* a row whose files do not exist yet renders as dashes -- never as invented ranks.
+* a row whose files do not exist yet renders as dashes -- never as invented ranks, and a raw
+  directory with *no* row files at all is refused outright rather than blanking the tables.
 
 Ranks come from the compressed dump's ``config.json``: our own ``compress.py`` dumps carry a
 ``palu_tt.rank_k/rank_v`` block, while a dump produced by Palu's own recipe carries only
@@ -193,6 +194,16 @@ def _row_data(raw, row):
 def main(raw=RAW, out=OUT):
     raw = Path(raw)
     loaded = {row: _row_data(raw, row) for row in ROWS}
+    # A raw directory with nothing in it renders every row as dashes -- and would then overwrite the
+    # committed tables with that. That is exactly what a fresh clone or a mistyped --raw looks like,
+    # so refuse instead of writing. (One loaded file anywhere is enough: a partial re-measurement
+    # legitimately renders the rest as dashes.)
+    if not any(f is not None for files in loaded.values() for f in files):
+        raise RuntimeError(
+            f"no results found in {raw}: not one of the {len(ROWS)} rows has a ppl_*/bench_* JSON, so "
+            f"rendering would replace the tables in {out} with dashes. Run the harnesses "
+            "(python -m palu_tt.eval_ppl, python -m palu_tt.bench) or restore docs/results/raw/*.json first."
+        )
     base = loaded.get("baseline")
     kv_base = _kv_bytes(base[2:]) if base else None
     dev_windows = _windows([v[0] for v in loaded.values()])

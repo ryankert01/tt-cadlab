@@ -1,0 +1,34 @@
+{
+ "row": "svd_r64",
+ "kind": "palu",
+ "palu_dir": "compressed/svd_r64",
+ "what": "decode",
+ "contexts": [
+  1024,
+  4096,
+  8192
+ ],
+ "data": {
+  "1024": {
+   "p50_ms": 92.13319898117334,
+   "min_ms": 92.01144799590111,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 544.0,
+   "mesh_reopened_first": false
+  },
+  "4096": {
+   "p50_ms": 265.12230711523443,
+   "min_ms": 264.9779380299151,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 544.0,
+   "mesh_reopened_first": false
+  },
+  "8192": {
+   "p50_ms": 484.12590892985463,
+   "min_ms": 483.87332796119153,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 544.0,
+   "mesh_reopened_first": false
+  }
+ }
+}

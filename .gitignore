@@ -1,7 +1,10 @@
 .venv/
 model_cache/
 compressed/
-docs/results/raw/
+# Raw results: the JSONs are the provenance of docs/results/stage1.md (palu_tt.report reads
+# nothing else) and are tracked; the run logs next to them are multi-MB and are not.
+docs/results/raw/*
+!docs/results/raw/*.json
 __pycache__/
 *.pyc
 .pytest_cache/

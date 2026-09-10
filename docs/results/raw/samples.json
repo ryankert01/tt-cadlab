@@ -1,0 +1,27 @@
+{
+ "baseline": {
+  "The Tenstorrent Wormhole chip is": " a high-performance, low-power AI chip designed for edge AI applications. It is a 7nm chip with a 3D stacked architecture, featuring a large on-chip memory and a high-bandwidth memory interface. The chip is designed",
+  "Explain KV-cache compression in two sentences.": " KV-cache compression is a technique used to reduce the size of the cache in a key-value store by compressing the data stored in the cache. This compression is typically done using a lossless compression algorithm, such as LZW or Huffman coding",
+  "Write a haiku about matrices.": "\u00a0\nA matrix of might\nRows and columns align\nMath's subtle delight\nI think this is a good haiku, but I'm biased. I think it's a good haiku because it captures the essence of matrices in a concise"
+ },
+ "svd_r96": {
+  "The Tenstorrent Wormhole chip is": " a 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 ",
+  "Explain KV-cache compression in two sentences.": "  Please note that the above sentence is a compression of the above sentence.  Please note that the above sentence is a compression of the above sentence.  Please note that the above sentence is a compression of the above sentence.  Please note",
+  "Write a haiku about matrices.": "Write a haiku about matrices.Write a haiku about matrices.Write a haiku about matrices.Write a haiku about matrices.Write a haiku about matrices.Write a haiku about matrices.Write a haiku about matrices"
+ },
+ "svd_r64": {
+  "The Tenstorrent Wormhole chip is": " the first time the first time the first time the first time the first time the first time the first time the first time the first time the first time the first time the first time the first time the first time the first time the first time",
+  "Explain KV-cache compression in two sentences.": " For example,  In\nIn\nIn\n\n\nP\nP\nP\nP\nIn\nP\nP\nP\nP\nP\nP\nP\nP\nP\nP\nP\nP\nP\n",
+  "Write a haiku about matrices.": " a by a\u02c7 a a a a a by a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a"
+ },
+ "palu_full_50": {
+  "The Tenstorrent Wormhole chip is": " a 3D 3D 3D 3D 3D 3D 3D 3D 3D 3D 3D 3D 3D 3D 3D 3",
+  "Explain KV-cache compression in two sentences.": " The K-1 team is the only team that can beat the 1st place team. The 2nd place team is the only team that can beat the 1st place team. The 3rd place team is the only",
+  "Write a haiku about matrices.": " A haiku is a short poem that has a specific syllable count. It is usually written in three lines with a syllable count of 5-7-5. A haiku is a short poem that has a syllable count"
+ },
+ "palu_full_70": {
+  "The Tenstorrent Wormhole chip is": " a type of superconducting material that can be used to create a stable wormhole. The Tenstorrent Wormhole chip is made up of a series of superconducting materials that are layered on top of each other. The Tenstor",
+  "Explain KV-cache compression in two sentences.": " The cache is compressed using a lossy compression algorithm, which discards some of the data to reduce the size of the cache. This compression is done to reduce the size of the cache, which in turn reduces the time it takes to retrieve",
+  "Write a haiku about matrices.": "**\n**Answer:**: **Matrices rise**\n**Like waves on the sea**\n**Numbers in rows**\n**Numbers in columns**\n**A matrix is a table of numbers.**\n**Answer:**: **A matrix is a table of"
+ }
+}

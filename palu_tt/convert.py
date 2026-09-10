@@ -148,7 +148,10 @@ def palu_layer_tensors(hf_attn: Dict[str, torch.Tensor], lr: LowRank, n_heads: i
     # head_dim) and hand the identity to everything downstream. `u_v` is then dead on device but
     # still emitted so every rank produces the same tensor shapes, and wo_fused == wo.
     fast_v = r_v == head_dim
-    v_U = torch.eye(head_dim).expand(n_kv_heads, head_dim, head_dim) if fast_v else lr.v_U
+    # The V-side up-projection *as the device will see it*: the identity on the fast path (U_v has
+    # just been folded into wv_lat_pad below), the factor itself otherwise. Deliberately not called
+    # `v_U` -- it differs from `lr.v_U` exactly when fast_v, and that shadowing is a trap.
+    u_v_eff = torch.eye(head_dim).expand(n_kv_heads, head_dim, head_dim) if fast_v else lr.v_U
     for h in range(n_kv_heads):
         if r_k == head_dim:
             wk_lat_pad[h * head_dim:(h + 1) * head_dim] = reverse_permute(lr.k_U[h] @ lr.k_VT[h], 1, head_dim, dim)
@@ -161,13 +164,13 @@ def palu_layer_tensors(hf_attn: Dict[str, torch.Tensor], lr: LowRank, n_heads: i
             wv_lat_pad[h * head_dim:h * head_dim + r_v] = lr.v_VT[h]
         # K leaves the latent in Meta-permuted head order (RoPE convention of tt_transformers)
         u_k[h] = reverse_permute(lr.k_U[h], 1, head_dim, r_k).T
-        u_v[h] = v_U[h].T
+        u_v[h] = u_v_eff[h].T
     wo = hf_attn["o"].float()                       # [dim, n_heads*hd]
     wo_fused = torch.zeros_like(wo)
     rep = n_heads // n_kv_heads
     for qh in range(n_heads):
         kv = qh // rep
-        wo_fused[:, qh * head_dim:qh * head_dim + r_v] = wo[:, qh * head_dim:(qh + 1) * head_dim] @ v_U[kv]
+        wo_fused[:, qh * head_dim:qh * head_dim + r_v] = wo[:, qh * head_dim:(qh + 1) * head_dim] @ u_v_eff[kv]
     return {"wk_lat_pad": wk_lat_pad, "wv_lat_pad": wv_lat_pad, "u_k": u_k, "u_v": u_v, "wo_fused": wo_fused}
 
 

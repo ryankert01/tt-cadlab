@@ -1,5 +1,3 @@
-import os
-
 import pytest
 import torch
 import ttnn
@@ -144,8 +142,15 @@ def test_decode_after_prefill_matches_reference(mesh_device, palu_dir, pcc):
         ok, msg = comp_pcc(y_ref, y[0:1], pcc)
         logger.info(f"pos={pos} {msg}")
         assert ok, f"pos={pos} {msg}"
-    v_cache = ttnn.to_torch(tt.layer_past[1], mesh_composer=ttnn.ConcatMesh2dToTensor(mesh_device, dims=(0, 1), mesh_shape=args.cluster_shape))
-    ok, msg = comp_pcc(_ref_v_cache(ref, tt, P + 8), v_cache[:1, : args.n_kv_heads, : P + 8, :], 0.99)
+    # both caches hold what the reference holds after prefill + 8 decode steps: the latents for a
+    # reconstructed side, and (K only) the stock Meta-order rotated K on the r_k == head_dim path,
+    # which decode fills with the decode-mode RoPE rather than prefill's.
+    def _cache(i):
+        c = ttnn.to_torch(tt.layer_past[i], mesh_composer=ttnn.ConcatMesh2dToTensor(mesh_device, dims=(0, 1), mesh_shape=args.cluster_shape))
+        return c[:1, : args.n_kv_heads, : P + 8, :]
+    ok, msg = comp_pcc(_ref_k_cache(ref, tt, P + 8), _cache(0), 0.99)
+    assert ok, f"k cache {msg}"
+    ok, msg = comp_pcc(_ref_v_cache(ref, tt, P + 8), _cache(1), 0.99)
     assert ok, f"v cache {msg}"
 
 

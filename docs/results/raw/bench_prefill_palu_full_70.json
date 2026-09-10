@@ -1,0 +1,18 @@
+{
+ "row": "palu_full_70",
+ "kind": "palu",
+ "palu_dir": "compressed/palu_full_0.7",
+ "what": "prefill",
+ "data": {
+  "2048": {
+   "p50_ms": 447.8756389580667,
+   "min_ms": 445.9031850565225,
+   "iters": 5
+  },
+  "8192": {
+   "p50_ms": 2117.862737039104,
+   "min_ms": 2114.6940840408206,
+   "iters": 5
+  }
+ }
+}

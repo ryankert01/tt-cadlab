@@ -8,7 +8,7 @@ from torch import nn
 from transformers import LlamaConfig, LlamaForCausalLM
 from transformers.models.llama.modeling_llama import LlamaRotaryEmbedding, apply_rotary_pos_emb
 
-from palu_tt import convert, hf
+from palu_tt import convert
 
 
 class PaluRefAttention:

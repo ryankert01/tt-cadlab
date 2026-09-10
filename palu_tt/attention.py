@@ -1,7 +1,5 @@
 """PaluAttention for tt_transformers v0.78.0. N150/N300, non-paged, no prefetcher, Meta-style RoPE.
 Shapes stay stock everywhere except inside the latent caches and the SDPA call."""
-import math
-
 import torch
 import ttnn
 from models.common.lightweightmodule import LightweightModule
@@ -107,7 +105,8 @@ class PaluAttention(LightweightModule):
         # weight (the full per-head K weight rebuilt from the factors, not the padded latent). The
         # on-disk weight cache is keyed by name/shape/dtype only, so without this an existing cache
         # would be silently reused. It applies to the fused wqkv alone -- every other cached tensor
-        # (u_k, u_v, wo_fused, the latent caches) has identical content on both paths.
+        # either has identical content on both paths (the latent caches, wo) or is not built at all
+        # on the fast path (u_k_*, u_v_prefill, wo_fused).
         wqkv_tag = tag + ("" if self.recon_k else "_kstock2")
         if configuration.dummy_weights or weight_cache_path is None:
             cache_name = lambda _: None
@@ -135,24 +134,31 @@ class PaluAttention(LightweightModule):
         )
 
         # --- up-projections -------------------------------------------------------------------------
-        u_k = state_dict[f"{P}.u_k"]  # [n_kv, r_k, hd]
-        u_v = state_dict[f"{P}.u_v"]  # [n_kv, r_v, hd]
+        # Only the *active* paths get a device tensor. On a full-rank fast path the converter has
+        # already folded the factor into the QKV weight and emits an identity `u_*` that nothing
+        # reads, so uploading it would burn DRAM (u_k_decode alone is ~64 MiB/chip at batch 32) on a
+        # tensor no forward touches. The attribute is simply absent there -- every use below is
+        # guarded by the same `recon_*` flag that decides whether it is built.
         shard_heads = ttnn.ShardTensorToMesh(mesh_device, dim=1)
-        # decode: batched (non-broadcast) matmul needs matching batch dims -> replicate over batch
-        self.u_k_decode = ttnn.as_tensor(
-            u_k.unsqueeze(0).expand(B, -1, -1, -1).contiguous(), dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
-            device=mesh_device, memory_config=ttnn.DRAM_MEMORY_CONFIG, mesh_mapper=shard_heads,
-            cache_file_name=cache_name(f"{tag}_u_k_decode_b{B}"),
-        )
         # prefill: zero-padded to [1, n_kv, hd, hd] so the padded latent heads need no slicing
         def pad_u(u, r):
             t = torch.zeros(self.n_kv_heads, self.head_dim, self.head_dim)
             t[:, :r, :] = u
             return t.unsqueeze(0)
-        self.u_k_prefill = ttnn.as_tensor(pad_u(u_k, self.r_k), dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT, device=mesh_device,
-                                          memory_config=ttnn.DRAM_MEMORY_CONFIG, mesh_mapper=shard_heads, cache_file_name=cache_name(f"{tag}_u_k_prefill"))
-        self.u_v_prefill = ttnn.as_tensor(pad_u(u_v, self.r_v), dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT, device=mesh_device,
-                                          memory_config=ttnn.DRAM_MEMORY_CONFIG, mesh_mapper=shard_heads, cache_file_name=cache_name(f"{tag}_u_v_prefill"))
+        if self.recon_k:
+            u_k = state_dict[f"{P}.u_k"]  # [n_kv, r_k, hd]
+            # decode: batched (non-broadcast) matmul needs matching batch dims -> replicate over batch
+            self.u_k_decode = ttnn.as_tensor(
+                u_k.unsqueeze(0).expand(B, -1, -1, -1).contiguous(), dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
+                device=mesh_device, memory_config=ttnn.DRAM_MEMORY_CONFIG, mesh_mapper=shard_heads,
+                cache_file_name=cache_name(f"{tag}_u_k_decode_b{B}"),
+            )
+            self.u_k_prefill = ttnn.as_tensor(pad_u(u_k, self.r_k), dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT, device=mesh_device,
+                                              memory_config=ttnn.DRAM_MEMORY_CONFIG, mesh_mapper=shard_heads, cache_file_name=cache_name(f"{tag}_u_k_prefill"))
+        if self.recon_v:
+            u_v = state_dict[f"{P}.u_v"]  # [n_kv, r_v, hd]
+            self.u_v_prefill = ttnn.as_tensor(pad_u(u_v, self.r_v), dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT, device=mesh_device,
+                                              memory_config=ttnn.DRAM_MEMORY_CONFIG, mesh_mapper=shard_heads, cache_file_name=cache_name(f"{tag}_u_v_prefill"))
 
         # --- output projections: stock wo (prefill) and fused wo (decode) ------------------------------
         wo_mem = configuration.create_dram_sharded_mem_config((configuration.n_heads * configuration.head_dim) // self.num_devices, configuration.dim)
@@ -161,7 +167,10 @@ class PaluAttention(LightweightModule):
                                   device=mesh_device, memory_config=wo_mem, mesh_mapper=ttnn.ShardTensorToMesh(mesh_device, dim=2),
                                   cache_file_name=cache_name(name))
         self.wo = wo_tensor(state_dict[f"{layer_name}.wo.weight"], "wo")            # same bytes as stock -> shared cache entry
-        self.wo_fused = wo_tensor(state_dict[f"{P}.wo_fused"], f"{tag}_wo_fused")
+        # r_v == head_dim: the converter emits wo_fused == wo (U_v is folded into the QKV weight and
+        # the identity handed downstream), so a second upload would be a byte-identical duplicate of
+        # a ~300 MB/device tensor. Alias it instead.
+        self.wo_fused = wo_tensor(state_dict[f"{P}.wo_fused"], f"{tag}_wo_fused") if self.recon_v else self.wo
 
         # --- latent caches ---------------------------------------------------------------------------
         self.layer_past = []
@@ -295,14 +304,19 @@ class PaluAttention(LightweightModule):
         return S
 
     def _slice_latent(self, heads_1BKD, r):
-        """[1, B, nkv, 128] height-sharded -> [1, B, nkv, r] height-sharded (shard [32, r] per batch core)."""
+        """[1, B, nkv, 128] height-sharded -> [1, B, nkv, r] height-sharded (shard [32, r] per batch core).
+
+        At r == head_dim there is nothing to slice: the head-split output already *is* the latent,
+        in the layout `paged_update_cache` wants, so the sharded -> interleaved -> sharded round
+        trip would only copy it twice. Return the input untouched.
+        """
+        if r == self.head_dim:
+            return heads_1BKD
         t = ttnn.sharded_to_interleaved(heads_1BKD, ttnn.L1_MEMORY_CONFIG)
         ttnn.deallocate(heads_1BKD)
-        if r < self.head_dim:
-            t2 = t[:, :, :, :r]
-            ttnn.deallocate(t)
-            t = t2
-        return ttnn.interleaved_to_sharded(t, self._latent_shard_cfg(r))
+        t2 = t[:, :, :, :r]
+        ttnn.deallocate(t)
+        return ttnn.interleaved_to_sharded(t2, self._latent_shard_cfg(r))
 
     def forward_decode(self, x, current_pos, rot_mats=None, page_table=None, kv_cache=None):
         assert page_table is None and kv_cache is None

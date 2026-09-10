@@ -1,0 +1,14 @@
+{
+ "row": "svd_r64",
+ "kind": "palu",
+ "palu_dir": "compressed/svd_r64",
+ "what": "maxctx",
+ "data": {
+  "max_context_batch32": 8192,
+  "failed_at": 16384,
+  "error": "TT_FATAL @ /home/user01/tt-cadlab/.claude/worktrees/bright-elm-xum9/third_party/tt-metal/tt_metal/impl/allocator/bank_manager.cpp:462: false\ninfo:\nOut of Memory: Not enough space to allocate 9191424 B",
+  "phase": "build",
+  "exc": "RuntimeError",
+  "kv_bytes_per_token_per_layer_per_chip": 544.0
+ }
+}

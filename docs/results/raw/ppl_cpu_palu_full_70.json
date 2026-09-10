@@ -1,0 +1,10 @@
+{
+ "ppl": 9.058754861663536,
+ "nll": 90220.77490234375,
+ "tokens": 40940,
+ "windows": 20,
+ "seq_len": 2048,
+ "row": "palu_full_70",
+ "kind": "palu",
+ "palu_dir": "compressed/palu_full_0.7"
+}

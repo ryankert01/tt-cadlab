@@ -1,0 +1,33 @@
+{
+ "row": "identity",
+ "kind": "palu",
+ "palu_dir": null,
+ "what": "decode",
+ "contexts": [
+  1024,
+  4096,
+  8192
+ ],
+ "data": {
+  "1024": {
+   "p50_ms": 38.270934484899044,
+   "min_ms": 38.19932811893523,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 1088.0,
+   "mesh_reopened_first": false
+  },
+  "4096": {
+   "p50_ms": 55.657548480667174,
+   "min_ms": 55.552119854837656,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 1088.0,
+   "mesh_reopened_first": false
+  },
+  "8192": {
+   "error": "TT_FATAL @ /home/user01/tt-cadlab/.claude/worktrees/bright-elm-xum9/third_party/tt-metal/tt_metal/impl/allocator/bank_manager.cpp:462: false\ninfo:\nOut of Memory: Not enough space to allocate 142606336",
+   "phase": "build",
+   "exc": "RuntimeError",
+   "mesh_reopened_first": false
+  }
+ }
+}

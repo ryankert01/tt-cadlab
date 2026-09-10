@@ -1,0 +1,34 @@
+{
+ "row": "svd_rk128_rv64",
+ "kind": "palu",
+ "palu_dir": "compressed/svd_rk128_rv64",
+ "what": "decode",
+ "contexts": [
+  1024,
+  4096,
+  8192
+ ],
+ "data": {
+  "1024": {
+   "p50_ms": 38.78889395855367,
+   "min_ms": 38.71677885763347,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 816.0,
+   "mesh_reopened_first": false
+  },
+  "4096": {
+   "p50_ms": 52.147592534311116,
+   "min_ms": 51.987034967169166,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 816.0,
+   "mesh_reopened_first": false
+  },
+  "8192": {
+   "p50_ms": 69.85388207249343,
+   "min_ms": 69.24389908090234,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 816.0,
+   "mesh_reopened_first": false
+  }
+ }
+}

@@ -1,0 +1,10 @@
+{
+ "ppl": 502.6965032650358,
+ "nll": 1795256.0766601562,
+ "tokens": 288627,
+ "windows": 141,
+ "seq_len": 2048,
+ "row": "svd_rk128_rv64",
+ "kind": "palu",
+ "palu_dir": "compressed/svd_rk128_rv64"
+}

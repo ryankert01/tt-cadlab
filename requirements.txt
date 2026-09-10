@@ -2,3 +2,8 @@ datasets>=2.19
 safetensors>=0.4
 huggingface_hub>=0.23
 pytest>=8
+# Pinned: scripts/patch_palu_cpu.sh patches third_party/palu against transformers 5.x internals
+# (position_embeddings-style attention forwards) and palu_tt/reference.py builds its CPU ground
+# truth from the same 5.x LlamaAttention; torch is the version this venv was measured on.
+transformers==5.12.1
+torch==2.11.0

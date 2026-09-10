@@ -8,6 +8,7 @@ and must never fall back to inventing full rank for a dump it cannot read.
 """
 import json
 
+import pytest
 import torch
 from safetensors.torch import save_file
 
@@ -142,3 +143,16 @@ def test_hand_written_tail_survives_a_re_render(tmp_path):
     assert "Hand-written paragraph." in md
     assert "7.300" in md and "7.250" not in md
     assert md.count(report.MARKER) == 1
+
+
+def test_main_refuses_to_render_when_no_row_has_any_data(tmp_path):
+    """A fresh clone (or a mistyped ``--raw``) must not blank the committed tables."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    out = tmp_path / "stage1.md"
+    out.write_text("| baseline | 7.254 |\n")
+
+    with pytest.raises(RuntimeError, match="no results found"):
+        report.main(raw=raw, out=out)
+
+    assert out.read_text() == "| baseline | 7.254 |\n"  # untouched

@@ -143,10 +143,16 @@ Per chip (TP=2): 16 query heads, 4 KV heads, head_dim 128, batch ≤ 32.
    `[32, 4, max_seq, r_v]`.
 5. K reconstruction: `K = h_k[:, :, :S] @ U_k` with `S = max(current_pos)+1`
    rounded up to 256 (**as built**; rounding to the 32-element tile changes the decode op shapes
-   every 32 tokens and thrashes the program cache), into a reused scratch `[32, 4, S, 128]` (bf16), then
-   `rotary_embedding_llama` in prefill mode over positions 0..S-1 (cos/sin from the
-   stock RoPE setup). This is Palu's non-fused path and the cost stage 2 removes.
-6. Attention: `flash_multi_latent_attention_decode(q, K_scratch, v=h_v cache,
+   every 32 tokens and thrashes the program cache), then `rotary_embedding_llama` in prefill mode
+   over positions 0..S-1 (cos/sin from the stock RoPE setup).
+   **Deviation, as built:** there is no reused scratch buffer. ttnn ops return new tensors rather
+   than writing into a caller-owned one, so every step allocates a fresh `k_rec` (bf16 matmul
+   output), `k_rot` (bf16 RoPE output) and `k_att` (the bfp8 typecast the MLA op consumes), each
+   deallocated as soon as the next has consumed it. At B=32 / S=8k that is ≈ 268 + 268 + 143 MB
+   live per layer-step, all freed before the next layer runs — which is why the compressed rows
+   allocate at 8k where stock does not, despite the reconstruction traffic.
+   This is Palu's non-fused path and the cost stage 2 removes.
+6. Attention: `flash_multi_latent_attention_decode(q, k_att, v=h_v cache,
    head_dim_v=r_v, cur_pos_tensor=current_pos)`. Output `[1, 32, 16, r_v]`.
 7. `nlp_concat_heads_decode`, `ttnn.linear(·, wo_fused)`, stock all-reduce.
 
@@ -167,7 +173,7 @@ machinery costs latency (K) or correctness (V). Both sides therefore short-circu
   as the K block of the fused QKV weight (built from the *factors*, so a dump whose
   head-wise ranks were merely padded up to 128 stays truncated), and the module writes
   RoPE'd K straight into a full-width cache with the stock decode-mode rotation. No
-  `latent @ U_k` matmul, no scratch, no prefill-mode RoPE over the window, no
+  `latent @ U_k` matmul, no per-step reconstruction tensors, no prefill-mode RoPE over the window, no
   `recon_len` dependence. This is what makes V-only compression free (section 8's
   `r_k=128/r_v=64` row decodes at stock speed and runs at 8k, where stock does not
   allocate).
@@ -302,7 +308,9 @@ device state recorded.
 - **The calibrated recipe must reproduce on device, not just on CPU (added).** The device
   perplexity of each calibrated row must agree with the fp32 CPU low-rank reference on the
   same corpus to within the spread the harness already shows on the stock row (~2.0 % from
-  the window count alone). **Met**: `palu_full_50` device 12.931 vs CPU 12.759 (1.3 %),
+  the window count alone: device **7.400** over the same 20 windows the CPU column uses against
+  7.254 over all 141 — `docs/results/raw/ppl_baseline_20w.json`). **Met**: `palu_full_50` device
+  12.931 vs CPU 12.759 (1.3 %),
   `palu_full_70` device 9.028 vs CPU 9.059 (0.3 %).
 - The full compression rows quantify the reconstruction cost that stage 2 targets.
   **Met** — 2.3–2.6x the stock decode step at 1k and 4.7–5.1x at 4k, with 32 x the

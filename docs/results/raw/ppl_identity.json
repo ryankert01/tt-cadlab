@@ -1,0 +1,10 @@
+{
+ "ppl": 7.2552432062377985,
+ "nll": 571979.1708068848,
+ "tokens": 288627,
+ "windows": 141,
+ "seq_len": 2048,
+ "row": "identity",
+ "kind": "palu",
+ "palu_dir": null
+}

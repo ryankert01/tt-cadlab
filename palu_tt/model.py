@@ -44,7 +44,12 @@ def set_recon_len(cfg: Optional[convert.PaluConfig], current_pos: torch.Tensor):
 
 
 def kv_bytes_per_token_per_layer(model, args) -> float:
-    """Per chip. Stock: K and V full head_dim; Palu: from the attention module."""
+    """Per chip. Stock: K and V full head_dim; Palu: from the attention module.
+
+    This is **layer 0**, not the model: the calibrated dumps have per-layer ranks, so the consumer
+    that reports a whole-model figure (``report._kv_model_mean``) rescales this by the mean
+    per-layer rank sum read from the dump's ``head_wise_ranks``.
+    """
     attn = model.layers[0].attention
     if hasattr(attn, "kv_bytes_per_token"):
         return attn.kv_bytes_per_token()
