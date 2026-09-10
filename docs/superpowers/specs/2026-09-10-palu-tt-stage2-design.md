@@ -129,7 +129,9 @@ the block being written contiguous so an operand index never wraps the CB -- the
 of reader push blocks" constraint the `TT_FATAL` above checks for `c_4`/`c_9`/`c_13` (reader-pushed
 CBs); `c_12` is compute-pushed but sized by the identical rule. Compute-operand reads (the CBs above
 that only the compute kernel indexes into, `c_1`/`c_9`/`c_13`'s resident form) do not need to avoid
-wrapping the way a reader's linear push does; only the push/pop granule matters.
+wrapping the way a reader's linear push does; only the push/pop granule matters -- and
+every such CB is still a whole number of blocks, which is what keeps an indexed operand read
+or an out-of-order `pack_tile` inside one contiguous block.
 
 Extra L1 at c = 512, r_k = 96 is about 500 KB in Phase 2 on top of the stock footprint
 (Wormhole L1 is 1.5 MB); Phase 1's streamed table needs 512 KB by itself at c = 512, so
@@ -272,7 +274,8 @@ which case that measurement wins.
 
 1. **CB reassignment breaks a stock path we still use.** Mitigated by a separate
    mask-CB define and host-side envelope asserts.
-2. **L1 at the default chunk (512).** Phase 2 adds ~500 KB of CBs at r_k = 96; if it does
+2. **L1 at the default chunk (512).** Phase 2 adds ~700 KB of CBs at r_k = 96 (measured ~990 KB total per core,
+   see the §4 annotation); if it does
    not fit at 8k the fused op runs at c = 128 and the stock sensitivity row at c = 128 is
    measured too, so the comparison stays honest.
 3. **Phase 1 slower than stock at r_k = 96.** Expected; both phases are reported and
