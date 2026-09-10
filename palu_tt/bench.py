@@ -49,6 +49,11 @@ def _parse_contexts(s):
 CONTEXTS = _parse_contexts(os.environ.get("PALU_BENCH_CONTEXTS"))
 BATCH = 32
 
+# Stage 2: the fused-kernel runtime flags for this process, set once by ``main`` from ``--fused``
+# and passed to every model/attention build below. ``--fused off`` (the default) reproduces the
+# stage-1 rows exactly -- ``build_model``'s own defaults are these same three values.
+FUSED = {"use_fused_k": False, "cs_recurrence": False, "fused_k_chunk": None}
+
 
 class Mesh:
     """Holds the open mesh so a bench can reopen it after an allocation failure.
@@ -97,7 +102,7 @@ def _kv_bytes(attn, args):
 def _decode_one(md, kind, palu_dir, ctx):
     """One (kind, context) decode cell. A function so every device tensor it holds dies on return."""
     try:
-        args, model, cfg = pm.build_model(md, kind, palu_dir, max_batch_size=BATCH, max_seq_len=ctx)
+        args, model, cfg = pm.build_model(md, kind, palu_dir, max_batch_size=BATCH, max_seq_len=ctx, **FUSED)
         tokens = torch.randint(0, args.vocab_size, (BATCH,))
         current_pos = torch.full((BATCH,), ctx - 1)
         pm.set_recon_len(cfg, current_pos)  # fixed for the whole timed loop -> no recompiles inside it
@@ -154,6 +159,11 @@ def _attention_one(md, kind, palu_dir, ctx):
         if kind == "palu":
             args.palu = convert.add_palu_to_state_dict(sd, hf.snapshot_dir(), palu_dir, 1, args.n_heads,
                                                        args.n_kv_heads, args.head_dim)
+            # ``build_model`` writes these from its keyword arguments; this path builds the layer by
+            # hand, so the same three runtime flags are set on the config here.
+            args.palu.runtime.use_fused_k = FUSED["use_fused_k"]
+            args.palu.runtime.cs_recurrence = FUSED["cs_recurrence"]
+            args.palu.runtime.fused_k_chunk = FUSED["fused_k_chunk"]
             cls = PaluAttention
         rope = RotarySetup(md, BATCH, args.head_dim, ctx, args.rope_theta, args.rope_scaling, False)
         attn = cls(md, TT_CCL(md), args, sd, weight_cache_path=args.weight_cache_path(ttnn.bfloat8_b), layer_num=0,
@@ -211,7 +221,7 @@ def bench_prefill(mesh, kind, palu_dir):
     """Time to first token: a single-user prefill of L tokens (batch 1)."""
     md = mesh.md
     try:
-        args, model, _ = pm.build_model(md, kind, palu_dir, max_batch_size=1, max_seq_len=8192)
+        args, model, _ = pm.build_model(md, kind, palu_dir, max_batch_size=1, max_seq_len=8192, **FUSED)
     except Exception as e:  # allocation failure -> report both lengths and stop, like the other modes
         traceback.print_exc()
         return {L: {"error": str(e)[:200], "phase": "build", "exc": type(e).__name__} for L in (2048, 8192)}
@@ -241,7 +251,8 @@ def bench_maxctx(mesh, kind, palu_dir):
     ok, kv = None, None
     for ctx in (1024, 2048, 4096, 8192, 16384, 32768):
         try:
-            args, model, _ = pm.build_model(mesh.md, kind, palu_dir, max_batch_size=BATCH, max_seq_len=ctx)
+            args, model, _ = pm.build_model(mesh.md, kind, palu_dir, max_batch_size=BATCH, max_seq_len=ctx,
+                                            **FUSED)
             ok = ctx
             kv = pm.kv_bytes_per_token_per_layer(model, args)
             del model, args
@@ -261,7 +272,16 @@ def main():
     p.add_argument("--kind", choices=["stock", "palu"], required=True)
     p.add_argument("--palu-dir", default=None)
     p.add_argument("--what", choices=["decode", "attention", "prefill", "maxctx"], required=True)
+    p.add_argument("--fused", choices=["off", "p1", "p2"], default="off",
+                   help="stage-2 fused K-reconstruction decode kernel: p1 = Phase 1 (streamed "
+                        "cos/sin), p2 = Phase 2 (chunk-relative rotation). Palu rows only.")
+    p.add_argument("--fused-k-chunk", type=int, default=None,
+                   help="override the fused op's K chunk (default: the op's own choice; Phase 1 is "
+                        "pinned to 128 by PaluAttention).")
     a = p.parse_args()
+    if a.kind == "stock" and a.fused != "off":
+        p.error("--fused is a Palu-path flag; --kind stock has no K reconstruction to fuse")
+    FUSED.update(use_fused_k=a.fused != "off", cs_recurrence=a.fused == "p2", fused_k_chunk=a.fused_k_chunk)
     RAW.mkdir(parents=True, exist_ok=True)
     mesh = Mesh()
     try:
@@ -269,7 +289,8 @@ def main():
                 "maxctx": bench_maxctx}[a.what](mesh, a.kind, a.palu_dir)
     finally:
         mesh.close()
-    r = {"row": a.row, "kind": a.kind, "palu_dir": a.palu_dir, "what": a.what}
+    r = {"row": a.row, "kind": a.kind, "palu_dir": a.palu_dir, "what": a.what,
+         "fused": a.fused, "fused_k_chunk": a.fused_k_chunk}
     if a.what in ("decode", "attention"):  # prefill/maxctx use their own fixed lengths, not CONTEXTS
         r["contexts"] = list(CONTEXTS)
     r["data"] = data

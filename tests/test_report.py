@@ -156,3 +156,87 @@ def test_main_refuses_to_render_when_no_row_has_any_data(tmp_path):
         report.main(raw=raw, out=out)
 
     assert out.read_text() == "| baseline | 7.254 |\n"  # untouched
+
+
+def test_stage2_renders_fused_rows_with_fidelity_and_vs_stock(tmp_path):
+    """A fused row: own timings + decode-check, inherited perplexity, and the stock ratio.
+
+    The fused kernel changes the decode path only, so ``ppl_palu_full_50_fk2.json`` deliberately
+    does not exist -- the row must show the base row's perplexity rather than a dash, and the
+    ``vs stock`` cell must be the stock decode minimum over this row's.
+    """
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    pd = _palu_recipe_dir(tmp_path / "palu_full_0.5", [(32, 128), (32, 64), (64, 64)])
+    _write(raw, "ppl_baseline", {"ppl": 7.254, "windows": 141, "row": "baseline",
+                                 "kind": "stock", "palu_dir": None})
+    _write(raw, "bench_decode_baseline", {
+        "row": "baseline", "kind": "stock", "palu_dir": None, "what": "decode",
+        "data": {"1024": {"p50_ms": 38.1, "min_ms": 38.0, "iters": 10,
+                          "kv_bytes_per_token_per_layer_per_chip": 1088.0},
+                 "8192": {"error": "TT_FATAL ... Out of Memory: Not enough space", "phase": "build",
+                          "exc": "RuntimeError"}},
+    })
+    # the base Palu row: perplexity and max context live here and are never re-measured for _fk*
+    _write(raw, "ppl_palu_full_50", {"ppl": 12.931, "windows": 141, "row": "palu_full_50",
+                                     "kind": "palu", "palu_dir": str(pd)})
+    _write(raw, "bench_maxctx_palu_full_50", {
+        "row": "palu_full_50", "kind": "palu", "palu_dir": str(pd), "what": "maxctx",
+        "data": {"max_context_batch32": 8192, "kv_bytes_per_token_per_layer_per_chip": 680.0},
+    })
+    # the fused row: its own decode/attention timings and its own fidelity check
+    _write(raw, "bench_decode_palu_full_50_fk2", {
+        "row": "palu_full_50_fk2", "kind": "palu", "palu_dir": str(pd), "what": "decode",
+        "fused": "p2", "fused_k_chunk": None,
+        "data": {"1024": {"p50_ms": 15.2, "min_ms": 15.0, "iters": 10,
+                          "kv_bytes_per_token_per_layer_per_chip": 680.0},
+                 "8192": {"p50_ms": 40.4, "min_ms": 40.0, "iters": 10,
+                          "kv_bytes_per_token_per_layer_per_chip": 680.0}},
+    })
+    _write(raw, "bench_attention_palu_full_50_fk2", {
+        "row": "palu_full_50_fk2", "kind": "palu", "palu_dir": str(pd), "what": "attention",
+        "fused": "p2", "fused_k_chunk": None,
+        "data": {"1024": {"p50_ms": 0.9, "min_ms": 0.8, "iters": 20,
+                          "kv_bytes_per_token_per_layer_per_chip": 680.0}},
+    })
+    _write(raw, "decode_check_palu_full_50_fk2", {
+        "row": "palu_full_50_fk2", "palu_dir": str(pd), "fused": "p2", "fused_k_chunk": None,
+        "steps": 64, "pcc_mean": 0.99884, "pcc_min": 0.99712, "argmax_agree": 0.984,
+    })
+    out = tmp_path / "stage2.md"
+
+    md = report.main(raw=raw, out=out, rows=report.ROWS2)
+
+    assert out.read_text() == md
+    assert md.startswith("# Stage 2 results: fused K-reconstruction decode kernel on a Wormhole n300")
+    assert "decode PCC (min / mean, 64 steps)" in md and "| argmax agree |" in md
+    quality = next(l for l in md.splitlines() if l.startswith("| palu_full_50_fk2 | ") and "0.9971" in l)
+    # inherited from the base row (no ppl_palu_full_50_fk2.json exists), plus the fidelity columns
+    assert "| 12.931 |" in quality, quality
+    assert "| 0.9971 / 0.9988 | 0.984 |" in quality, quality
+    assert "| 8192 |" in quality, quality                       # max context inherited too
+    # the naive base row has no decode-check JSON -> dashes, never invented numbers
+    base = next(l for l in md.splitlines() if l.startswith("| palu_full_50 | "))
+    assert "| - | - |" in base, base
+    # latency table: stock min 38.0 / row min 15.0
+    assert "| palu_full_50_fk2 | 1024 | 15.2 / 15.0 | 0.9 / 0.8 | 2.53x |" in md
+    # 8192: stock is OOM, so there is no ratio to quote
+    assert "| palu_full_50_fk2 | 8192 | 40.4 / 40.0 | - | - |" in md
+    # the stage-1 samples block is not repeated in stage 2
+    assert "## Generation samples" not in md
+
+
+def test_stage2_falls_back_to_the_base_row_for_prefill_and_leaves_stage1_alone(tmp_path):
+    """``_base_row`` maps an ``_fk*`` row to its base and a stage-1 row to itself."""
+    assert report._base_row("palu_full_50_fk2") == "palu_full_50"
+    assert report._base_row("svd_r64_fk1") == "svd_r64"
+    assert report._base_row("baseline") == "baseline"
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    _write(raw, "bench_prefill_svd_r64", {
+        "row": "svd_r64", "kind": "palu", "palu_dir": None, "what": "prefill",
+        "data": {"2048": {"p50_ms": 443.3, "min_ms": 442.3, "iters": 5}},
+    })
+    md = report.main(raw=raw, out=None, rows=report.ROWS2)
+    assert "| svd_r64_fk1 | 443.3 / 442.3 | - |" in md

@@ -14,8 +14,15 @@ Ranks come from the compressed dump's ``config.json``: our own ``compress.py`` d
 ``head_wise_ranks``, so for those the per-layer ranks are derived with ``convert.load_palu_dir``
 (the same reader the device path uses) and rendered as a range plus a mean.
 
-Usage: ``python -m palu_tt.report`` (writes the file and prints it). ``main(raw=..., out=...)``
-takes both paths as parameters so it can be rendered from a fixture directory in tests.
+Stage 2 (``--stage 2``) renders the same tables for the fused-kernel rows into
+``docs/results/stage2.md``: the ``_fk1``/``_fk2`` rows carry their own decode/attention timings and a
+``decode_check_*`` fidelity JSON, and inherit perplexity, prefill, KV bytes and max context from
+their base row -- those are prefill/allocation properties and are identical by construction, so they
+are not re-measured. Both stages go through the same ``main``; ``rows`` selects which.
+
+Usage: ``python -m palu_tt.report [--stage 2]`` (writes the file and prints it).
+``main(raw=..., out=..., rows=...)`` takes the paths and the row set as parameters so either stage
+can be rendered from a fixture directory in tests.
 
 Everything from ``MARKER`` onwards in an existing output file is hand-written prose and is
 carried over verbatim, so re-rendering after a re-measured row does not destroy the notes.
@@ -27,6 +34,7 @@ from pathlib import Path
 
 RAW = Path("docs/results/raw")
 OUT = Path("docs/results/stage1.md")
+OUT2 = Path("docs/results/stage2.md")
 
 # row -> human label. Order is the render order of every table.
 ROWS = {
@@ -37,6 +45,22 @@ ROWS = {
     "svd_rk128_rv64": "plain per-head SVD, V only (K left full rank)",
     "palu_full_50": "Palu full recipe (Fisher + whitening), ratio 0.5",
     "palu_full_70": "Palu full recipe (Fisher + whitening), ratio 0.7",
+}
+# Stage 2. A ``_fk1``/``_fk2`` row is the row above it re-run with the fused decode kernel; the two
+# leading spaces in its label indent it under its base row in the raw markdown.
+ROWS2 = {
+    "baseline": "stock `tt_transformers` attention",
+    "svd_r64": "plain per-head SVD, r_k = r_v = 64 (naive K reconstruction)",
+    "svd_r64_fk1": "  same, fused kernel Phase 1 (cos/sin streamed)",
+    "svd_r64_fk2": "  same, fused kernel Phase 2 (chunk-relative rotation)",
+    "svd_r96": "plain per-head SVD, r_k = r_v = 96 (naive)",
+    "svd_r96_fk2": "  same, fused Phase 2",
+    "palu_full_50": "Palu full recipe, ratio 0.5 (naive)",
+    "palu_full_50_fk1": "  same, fused Phase 1",
+    "palu_full_50_fk2": "  same, fused Phase 2",
+    "palu_full_70": "Palu full recipe, ratio 0.7 (naive)",
+    "palu_full_70_fk1": "  same, fused Phase 1",
+    "palu_full_70_fk2": "  same, fused Phase 2",
 }
 CONTEXTS = ("1024", "4096", "8192")
 PREFILLS = ("2048", "8192")
@@ -181,58 +205,132 @@ def _commit():
         return "unknown"
 
 
+def _base_row(row):
+    """``'palu_full_50_fk2'`` -> ``'palu_full_50'``; a stage-1 row maps to itself."""
+    return row.rsplit("_fk", 1)[0] if "_fk" in row else row
+
+
 def _row_data(raw, row):
-    ppl = _load(raw, f"ppl_{row}")
-    cpu = _load(raw, f"ppl_cpu_{row}")
+    """``(ppl, cpu, dec, att, pre, mx, chk)`` for one row.
+
+    A fused row (``_fk1``/``_fk2``) has its own decode/attention timings and its own decode-fidelity
+    JSON; perplexity, prefill, KV bytes and max context are prefill/allocation properties that the
+    fused decode kernel cannot change, so they are not re-measured and are read from the base row.
+    The row's own file still wins where it exists, so a deliberately re-measured fused perplexity
+    would be picked up.
+    """
+    base = _base_row(row)
+    ppl = _load(raw, f"ppl_{row}") or _load(raw, f"ppl_{base}")   # prefill measurement: same for fused rows
+    cpu = _load(raw, f"ppl_cpu_{row}") or _load(raw, f"ppl_cpu_{base}")
     dec = _load(raw, f"bench_decode_{row}")
     att = _load(raw, f"bench_attention_{row}")
-    pre = _load(raw, f"bench_prefill_{row}")
-    mx = _load(raw, f"bench_maxctx_{row}")
-    return ppl, cpu, dec, att, pre, mx
+    pre = _load(raw, f"bench_prefill_{row}") or _load(raw, f"bench_prefill_{base}")
+    mx = _load(raw, f"bench_maxctx_{row}") or _load(raw, f"bench_maxctx_{base}")
+    chk = _load(raw, f"decode_check_{row}")
+    return ppl, cpu, dec, att, pre, mx, chk
 
 
-def main(raw=RAW, out=OUT):
+def _vs_stock(stock_dec, dec, ctx):
+    """stock ``min_ms`` / row ``min_ms`` at one context, or ``"-"`` when either cell is missing or errored."""
+    a, b = _cell(stock_dec, ctx), _cell(dec, ctx)
+    if not a or not b or "min_ms" not in a or "min_ms" not in b:
+        return "-"
+    return f"{a['min_ms'] / b['min_ms']:.2f}x"
+
+
+def _fidelity(chk):
+    """``("min / mean", "agree")`` from a ``decode_check_*`` JSON; dashes when the row has none."""
+    if not chk:
+        return "-", "-"
+    return f"{chk['pcc_min']:.4f} / {chk['pcc_mean']:.4f}", f"{chk['argmax_agree']:.3f}"
+
+
+def _steps(files):
+    """The decode-check step counts present, as a header string (mirrors ``_windows``)."""
+    ss = sorted({f["steps"] for f in files if f and f.get("steps") is not None})
+    return "/".join(str(x) for x in ss) if ss else "?"
+
+
+def main(raw=RAW, out=OUT, rows=ROWS):
+    """Render one stage's tables. ``rows`` is ``ROWS`` (stage 1) or ``ROWS2`` (stage 2).
+
+    Stage 2 adds the two decode-fidelity columns to the quality table and a ``vs stock`` column to
+    the latency table; everything else -- the loaders, the KV arithmetic, the error cells and the
+    hand-written tail -- is shared, so the two documents cannot drift apart.
+    """
     raw = Path(raw)
-    loaded = {row: _row_data(raw, row) for row in ROWS}
+    stage2 = rows is ROWS2
+    loaded = {row: _row_data(raw, row) for row in rows}
     # A raw directory with nothing in it renders every row as dashes -- and would then overwrite the
     # committed tables with that. That is exactly what a fresh clone or a mistyped --raw looks like,
     # so refuse instead of writing. (One loaded file anywhere is enough: a partial re-measurement
     # legitimately renders the rest as dashes.)
     if not any(f is not None for files in loaded.values() for f in files):
         raise RuntimeError(
-            f"no results found in {raw}: not one of the {len(ROWS)} rows has a ppl_*/bench_* JSON, so "
+            f"no results found in {raw}: not one of the {len(rows)} rows has a ppl_*/bench_* JSON, so "
             f"rendering would replace the tables in {out} with dashes. Run the harnesses "
             "(python -m palu_tt.eval_ppl, python -m palu_tt.bench) or restore docs/results/raw/*.json first."
         )
     base = loaded.get("baseline")
-    kv_base = _kv_bytes(base[2:]) if base else None
+    kv_base = _kv_bytes(base[2:6]) if base else None
+    stock_dec = base[2] if base else None
     dev_windows = _windows([v[0] for v in loaded.values()])
     cpu_windows = _windows([v[1] for v in loaded.values()])
+    steps = _steps([v[6] for v in loaded.values()])
 
-    lines = [
-        "# Stage 1 results: Llama-3.1-8B-Instruct vs Palu(Llama-3.1-8B-Instruct) on a Wormhole n300",
-        "",
-        f"Generated by `python -m palu_tt.report` from `docs/results/raw/*.json` at commit "
-        f"`{_commit()}`; tt-metal v0.78.0, TP=2 (one n300, two chips), bfp8 weights and KV cache, "
-        "non-paged, untraced decode, `use_qk_fused=False` for both models.",
-        "",
-        "## Quality and memory",
-        "",
-        f"| row | recipe | r_k | r_v | ppl (device, {dev_windows} windows) | "
-        f"ppl (CPU fp32, {cpu_windows} windows) | KV B/token/layer/chip | "
-        "KV B/token (32 layers, both chips) | KV reduction | max ctx @ batch 32 |",
-        "|---|---|---|---|---|---|---|---|---|---|",
-    ]
-    for row, label in ROWS.items():
-        ppl, cpu, dec, att, pre, mx = loaded[row]
+    if stage2:
+        lines = [
+            "# Stage 2 results: fused K-reconstruction decode kernel on a Wormhole n300",
+            "",
+            f"Generated by `python -m palu_tt.report --stage 2` from `docs/results/raw/*.json` at commit "
+            f"`{_commit()}`; tt-metal v0.78.0 plus the `palu-sdpa` submodule branch, TP=2 (one n300, two "
+            "chips), bfp8 weights and latent caches, non-paged, untraced decode, `use_qk_fused=False` "
+            "for every row.",
+            "",
+            "A `_fk1`/`_fk2` row is the row above it re-run with `--fused p1` / `--fused p2`. Perplexity "
+            "here is measured **through prefill windows**, which reconstruct K and V in flight and never "
+            "touch the decode kernel, so a fused row's perplexity, prefill time, KV bytes and max "
+            "context are its base row's by construction and are not re-measured; the decode path is "
+            "checked instead by `palu_tt.decode_check` (naive vs fused, teacher-forced), whose two "
+            "columns are in the quality table.",
+            "",
+            "## Quality and memory",
+            "",
+            f"| row | recipe | r_k | r_v | ppl (device, {dev_windows} windows) | "
+            f"ppl (CPU fp32, {cpu_windows} windows) | decode PCC (min / mean, {steps} steps) | "
+            "argmax agree | KV B/token/layer/chip | KV B/token (32 layers, both chips) | "
+            "KV reduction | max ctx @ batch 32 |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|",
+        ]
+    else:
+        lines = [
+            "# Stage 1 results: Llama-3.1-8B-Instruct vs Palu(Llama-3.1-8B-Instruct) on a Wormhole n300",
+            "",
+            f"Generated by `python -m palu_tt.report` from `docs/results/raw/*.json` at commit "
+            f"`{_commit()}`; tt-metal v0.78.0, TP=2 (one n300, two chips), bfp8 weights and KV cache, "
+            "non-paged, untraced decode, `use_qk_fused=False` for both models.",
+            "",
+            "## Quality and memory",
+            "",
+            f"| row | recipe | r_k | r_v | ppl (device, {dev_windows} windows) | "
+            f"ppl (CPU fp32, {cpu_windows} windows) | KV B/token/layer/chip | "
+            "KV B/token (32 layers, both chips) | KV reduction | max ctx @ batch 32 |",
+            "|---|---|---|---|---|---|---|---|---|---|",
+        ]
+    for row, label in rows.items():
+        ppl, cpu, dec, att, pre, mx, chk = loaded[row]
         rk, rv = _ranks([ppl, dec, att, pre, mx])
         kv = _kv_model_mean(_kv_bytes([dec, att, mx]), [ppl, dec, att, pre, mx])
         kv_total = "-" if kv is None else f"{round(kv * LAYERS * CHIPS)}"
         ratio = "-" if (kv is None or not kv_base) else f"{kv_base / kv:.2f}x"
         maxctx = (mx.get("data") or {}).get("max_context_batch32") if mx else None
+        fid = ""
+        if stage2:
+            pcc, agree = _fidelity(chk)
+            fid = f"{pcc} | {agree} | "
         lines.append(
             f"| {row} | {label} | {rk} | {rv} | {_fmt(ppl and ppl.get('ppl'), 3)} | "
-            f"{_fmt(cpu and cpu.get('ppl'), 3)} | {'-' if kv is None else round(kv)} | "
+            f"{_fmt(cpu and cpu.get('ppl'), 3)} | {fid}{'-' if kv is None else round(kv)} | "
             f"{kv_total} | {ratio} | {maxctx or '-'} |"
         )
 
@@ -250,13 +348,27 @@ def main(raw=RAW, out=OUT):
         "partly host-dispatch-bound, so `p50` and `min` are both reported; `min` is the cleaner "
         "signal and every ratio quoted below the marker uses it.",
         "",
-        "| row | context | decode step p50 / min ms | attention-only p50 / min ms |",
-        "|---|---|---|---|",
     ]
-    for row in ROWS:
-        _, _, dec, att, _, _ = loaded[row]
+    if stage2:
+        lines += [
+            "`vs stock` is the stock row's decode `min_ms` divided by this row's at the same context "
+            "(> 1.00x is faster than stock); it is a dash at 8192, where stock does not allocate.",
+            "",
+            "| row | context | decode step p50 / min ms | attention-only p50 / min ms | vs stock |",
+            "|---|---|---|---|---|",
+        ]
+    else:
+        lines += [
+            "| row | context | decode step p50 / min ms | attention-only p50 / min ms |",
+            "|---|---|---|---|",
+        ]
+    for row in rows:
+        dec, att = loaded[row][2], loaded[row][3]
         for ctx in CONTEXTS:
-            lines.append(f"| {row} | {ctx} | {_timing(_cell(dec, ctx))} | {_timing(_cell(att, ctx))} |")
+            cells = f"| {row} | {ctx} | {_timing(_cell(dec, ctx))} | {_timing(_cell(att, ctx))} |"
+            if stage2:
+                cells += f" {_vs_stock(stock_dec, dec, ctx)} |"
+            lines.append(cells)
 
     lines += [
         "",
@@ -265,17 +377,17 @@ def main(raw=RAW, out=OUT):
         "| row | " + " | ".join(f"{L} tokens p50 / min ms" for L in PREFILLS) + " |",
         "|---|" + "---|" * len(PREFILLS),
     ]
-    for row in ROWS:
-        _, _, _, _, pre, _ = loaded[row]
+    for row in rows:
+        pre = loaded[row][4]
         lines.append(f"| {row} | " + " | ".join(_timing(_cell(pre, L)) for L in PREFILLS) + " |")
 
-    s = _load(raw, "samples")
-    if s:
+    smp = _load(raw, "samples") if not stage2 else None   # the samples are a stage-1 artefact
+    if smp:
         lines += ["", "## Generation samples (greedy, 48 tokens)", ""]
-        for prompt in next(iter(s.values())):
+        for prompt in next(iter(smp.values())):
             lines.append(f"**{prompt}**")
             lines.append("")
-            for row, d in s.items():
+            for row, d in smp.items():
                 text = " ".join(str(d.get(prompt, "")).split())
                 lines.append(f"- `{row}`: {text}")
             lines.append("")
@@ -294,8 +406,10 @@ def main(raw=RAW, out=OUT):
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="Render docs/results/stage1.md from the raw JSONs.")
+    ap = argparse.ArgumentParser(description="Render docs/results/stage{1,2}.md from the raw JSONs.")
     ap.add_argument("--raw", default=RAW, type=Path)
-    ap.add_argument("--out", default=OUT, type=Path)
+    ap.add_argument("--stage", type=int, choices=(1, 2), default=1)
+    ap.add_argument("--out", default=None, type=Path, help="default: stage1.md / stage2.md")
     a = ap.parse_args()
-    print(main(raw=a.raw, out=a.out))
+    print(main(raw=a.raw, out=a.out or (OUT2 if a.stage == 2 else OUT),
+               rows=ROWS2 if a.stage == 2 else ROWS))
