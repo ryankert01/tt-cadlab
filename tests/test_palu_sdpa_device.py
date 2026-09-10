@@ -116,3 +116,39 @@ def test_envelope_is_enforced(mesh_device):
     with pytest.raises(RuntimeError, match="w_rot"):
         ttnn.transformer.palu_sdpa_decode(_dev(mesh_device, q), _dev(mesh_device, k_lat),
                                           _dev(mesh_device, u_k[None]), cs, _dev(mesh_device, v), **good)
+    with pytest.raises(RuntimeError, match="optional together"):     # trans_mat without rot_step
+        ttnn.transformer.palu_sdpa_decode(_dev(mesh_device, q), _dev(mesh_device, k_lat), w, cs, _dev(mesh_device, v),
+                                          trans_mat=_dev(mesh_device, fused.trans_mat_tile()), **good)
+    with pytest.raises(RuntimeError, match="Phase 1"):               # streamed table needs the small chunk
+        bad = dict(good, **_cfg(256))
+        ttnn.transformer.palu_sdpa_decode(_dev(mesh_device, q), _dev(mesh_device, k_lat), w, cs,
+                                          _dev(mesh_device, v), **bad)
+
+
+@pytest.mark.parametrize("r_k", [32, 64, 96])
+@pytest.mark.parametrize("batch", [1, 32])
+def test_phase2_matches_reference_default_chunk(mesh_device, r_k, batch):
+    _check(mesh_device, batch, 1024, r_k, 64, k_chunk=0, phase2=True)      # the op picks 512
+
+
+@pytest.mark.parametrize("k_chunk", [128, 512])
+def test_phase2_chunk_override(mesh_device, k_chunk):
+    _check(mesh_device, 32, 1024, 64, 64, k_chunk=k_chunk, phase2=True)
+
+
+@pytest.mark.parametrize("S", [4096, 8192])
+def test_phase2_long_context(mesh_device, S):
+    # batch 1 -> 16 cores per KV head -> every core starts at a different chunk (k_chunk_start steps)
+    _check(mesh_device, 1, S, 64, 64, k_chunk=0, phase2=True)
+
+
+def test_phase2_long_context_full_batch(mesh_device):
+    _check(mesh_device, 32, 8192, 32, 64, k_chunk=0, phase2=True)
+
+
+def test_phase1_and_phase2_agree(mesh_device):
+    q, k_lat, u_k, v, pos, cos, sin = _inputs(32, 1024, 64, 64)
+    p1 = _fused(mesh_device, q, k_lat, u_k, v, pos, cos, sin, 64, 128, phase2=False)
+    p2 = _fused(mesh_device, q, k_lat, u_k, v, pos, cos, sin, 64, 128, phase2=True)
+    ok, msg = comp_pcc(p1, p2, 0.998)
+    assert ok, msg
