@@ -1,0 +1,37 @@
+{
+ "row": "palu_full_70_fk2",
+ "kind": "palu",
+ "palu_dir": "compressed/palu_full_0.7",
+ "what": "attention",
+ "fused": "p2",
+ "fused_k_chunk": null,
+ "batch": 16,
+ "contexts": [
+  1024,
+  4096,
+  8192
+ ],
+ "data": {
+  "1024": {
+   "p50_ms": 1.8182130297645926,
+   "min_ms": 1.4847160782665014,
+   "iters": 20,
+   "kv_bytes_per_token_per_layer_per_chip": 680.0,
+   "mesh_reopened_first": false
+  },
+  "4096": {
+   "p50_ms": 1.2649904238060117,
+   "min_ms": 1.1995381209999323,
+   "iters": 20,
+   "kv_bytes_per_token_per_layer_per_chip": 680.0,
+   "mesh_reopened_first": false
+  },
+  "8192": {
+   "p50_ms": 2.1447869949042797,
+   "min_ms": 1.7554489895701408,
+   "iters": 20,
+   "kv_bytes_per_token_per_layer_per_chip": 680.0,
+   "mesh_reopened_first": false
+  }
+ }
+}

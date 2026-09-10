@@ -1,0 +1,37 @@
+{
+ "row": "palu_full_50",
+ "kind": "palu",
+ "palu_dir": "compressed/palu_full_0.5",
+ "what": "decode",
+ "fused": "off",
+ "fused_k_chunk": null,
+ "batch": 16,
+ "contexts": [
+  1024,
+  4096,
+  8192
+ ],
+ "data": {
+  "1024": {
+   "p50_ms": 60.49802957568318,
+   "min_ms": 60.426677111536264,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 680.0,
+   "mesh_reopened_first": false
+  },
+  "4096": {
+   "p50_ms": 148.87860207818449,
+   "min_ms": 148.80309207364917,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 680.0,
+   "mesh_reopened_first": false
+  },
+  "8192": {
+   "p50_ms": 260.8774721156806,
+   "min_ms": 260.71045617572963,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 680.0,
+   "mesh_reopened_first": false
+  }
+ }
+}

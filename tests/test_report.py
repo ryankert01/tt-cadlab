@@ -262,9 +262,9 @@ def test_batch_sweep_table_renders_present_and_missing_cells(tmp_path):
 
     assert out.read_text() == md
     assert "## Decode step by batch size" in md
-    # b=4 -> 40.0 ms, 4 * 1000 / 40.0 = 100 tok/s; b=1/2/8/16 have no file -> "-"; b=32 is read
+    # b=4 -> 40.0 ms, 4 * 1000 / 40.0 = 100 tok/s; b=1/16 have no file -> "-"; b=32 is read
     # from the unsuffixed file (the same one the latency table uses)
-    assert "| baseline | - | - | 40.0 (100) | - | - | 10.0 (3200) |" in md
+    assert "| baseline | - | 40.0 (100) | - | 10.0 (3200) |" in md
 
 
 def test_sweep_cell_and_display_distinguish_missing_from_errored(tmp_path):

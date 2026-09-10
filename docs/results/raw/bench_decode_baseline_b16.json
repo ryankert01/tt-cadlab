@@ -1,0 +1,37 @@
+{
+ "row": "baseline",
+ "kind": "stock",
+ "palu_dir": null,
+ "what": "decode",
+ "fused": "off",
+ "fused_k_chunk": null,
+ "batch": 16,
+ "contexts": [
+  1024,
+  4096,
+  8192
+ ],
+ "data": {
+  "1024": {
+   "p50_ms": 34.63905246462673,
+   "min_ms": 34.580560866743326,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 1088.0,
+   "mesh_reopened_first": false
+  },
+  "4096": {
+   "p50_ms": 43.751141405664384,
+   "min_ms": 43.60682307742536,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 1088.0,
+   "mesh_reopened_first": false
+  },
+  "8192": {
+   "p50_ms": 55.296291946433485,
+   "min_ms": 55.14365993440151,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 1088.0,
+   "mesh_reopened_first": false
+  }
+ }
+}

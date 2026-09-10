@@ -65,8 +65,9 @@ ROWS2 = {
 CONTEXTS = ("1024", "4096", "8192")
 PREFILLS = ("2048", "8192")
 # Stage 2 batch sweep (Task 7): decode step time at these batch sizes, for these rows. 32 is the
-# stage-1/2 default batch and therefore has no ``_b<B>`` suffix on its JSON file.
-SWEEP_BATCHES = (1, 2, 4, 8, 16, 32)
+# stage-1/2 default batch and therefore has no ``_b<B>`` suffix on its JSON file. Reduced from
+# (1, 2, 4, 8, 16, 32) to (1, 4, 16, 32) mid-run by the user; batches 2 and 8 were never measured.
+SWEEP_BATCHES = (1, 4, 16, 32)
 SWEEP_ROWS = ("baseline", "palu_full_50", "palu_full_50_fk2", "palu_full_70_fk2")
 HEAD_DIM = 128
 LAYERS = 32
