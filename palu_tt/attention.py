@@ -136,7 +136,7 @@ class PaluAttention(LightweightModule):
         # --- up-projections -------------------------------------------------------------------------
         # Only the *active* paths get a device tensor. On a full-rank fast path the converter has
         # already folded the factor into the QKV weight and emits an identity `u_*` that nothing
-        # reads, so uploading it would burn DRAM (u_k_decode alone is ~64 MiB/chip at batch 32) on a
+        # reads, so uploading it would burn DRAM (u_k_decode alone is 2-4 MiB/chip per layer at batch 32, 64-128 MiB/chip over 32 layers) on a
         # tensor no forward touches. The attribute is simply absent there -- every use below is
         # guarded by the same `recon_*` flag that decides whether it is built.
         shard_heads = ttnn.ShardTensorToMesh(mesh_device, dim=1)
