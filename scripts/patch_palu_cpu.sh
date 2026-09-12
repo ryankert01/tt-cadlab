@@ -38,6 +38,11 @@ PY
 # for 32 samples; honor the CLI arg instead of the upstream literal.
 sed -i 's/get_calib_data(args.calib_dataset, tokenizer, args.model_id, 2048, seqlen=args.calib_seqlen)/get_calib_data(args.calib_dataset, tokenizer, args.model_id, args.n_fisher_calib_samples, seqlen=args.calib_seqlen)/g' palu/rank_search.py
 
+# rank_search.py: the Fisher cache file is keyed by model id only, so a run with a different
+# --n_fisher_calib_samples would silently reuse another run's Fisher information. Key it by the
+# calibration set size as well (the stage-1 32-sample cache was renamed to the _n32 name by hand).
+sed -i "s|cache_file = f\"cache/{model_id.replace('/','_')}_calib_fisher_info.pt\"|cache_file = f\"cache/{model_id.replace('/','_')}_calib_fisher_info_n{len(calib_loader)}.pt\"|" palu/rank_search.py
+
 # data_utils.py: the canonical no-namespace "wikitext" HF dataset repo id
 # fails to resolve under current huggingface_hub (hf:// URI parsing requires
 # "namespace/name"); the "Salesforce/wikitext" mirror is byte-identical and

@@ -1,21 +1,23 @@
 #!/usr/bin/env bash
 # Palu's own recipe on CPU: Fisher-uniform rank search + whitened decomposition (float64 whitening via
-# scripts/patch_palu_cpu.sh). Usage: scripts/run_calibration.sh <ratio> [group_size]   (group_size 1 = M-LRD,
-# 4 = G-LRD one group per chip). Output: compressed/palu_full_<ratio> (gs 1) or compressed/glrd_<ratio>.
+# scripts/patch_palu_cpu.sh). Usage: scripts/run_calibration.sh <ratio> [group_size] [n_fisher]   (group_size 1 =
+# M-LRD, 4 = G-LRD one group per chip; n_fisher = Fisher calibration samples, default 32). Output:
+# compressed/palu_full_<ratio> (gs 1) or compressed/glrd_<ratio>, with a _f<n_fisher> suffix when n_fisher != 32.
 # The full HF dump is 30 GB; only the k_proj/v_proj factors are kept (palu_lowrank.safetensors, ~0.6 GB).
 set -euo pipefail
 source "$(dirname "$0")/env.sh"
 ratio="${1:-0.5}"
 gs="${2:-1}"
+nf="${3:-32}"
 scripts/patch_palu_cpu.sh
 uv pip install loguru click lm-eval==0.4.2 2>/dev/null || true
 cd third_party/palu
 HF_DIR="$(python -c 'from palu_tt import hf; print(hf.snapshot_dir())')"
 mkdir -p cache
-name="palu_full_${ratio}"; [[ "$gs" != "1" ]] && name="glrd_${ratio}"
+name="palu_full_${ratio}"; [[ "$gs" != "1" ]] && name="glrd_${ratio}"; [[ "$nf" != "32" ]] && name="${name}_f${nf}"
 nice -n 10 python compress.py --model_id "$HF_DIR" --device cpu --calib_dataset wikitext2 --calib_seqlen 1024 \
   --param_ratio_target "$ratio" --search_method fisher_uniform --decompose_method whiten --head_group_size "$gs" \
-  --use_cache --dump_huggingface_model 2>&1 | tee "../../compressed/calibration_${name}.log"
+  --n_fisher_calib_samples "$nf" --use_cache --dump_huggingface_model 2>&1 | tee "../../compressed/calibration_${name}.log"
 out="$(ls -d *_ratio-${ratio}_gs-${gs}-fisher_uniform-whiten 2>/dev/null | head -1)"
 python - "$out" <<'PY'
 import sys, glob, os
