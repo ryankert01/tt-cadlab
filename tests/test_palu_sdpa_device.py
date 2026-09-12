@@ -237,7 +237,9 @@ def test_in_kernel_v_with_per_head_latents(mesh_device):
 
 
 def test_group_envelope_is_enforced(mesh_device):
-    q, k_lat, u_k, v_lat, u_v, pos, cos, sin = _inputs_group(1, 256, 128, 256, 4)
+    # r_v = 128 = head_dim_v so the "V latent width == head_dim_v" absorbed-V check does not fire before
+    # the "grouped latents need u_v" check the second case below is meant to exercise.
+    q, k_lat, u_k, v_lat, u_v, pos, cos, sin = _inputs_group(1, 256, 128, 128, 4)
     w = _dev(mesh_device, fused.w_rot_from_u_k(u_k)[None])
     cs = _dev(mesh_device, fused.cs_table(cos, sin, 256)[None, None])
     good = dict(head_dim_v=HD, cur_pos_tensor=_pos(mesh_device, pos), scale=HD ** -0.5, **_cfg(128))
