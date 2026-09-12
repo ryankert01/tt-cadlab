@@ -30,7 +30,7 @@
   2,
   2,
   2,
-  4,
+  2,
   2,
   2,
   2,
@@ -48,22 +48,22 @@
  ],
  "data": {
   "1024": {
-   "p50_ms": 59.718381497077644,
-   "min_ms": 59.64578106068075,
+   "p50_ms": 59.531572507694364,
+   "min_ms": 59.4942350871861,
    "iters": 10,
    "kv_bytes_per_token_per_layer_per_chip": 714.0,
    "mesh_reopened_first": false
   },
   "4096": {
-   "p50_ms": 120.07753143552691,
-   "min_ms": 119.94798085652292,
+   "p50_ms": 119.81669696979225,
+   "min_ms": 119.77486009709537,
    "iters": 10,
    "kv_bytes_per_token_per_layer_per_chip": 714.0,
    "mesh_reopened_first": false
   },
   "8192": {
-   "p50_ms": 200.48923057038337,
-   "min_ms": 200.37907711230218,
+   "p50_ms": 200.1933939754963,
+   "min_ms": 200.12596109881997,
    "iters": 10,
    "kv_bytes_per_token_per_layer_per_chip": 714.0,
    "mesh_reopened_first": false

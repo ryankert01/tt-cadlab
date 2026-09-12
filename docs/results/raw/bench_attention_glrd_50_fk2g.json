@@ -7,7 +7,7 @@
  "fused_k_chunk": null,
  "group_heads": "auto",
  "group_heads_per_layer": [
-  4
+  2
  ],
  "batch": 32,
  "contexts": [
@@ -17,22 +17,22 @@
  ],
  "data": {
   "1024": {
-   "p50_ms": 2.2549129789695144,
-   "min_ms": 1.5470709186047316,
+   "p50_ms": 2.0841164514422417,
+   "min_ms": 1.3852838892489672,
    "iters": 20,
    "kv_bytes_per_token_per_layer_per_chip": 612.0,
    "mesh_reopened_first": false
   },
   "4096": {
-   "p50_ms": 3.8111109752207994,
-   "min_ms": 3.765817964449525,
+   "p50_ms": 3.387155826203525,
+   "min_ms": 3.0279529746621847,
    "iters": 20,
    "kv_bytes_per_token_per_layer_per_chip": 612.0,
    "mesh_reopened_first": false
   },
   "8192": {
-   "p50_ms": 6.26692152582109,
-   "min_ms": 6.034140009433031,
+   "p50_ms": 5.95545768737793,
+   "min_ms": 5.342052085325122,
    "iters": 20,
    "kv_bytes_per_token_per_layer_per_chip": 612.0,
    "mesh_reopened_first": false

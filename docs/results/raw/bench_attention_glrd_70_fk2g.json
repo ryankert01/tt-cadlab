@@ -17,22 +17,22 @@
  ],
  "data": {
   "1024": {
-   "p50_ms": 1.863562036305666,
-   "min_ms": 1.5194460283964872,
+   "p50_ms": 2.203123993240297,
+   "min_ms": 1.6144798137247562,
    "iters": 20,
    "kv_bytes_per_token_per_layer_per_chip": 714.0,
    "mesh_reopened_first": false
   },
   "4096": {
-   "p50_ms": 3.9834525668993592,
-   "min_ms": 3.4043670166283846,
+   "p50_ms": 4.06648067291826,
+   "min_ms": 3.9903740398585796,
    "iters": 20,
    "kv_bytes_per_token_per_layer_per_chip": 714.0,
    "mesh_reopened_first": false
   },
   "8192": {
-   "p50_ms": 6.519548944197595,
-   "min_ms": 5.828889086842537,
+   "p50_ms": 5.9896670281887054,
+   "min_ms": 5.879163043573499,
    "iters": 20,
    "kv_bytes_per_token_per_layer_per_chip": 714.0,
    "mesh_reopened_first": false

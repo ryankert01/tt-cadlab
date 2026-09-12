@@ -201,14 +201,18 @@ python -m palu_tt.report --stage 2c                                   # -> docs/
 `heads_per_core`, the number of KV heads of one G-LRD group that a single core owns. `1` is the
 stage-2b per-head kernel, where each of the four heads of a group re-reads the whole group latent;
 `2` and `4` turn on the group-shared kernel, which reads each latent chunk once per core and rebuilds
-that core's heads from it. `auto` (the default for `bench` and `eval_tasks`) lets the host pick the
-largest H per layer that both fits L1 and still fills the 64-core grid; the chosen values reach every
-result JSON as `group_heads_per_layer`. Two consequences worth knowing:
+that core's heads from it. `auto` (the default for `bench` and `eval_tasks`) picks H per layer by
+taking, among the values that fit L1 and fill the 64-core grid, the layout that needs the **fewest
+tree-reduction rounds**, breaking ties by the largest H; the chosen values reach every result JSON as
+`group_heads_per_layer`. Two consequences worth knowing:
 
-- The occupancy rule returns `H = 1` for every layer below batch 8, because a group-mode split is
-  capped at 4 cores per item while the per-head kernel spreads one head over up to 16. So `auto` at
-  batch 1 measures the stage-2b kernel; `decode_check`, which runs at batch 1, therefore defaults to
-  `--group-heads 2` rather than `auto`.
+- On this hardware that rule gives `H = 2` at batch 32 (64 items, one core each, no sequence split)
+  and `H = 1` at batch 16 and below, because there a group layout would have to split an item over
+  more cores than the per-head kernel does and pay extra reduction rounds for it. The rule replaced an
+  occupancy-only one that preferred the largest grid-filling H; that measured slower on both dumps
+  (`docs/results/stage2c.md` §2.2, §2.4). Since `auto` therefore never selects group mode below batch
+  32, `decode_check` — which runs at batch 1 — defaults to `--group-heads 2` rather than `auto`, so
+  that it actually exercises the group kernel.
 - `eval_tasks` scores whole continuations in prefill, so the flag cannot change its numbers at all.
 
 Each harness writes one JSON to `docs/results/raw/`; `palu_tt.report` reads only those and refuses to
