@@ -87,8 +87,10 @@ PAPER = {
     "M-LRD": {"openbookqa": 36.2, "hellaswag": 61.6, "piqa": 71.6, "arc_easy": 70.9,
               "arc_challenge": 41.0, "winogrande": 69.1, "avg6": 58.40},
 }
-for _p in PAPER.values():
-    _p["avg5"] = round(sum(_p[t] for t in TASK_COLS) / len(TASK_COLS), 2)
+PAPER = {
+    method: {**entry, "avg5": round(sum(entry[t] for t in TASK_COLS) / len(TASK_COLS), 2)}
+    for method, entry in PAPER.items()
+}
 CONTEXTS = ("1024", "4096", "8192")
 PREFILLS = ("2048", "8192")
 # Stage 2 batch sweep (Task 7): decode step time at these batch sizes, for these rows. 32 is the
@@ -166,7 +168,9 @@ def _per_layer_ranks(palu_dir, cfg):
     # the full HF config, so ``num_key_value_heads`` is read from there when present; a head-wise
     # dump (group size 1, including the minimal ``head_wise_ranks``-only configs in tests) has no
     # such key and falls back to the rank-list length, which is the head count in that case.
-    n_kv_heads = cfg.get("num_key_value_heads") or len(next(iter(ranks.values())))
+    n_kv_heads = cfg.get("num_key_value_heads")
+    if n_kv_heads is None:
+        n_kv_heads = len(next(iter(ranks.values())))
     head_dim = int(cfg.get("head_dim", HEAD_DIM))
     lr = load_palu_dir(Path(palu_dir), n_layers, n_kv_heads, head_dim)
     return [lr[i].r_k for i in range(n_layers)], [lr[i].r_v for i in range(n_layers)]
@@ -371,6 +375,34 @@ def _steps(files):
     return "/".join(str(x) for x in ss) if ss else "?"
 
 
+def _quality_row(entry, kv_base):
+    """Common quality-table cells for one row: ranks, KV bytes/total/reduction, max ctx.
+
+    Shared by stage 1/2 (``main``) and stage 2b (``_stage2b_lines``); the two callers differ only
+    in which extra columns (CPU ppl, decode fidelity) they append around this.
+    """
+    ppl, cpu, dec, att, pre, mx, chk, tsk = entry
+    rk, rv = _ranks([ppl, dec, att, pre, mx])
+    kv = _kv_model_mean(_kv_bytes([dec, att, mx]), [ppl, dec, att, pre, mx])
+    kv_total = "-" if kv is None else f"{round(kv * LAYERS * CHIPS)}"
+    ratio = "-" if (kv is None or not kv_base) else f"{kv_base / kv:.2f}x"
+    maxctx = (mx.get("data") or {}).get("max_context_batch32") if mx else None
+    return rk, rv, kv, kv_total, ratio, maxctx
+
+
+def _latency_rows(rows, loaded, stock_dec, vs_stock):
+    """``| row | context | decode | attention |`` lines for each row across ``CONTEXTS``, with an
+    optional trailing ``vs stock`` column -- shared by stage 1/2 (``main``) and stage 2b so the two
+    tables cannot drift apart."""
+    for row in rows:
+        dec, att = loaded[row][2], loaded[row][3]
+        for ctx in CONTEXTS:
+            cells = f"| {row} | {ctx} | {_timing(_cell(dec, ctx))} | {_timing(_cell(att, ctx))} |"
+            if vs_stock:
+                cells += f" {_vs_stock(stock_dec, dec, ctx)} |"
+            yield cells
+
+
 def main(raw=RAW, out=OUT, rows=ROWS):
     """Render one stage's tables. ``rows`` is ``ROWS`` (stage 1) or ``ROWS2`` (stage 2).
 
@@ -444,11 +476,7 @@ def main(raw=RAW, out=OUT, rows=ROWS):
         ]
     for row, label in rows.items():
         ppl, cpu, dec, att, pre, mx, chk, tsk = loaded[row]
-        rk, rv = _ranks([ppl, dec, att, pre, mx])
-        kv = _kv_model_mean(_kv_bytes([dec, att, mx]), [ppl, dec, att, pre, mx])
-        kv_total = "-" if kv is None else f"{round(kv * LAYERS * CHIPS)}"
-        ratio = "-" if (kv is None or not kv_base) else f"{kv_base / kv:.2f}x"
-        maxctx = (mx.get("data") or {}).get("max_context_batch32") if mx else None
+        rk, rv, kv, kv_total, ratio, maxctx = _quality_row(loaded[row], kv_base)
         fid = ""
         if stage2:
             pcc, agree = _fidelity(chk)
@@ -493,13 +521,7 @@ def main(raw=RAW, out=OUT, rows=ROWS):
             "| row | context | decode step p50 / min ms | attention-only p50 / min ms |",
             "|---|---|---|---|",
         ]
-    for row in rows:
-        dec, att = loaded[row][2], loaded[row][3]
-        for ctx in CONTEXTS:
-            cells = f"| {row} | {ctx} | {_timing(_cell(dec, ctx))} | {_timing(_cell(att, ctx))} |"
-            if stage2:
-                cells += f" {_vs_stock(stock_dec, dec, ctx)} |"
-            lines.append(cells)
+    lines += _latency_rows(rows, loaded, stock_dec, stage2)
 
     if stage2:
         lines += ["", "## Decode step by batch size", ""]
@@ -656,12 +678,8 @@ def _stage2b_lines(raw, rows, loaded, base, kv_base, dev_windows):
         "|---|---|---|---|---|---|---|---|---|",
     ]
     for row, label in rows.items():
-        ppl, cpu, dec, att, pre, mx, chk, tsk = loaded[row]
-        rk, rv = _ranks([ppl, dec, att, pre, mx])
-        kv = _kv_model_mean(_kv_bytes([dec, att, mx]), [ppl, dec, att, pre, mx])
-        kv_total = "-" if kv is None else f"{round(kv * LAYERS * CHIPS)}"
-        ratio = "-" if (kv is None or not kv_base) else f"{kv_base / kv:.2f}x"
-        maxctx = (mx.get("data") or {}).get("max_context_batch32") if mx else None
+        ppl = loaded[row][0]
+        rk, rv, kv, kv_total, ratio, maxctx = _quality_row(loaded[row], kv_base)
         lines.append(
             f"| {row} | {label} | {rk} | {rv} | {_fmt(ppl and ppl.get('ppl'), 3)} | "
             f"{'-' if kv is None else round(kv)} | {kv_total} | {ratio} | {maxctx or '-'} |"
@@ -684,13 +702,7 @@ def _stage2b_lines(raw, rows, loaded, base, kv_base, dev_windows):
         "| row | context | decode step p50 / min ms | attention-only p50 / min ms | vs stock |",
         "|---|---|---|---|---|",
     ]
-    for row, _ in ext:
-        dec, att = ext_loaded[row][2], ext_loaded[row][3]
-        for ctx in CONTEXTS:
-            lines.append(
-                f"| {row} | {ctx} | {_timing(_cell(dec, ctx))} | {_timing(_cell(att, ctx))} | "
-                f"{_vs_stock(stock_dec, dec, ctx)} |"
-            )
+    lines += _latency_rows([row for row, _ in ext], ext_loaded, stock_dec, True)
 
     fk2_rows = [(row, label) for row, label in ext if row.endswith("_fk2")]
     lines += ["", "## Decode fidelity", ""]
