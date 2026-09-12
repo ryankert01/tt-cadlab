@@ -91,7 +91,9 @@ def main():
     p.add_argument("--fused", choices=["off", "p1", "p2"], default="off")
     p.add_argument("--group-heads", choices=["auto", "1", "2", "4"], default="auto",
                    help="stage-2c group-shared mode: KV heads per core in the fused op (auto = the "
-                        "largest that fits L1 per layer, 1 = the stage 2b per-head kernel).")
+                        "largest that fits L1 per layer, 1 = the stage 2b per-head kernel). lm-eval "
+                        "scores these tasks by scoring whole continuations in prefill, so the decode "
+                        "kernel -- and therefore this flag -- does not affect the numbers here.")
     p.add_argument("--tasks", default=",".join(TASKS))
     p.add_argument("--limit", type=int, default=None)
     a = p.parse_args()

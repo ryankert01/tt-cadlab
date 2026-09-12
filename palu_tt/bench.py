@@ -28,7 +28,7 @@ from models.tt_transformers.tt.common import Mode, copy_host_to_device
 from models.tt_transformers.tt.model_config import ModelArgs
 from models.tt_transformers.tt.rope import RotarySetup
 
-from palu_tt import convert, device as dev, hf, model as pm
+from palu_tt import convert, device as dev, fused, hf, model as pm
 from palu_tt.attention import PaluAttention
 
 RAW = Path("docs/results/raw")
@@ -56,6 +56,9 @@ BATCH = 32
 # and passed to every model/attention build below. ``--fused off`` (the default) reproduces the
 # stage-1 rows exactly -- ``build_model``'s own defaults are these same three values.
 FUSED = {"use_fused_k": False, "cs_recurrence": False, "fused_k_chunk": None, "group_heads": None}
+# stage 2c: per-layer heads_per_core the last model/layer built actually ran with (after any allocator
+# fallback), so a row's timings can be read against the H that produced them. Empty for non-grouped rows.
+GROUP_HEADS = []
 
 
 class Mesh:
@@ -126,6 +129,7 @@ def _decode_one(md, kind, palu_dir, ctx):
         e.phase = "timing"
         raise
     row["kv_bytes_per_token_per_layer_per_chip"] = pm.kv_bytes_per_token_per_layer(model, args)
+    GROUP_HEADS[:] = fused.group_heads_used(cfg)
     del model
     return row
 
@@ -204,6 +208,7 @@ def _attention_one(md, kind, palu_dir, ctx):
         e.phase = "timing"
         raise
     row["kv_bytes_per_token_per_layer_per_chip"] = _kv_bytes(attn, args)
+    GROUP_HEADS[:] = fused.group_heads_used(getattr(args, "palu", None))
     del attn
     return row
 
@@ -393,7 +398,8 @@ def main():
     finally:
         mesh.close()
     r = {"row": a.row, "kind": a.kind, "palu_dir": a.palu_dir, "what": a.what,
-         "fused": a.fused, "fused_k_chunk": a.fused_k_chunk, "group_heads": a.group_heads, "batch": a.batch}
+         "fused": a.fused, "fused_k_chunk": a.fused_k_chunk, "group_heads": a.group_heads,
+         "group_heads_per_layer": list(GROUP_HEADS), "batch": a.batch}
     if a.what in ("decode", "attention"):  # prefill/maxctx use their own fixed lengths, not CONTEXTS
         r["contexts"] = list(CONTEXTS)
     r["data"] = data

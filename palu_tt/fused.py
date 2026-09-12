@@ -229,6 +229,14 @@ def group_heads_per_core(r_k: int, r_v: int, chunk: int, phase2: bool, heads_per
     fills it (that is the split the stock rule is built to produce), so in practice this means "a
     group layout has to fill the grid".
 
+    **That gate turns group mode off entirely below batch 8.** At batch 4 a four-head group is 4 items
+    over 4 cores (16 of 64) and even H = 2 only reaches 32, while the per-head kernel spreads a single
+    head over 4 cores and fills the grid; at batch 1 it is 4 / 8 / 64. So this returns H = 1 for every
+    layer at batch 4, 2 and 1, and a batch-1 harness (``palu_tt.decode_check``) runs the stage 2b
+    per-head kernel unless it passes an explicit H. That is deliberate -- nobody has measured whether
+    trading three quarters of the grid for a 4x cut in latent reads pays off at batch 1 -- but it means
+    ``auto`` is not a way to exercise the group kernel at small batch.
+
     H = 1 is always the fallback -- it is the stage 2b per-head kernel, which the op runs with
     ``heads_per_core=None`` and which always fits (it is the program stage 2b already shipped).
     """
@@ -244,3 +252,29 @@ def group_heads_per_core(r_k: int, r_v: int, chunk: int, phase2: bool, heads_per
             fits.append((h, active))
     best = max(a for _, a in fits)
     return max(h for h, a in fits if a == best)
+
+
+# ---------------- Stage 2c: recording which H each layer actually ran with ----------------
+#
+# The estimate above is per layer, and PaluAttention can still fall back to a smaller H when the
+# allocator refuses, so the only authority on what a run used is the run itself. The attention module
+# records it here (keyed on the PaluConfig's device_tables, which lives exactly as long as one model
+# build) and the harnesses copy it into their result JSON, so a row's numbers can be read against the
+# H that produced them. Both are pure dict operations -- no device, no ttnn.
+
+
+def record_group_heads(device_tables: dict, layer: int, heads_per_core: int) -> None:
+    """Record the heads_per_core layer ``layer`` ended up using. Idempotent per layer (last wins)."""
+    used = device_tables.setdefault("group_heads", [])
+    while len(used) <= layer:
+        used.append(1)
+    used[layer] = int(heads_per_core)
+
+
+def group_heads_used(config) -> list:
+    """Per-layer heads_per_core for the model built from ``config`` (index = layer).
+
+    ``[]`` when nothing recorded -- a non-grouped model, or a row that never ran the fused decode.
+    """
+    tables = getattr(config, "device_tables", None) or {}
+    return list(tables.get("group_heads", []))

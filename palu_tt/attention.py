@@ -114,6 +114,7 @@ class PaluAttention(LightweightModule):
             f"group size {self.gs} must divide {self.n_local_kv_heads} local KV heads"
         self.n_local_groups = self.n_local_kv_heads // self.gs
         self.group_heads = 1                                         # stage 2c: KV heads per core in the fused op
+        self.layer_num = layer_num
         self.r_k = self.palu.rank_k[layer_num]                       # group latent widths (per head at gs == 1)
         self.r_v = self.palu.rank_v[layer_num]
         assert self.r_k % 32 == 0 and self.r_v % 32 == 0 and self.r_k <= self.gs * self.head_dim \
@@ -310,6 +311,7 @@ class PaluAttention(LightweightModule):
                     self.group_heads = 1
                 # Once per distinct H per *model build*: the config object is shared by the model's
                 # layers and dies with it, so a second model in the same process logs again.
+                fused.record_group_heads(self.palu.device_tables, layer_num, self.group_heads)
                 seen = self.palu.device_tables.setdefault("group_heads_logged", set())
                 if self.group_heads not in seen:
                     seen.add(self.group_heads)
@@ -586,6 +588,8 @@ class PaluAttention(LightweightModule):
                     logger.warning(f"palu G-LRD: heads_per_core={self.group_heads} does not fit L1 beside "
                                    f"the model's own buffers; falling back to {self.group_heads // 2}")
                     self.group_heads //= 2
+                    # the results JSON has to see the H that actually ran, not the one that was picked
+                    fused.record_group_heads(self.palu.device_tables, self.layer_num, self.group_heads)
             ttnn.deallocate(q)
         else:
             if self.recon_k:

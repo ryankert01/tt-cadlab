@@ -22,7 +22,7 @@ from pathlib import Path
 import torch
 from models.common.utility_functions import comp_pcc
 
-from palu_tt import device as dev, eval_ppl, generate, model as pm
+from palu_tt import device as dev, eval_ppl, fused, generate, model as pm
 
 RAW = Path("docs/results/raw")
 PROMPT = 512
@@ -41,6 +41,9 @@ def _pcc(a, b):
     return float(v)
 
 
+GROUP_HEADS = []    # per-layer heads_per_core the fused model actually ran with (stage 2c)
+
+
 def _logits(md, palu_dir, ids, steps, **flags):
     """[steps, vocab] fp32 logits: one prefill of the prompt, then ``steps - 1`` teacher-forced decode steps."""
     args, model, cfg = pm.build_model(md, "palu", palu_dir, max_batch_size=1, max_seq_len=2048, **flags)
@@ -50,6 +53,7 @@ def _logits(md, palu_dir, ids, steps, **flags):
     for t in teacher[:-1].tolist():
         out.append(generate.decode_step(args, model, cfg, t, pos).float())
         pos += 1
+    GROUP_HEADS[:] = fused.group_heads_used(cfg)
     del model
     gc.collect()
     return torch.stack(out)  # [steps, vocab]
@@ -61,9 +65,12 @@ def main():
     p.add_argument("--palu-dir", required=True)
     p.add_argument("--fused", choices=["p1", "p2"], required=True)
     p.add_argument("--fused-k-chunk", type=int, default=None)
-    p.add_argument("--group-heads", choices=["auto", "1", "2", "4"], default="auto",
-                   help="stage-2c group-shared mode: KV heads per core in the fused op (auto = the "
-                        "largest that fits L1 per layer, 1 = the stage 2b per-head kernel).")
+    p.add_argument("--group-heads", choices=["auto", "1", "2", "4"], default="4",
+                   help="stage-2c group-shared mode: KV heads per core in the fused op. Default 4 "
+                        "here, not auto: this harness runs at batch 1, and auto's occupancy rule "
+                        "returns 1 for every layer below batch 8 (a four-head group would leave 48 of "
+                        "the 64 cores idle there), so auto at batch 1 measures the stage 2b per-head "
+                        "kernel. Pass 1 for that on purpose, or auto to mirror what bench picks.")
     p.add_argument("--steps", type=int, default=64)
     a = p.parse_args()
     RAW.mkdir(parents=True, exist_ok=True)
@@ -82,7 +89,7 @@ def main():
     naive_decode, fused_decode = naive[1:], fused[1:]
     pccs = [_pcc(naive_decode[i], fused_decode[i]) for i in range(naive_decode.shape[0])]
     r = {"row": a.row, "palu_dir": a.palu_dir, "fused": a.fused, "fused_k_chunk": a.fused_k_chunk,
-         "group_heads": a.group_heads,
+         "group_heads": a.group_heads, "group_heads_per_layer": list(GROUP_HEADS),
          "steps": naive_decode.shape[0],
          "pcc_mean": sum(pccs) / len(pccs), "pcc_min": min(pccs),
          "argmax_agree": float((naive_decode.argmax(-1) == fused_decode.argmax(-1)).float().mean())}

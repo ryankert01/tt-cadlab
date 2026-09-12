@@ -174,3 +174,31 @@ def test_l1_cb_model_matches_the_factory_allocator_report():
     task1_extra = (2 - 1) * (2 * 4 + 5 * 1) * 2048
     assert cb + task1_extra + fused.L1_RUNTIME_BASE_BYTES == 1_813_984
     assert fused.L1_CB_BUDGET_BYTES + fused.L1_RUNTIME_BASE_BYTES < fused.L1_MAX_BYTES
+
+
+def test_group_heads_per_core_falls_back_to_the_per_head_kernel_below_batch_8():
+    """The occupancy gate turns group mode off at batch 4 and below, which is what a batch-1 harness
+    (decode_check) would get from ``auto``: a four-head group is 4 items over 4 cores there (16 of 64),
+    H = 2 reaches 32, and only the per-head kernel fills the grid."""
+    for batch, occ in ((4, (16, 32, 64)), (2, (8, 16, 64)), (1, (4, 8, 64))):
+        assert tuple(fused._split_for(h, batch, 4, 64, 16)[2] for h in (4, 2, 1)) == occ
+        assert fused.group_heads_per_core(64, 192, 128, True, 4, batch=batch) == 1
+    # ... while batch 8 and 32 still get a group layout for the same (narrow) layer
+    assert fused.group_heads_per_core(64, 192, 128, True, 4, batch=8) == 2
+    assert fused.group_heads_per_core(64, 192, 128, True, 4, batch=32) == 4
+
+
+def test_record_group_heads_indexes_by_layer_and_last_write_wins():
+    tables = {}
+    assert fused.group_heads_used(_Cfg(tables)) == []
+    fused.record_group_heads(tables, 2, 4)
+    assert fused.group_heads_used(_Cfg(tables)) == [1, 1, 4]      # layers not recorded read as 1
+    fused.record_group_heads(tables, 0, 2)
+    fused.record_group_heads(tables, 2, 2)                        # the allocator fallback halving H
+    assert fused.group_heads_used(_Cfg(tables)) == [2, 1, 2]
+    assert fused.group_heads_used(object()) == []                 # a model with no Palu config
+
+
+class _Cfg:
+    def __init__(self, tables):
+        self.device_tables = tables

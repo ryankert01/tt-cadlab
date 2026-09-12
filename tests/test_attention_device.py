@@ -11,7 +11,7 @@ from models.tt_transformers.tt.common import Mode
 from models.tt_transformers.tt.model_config import ModelArgs
 from models.tt_transformers.tt.rope import RotarySetup
 
-from palu_tt import convert, hf, reference
+from palu_tt import convert, fused, hf, reference
 from palu_tt.attention import PaluAttention
 
 SEQ = 256
@@ -348,6 +348,10 @@ def test_glrd_group_shared_decode_matches_per_head(mesh_device, batch):
     shared = _tt_attention(PaluAttention, mesh_device, args, sd, rope, tt_ccl)
     assert per_head.group_heads == 1 and shared.group_heads > 1, \
         f"expected an automatic H > 1 for r_k={shared.r_k} r_v={shared.r_v}, got {shared.group_heads}"
+    # what the harnesses copy into their result JSON: the H each layer actually ran with, after any
+    # allocator fallback. One entry here because _setup builds a single layer.
+    assert fused.group_heads_used(args.palu) == [shared.group_heads], \
+        f"recorded per-layer H {fused.group_heads_used(args.palu)} != {[shared.group_heads]}"
     logger.info(f"glrd_0.5 layer 0: r_k={shared.r_k} r_v={shared.r_v} heads_per_core={shared.group_heads}")
     P = 128
     x_pre = torch.randn(1, P, args.dim) * 0.05
