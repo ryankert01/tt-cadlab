@@ -477,7 +477,7 @@ def test_stage2c_kernel_table_decode_batch8_and_attention_slope(tmp_path):
     assert "0.186" in line                          # slope: (2.1 - 0.8) / 7
     assert line.rstrip("|").rsplit("|", 1)[-1].strip() == "-"   # no `_fk2` sibling for baseline
     fk2g_line = next(l for l in md.splitlines() if l.startswith("| glrd_50_fk2g |"))
-    assert "2.00x" in fk2g_line                     # 105.5 / 80.0, vs its `_fk2` sibling
+    assert "2.00x" in fk2g_line                     # 160.0 / 80.0, vs its `_fk2` sibling
     # a row with no files at all: every cell dashes
     fk2_70_line = next(l for l in md.splitlines() if l.startswith("| glrd_70_fk2 |"))
     assert "| - | - | - | - | - | - | - | - | - | - |" in fk2_70_line
@@ -519,3 +519,16 @@ def test_stage2c_decode_fidelity_and_batch8_maxctx(tmp_path):
     assert "| glrd_50_fk2g | 57344 | oom |" in md
     assert "| glrd_70_fk2 | - | - |" in md
     assert "| glrd_70_fk2g | - | - |" in md
+
+
+def test_stage2c_tables_have_matching_header_and_separator_widths(tmp_path):
+    """GFM only recognises a table when the separator row has as many cells as the header."""
+    raw = tmp_path / "raw"; raw.mkdir()
+    _write(raw, "ppl_glrd_50", {"row": "glrd_50", "ppl": 10.7, "windows": 141, "palu_dir": "compressed/glrd_0.5"})
+    out = tmp_path / "stage2c.md"
+    from palu_tt import report
+    report.main(raw=raw, out=out, rows=report.ROWS2C)
+    lines = out.read_text().splitlines()
+    for i, line in enumerate(lines[:-1]):
+        if line.startswith("| ") and lines[i + 1].startswith("|---"):
+            assert line.count("|") == lines[i + 1].count("|"), (line, lines[i + 1])

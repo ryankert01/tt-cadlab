@@ -389,15 +389,6 @@ def _slope(att):
     return f"{(c8['min_ms'] - c1['min_ms']) / 7:.3f}"
 
 
-def _vs_fk2(dec_fk2, dec_fk2g):
-    """The ``_fk2`` sibling's decode step at 4k divided by the ``_fk2g`` row's at the same context
-    (> 1.00x is faster than per-head) -- mirrors ``_vs_stock``'s ratio direction."""
-    a, b = _cell(dec_fk2, "4096"), _cell(dec_fk2g, "4096")
-    if not a or not b or "min_ms" not in a or "min_ms" not in b:
-        return "-"
-    return f"{a['min_ms'] / b['min_ms']:.2f}x"
-
-
 def _sweep_filename(row, batch):
     """``bench_decode_<row>.json`` at batch 32 (the default, unsuffixed file), else ``_b<batch>``."""
     return f"bench_decode_{row}" if batch == 32 else f"bench_decode_{row}_b{batch}"
@@ -847,7 +838,7 @@ def _stage2c_lines(raw, rows, loaded):
         "",
         "| row | recipe | " + " | ".join(TASK_LABELS[t] for t in TASK_COLS) +
         " | avg (5) | avg (5) paper protocol | delta | ppl (device) | r_k | r_v |",
-        "|---|---|" + "---|" * (len(TASK_COLS) + 5),
+        "|---|---|" + "---|" * (len(TASK_COLS) + 6),
     ]
     for row in CALIB_ROWS2C:
         entry = loaded[row]
@@ -885,7 +876,7 @@ def _stage2c_lines(raw, rows, loaded):
         d32 = " | ".join(_min_only(_cell(dec32, c)) for c in CONTEXTS)
         d8 = " | ".join(_min_only(_cell(dec8, c)) for c in CONTEXTS)
         if row.endswith("_fk2g"):
-            vs = _vs_fk2(loaded[row[:-1]][2], dec32)   # "..._fk2g" -> "..._fk2" sibling
+            vs = _vs_stock(loaded[row[:-1]][2], dec32, "4096")   # "..._fk2g" -> its "..._fk2" sibling at 4k
         else:
             vs = "-"
         lines.append(
