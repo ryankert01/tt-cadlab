@@ -55,3 +55,9 @@ def test_cpu_lowrank_llama_uses_palu_factors(tmp_path):
     ids = torch.randint(0, 256, (1, 12))
     with torch.no_grad():
         assert torch.isfinite(lm(ids).logits).all()
+
+
+def test_identity_lowrank_reports_group_size_one():
+    from palu_tt import convert
+    w = {"k": torch.randn(2 * 16, 64), "v": torch.randn(2 * 16, 64)}
+    assert convert.identity_lowrank(w, 2, 16).group_size == 1

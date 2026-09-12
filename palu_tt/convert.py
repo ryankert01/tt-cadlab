@@ -18,7 +18,9 @@ from palu_tt import fused, hf
 # entry would otherwise be served for the new tensor. attention.cache_tag() puts it in every
 # Palu-specific cache file name. v2: full-rank V is collapsed into the QKV weight (see below).
 # v3: adds w_rot = [u_k | u_k T] for the fused decode kernel (stage 2).
-CONVERT_VERSION = 3
+# v4: group-aware layout (G-LRD): the group latent occupies its heads' slots in the fused QKV weight and
+#     u_k/u_v/w_rot carry the group rank per head; group size 1 is unchanged.
+CONVERT_VERSION = 4
 
 
 @dataclass
@@ -51,6 +53,9 @@ class PaluConfig:
     # Optional ttnn dtype override for the latent K/V caches (default: the model's KV_CACHE dtype,
     # bfp8). Kept as a plain object so this module stays ttnn-free.
     latent_dtype: Optional[object] = None
+    # Palu head group size (1 = M-LRD per head, 4 = G-LRD one group per chip on the N300). rank_k/rank_v
+    # are the per-layer *group* latent widths; at group size 1 those are the per-head ranks as before.
+    group_size: int = 1
     # Device tensors shared by every layer of one model on the fused path (the [cos | sin] table,
     # the Phase-2 step constants and transformation tile), keyed by attention.py; never compared
     # or printed.
@@ -59,11 +64,16 @@ class PaluConfig:
 
 @dataclass
 class LowRank:
-    """Head-major factors: W_h ≈ U_h @ VT_h. Shapes k_VT [n_kv, r_k, dim], k_U [n_kv, hd, r_k], same for v."""
+    """Per-head view of the factors: W_h ≈ U_h @ VT_h with k_VT [n_kv, r, dim], k_U [n_kv, hd, r], same for v.
+
+    group_size > 1 (Palu's G-LRD): the gs heads of a group share one latent, so k_VT[h] is the group's
+    VT (identical for the group's heads) and k_U[h] is the head's hd-row slice of the group's U
+    [gs*hd, r]. Every consumer that reconstructs a head sees the same per-head interface."""
     k_VT: torch.Tensor
     k_U: torch.Tensor
     v_VT: torch.Tensor
     v_U: torch.Tensor
+    group_size: int = 1
 
     @property
     def r_k(self):
@@ -84,25 +94,35 @@ def identity_lowrank(hf_attn: Dict[str, torch.Tensor], n_kv_heads: int, head_dim
 
 
 def _read_palu_layer(tensors, ranks, layer, proj, n_kv_heads, head_dim, rank_multiple):
+    """One projection of one layer -> per-head (VT, U) with the group's VT repeated over its heads.
+
+    Palu stores one U per *group* (`U.{g}.weight`, [gs*hd, r_g]), one stacked VT ([sum r_g, dim]) and one
+    rank per group; group size 1 is the head-wise case."""
     key = f"model.layers.{layer}.self_attn.{proj}"
     r_list = ranks[key]
-    assert len(r_list) == n_kv_heads, f"{key}: expected {n_kv_heads} groups (group size 1), got {len(r_list)}"
+    n_groups = len(r_list)
+    assert n_kv_heads % n_groups == 0, f"{key}: {n_groups} groups do not divide {n_kv_heads} KV heads"
+    gs = n_kv_heads // n_groups
     r_max = int(math.ceil(max(r_list) / rank_multiple) * rank_multiple)
     VT_all = tensors[f"{key}.VT.weight"]
     dim = VT_all.shape[1]
     VT = torch.zeros(n_kv_heads, r_max, dim)
     U = torch.zeros(n_kv_heads, head_dim, r_max)
     off = 0
-    for h, r in enumerate(r_list):
-        VT[h, :r] = VT_all[off:off + r]
-        U[h, :, :r] = tensors[f"{key}.U.{h}.weight"]
+    for g, r in enumerate(r_list):
+        U_g = tensors[f"{key}.U.{g}.weight"]                       # [gs*hd, r]
+        assert U_g.shape == (gs * head_dim, r), f"{key}.U.{g}: {tuple(U_g.shape)} != {(gs * head_dim, r)}"
+        for hh in range(gs):
+            h = g * gs + hh
+            VT[h, :r] = VT_all[off:off + r]
+            U[h, :, :r] = U_g[hh * head_dim:(hh + 1) * head_dim]
         off += r
-    return VT, U
+    return VT, U, gs
 
 
 def load_palu_dir(palu_dir: Path, n_layers: int, n_kv_heads: int, head_dim: int, rank_multiple: int = 32) -> Dict[int, LowRank]:
-    """Reads our delta file or a full Palu HF dump (same key names). Per-head ranks are zero-padded to the
-    layer max rounded up to rank_multiple, which changes nothing numerically."""
+    """Reads a factors-only file (palu_lowrank.safetensors) or a full Palu HF dump (same key names). Group
+    ranks are zero-padded to the layer max rounded up to rank_multiple, which changes nothing numerically."""
     palu_dir = Path(palu_dir)
     ranks = json.loads((palu_dir / "config.json").read_text())["head_wise_ranks"]
     tensors = {}
@@ -113,9 +133,10 @@ def load_palu_dir(palu_dir: Path, n_layers: int, n_kv_heads: int, head_dim: int,
                     tensors[k] = sf.get_tensor(k).float()
     out = {}
     for i in range(n_layers):
-        k_VT, k_U = _read_palu_layer(tensors, ranks, i, "k_proj", n_kv_heads, head_dim, rank_multiple)
-        v_VT, v_U = _read_palu_layer(tensors, ranks, i, "v_proj", n_kv_heads, head_dim, rank_multiple)
-        out[i] = LowRank(k_VT, k_U, v_VT, v_U)
+        k_VT, k_U, gs_k = _read_palu_layer(tensors, ranks, i, "k_proj", n_kv_heads, head_dim, rank_multiple)
+        v_VT, v_U, gs_v = _read_palu_layer(tensors, ranks, i, "v_proj", n_kv_heads, head_dim, rank_multiple)
+        assert gs_k == gs_v, f"layer {i}: K group size {gs_k} != V group size {gs_v}"
+        out[i] = LowRank(k_VT, k_U, v_VT, v_U, group_size=gs_k)
     return out
 
 
@@ -163,30 +184,39 @@ def palu_layer_tensors(hf_attn: Dict[str, torch.Tensor], lr: LowRank, n_heads: i
     # when the factors are exact, the truncated one when the ranks were merely padded up to
     # head_dim) and hand the identity to everything downstream. `u_v` is then dead on device but
     # still emitted so every rank produces the same tensor shapes, and wo_fused == wo.
-    fast_v = r_v == head_dim
+    gs = lr.group_size
+    # Full-rank collapses (the stock-K and fast-V paths) exist for the per-head case only: a grouped
+    # latent is always kept as a latent and reconstructed per head (in prefill, in the naive decode
+    # and in the fused kernel), so wo_fused is plain wo there.
+    fast_v = gs == 1 and r_v == head_dim
     # The V-side up-projection *as the device will see it*: the identity on the fast path (U_v has
     # just been folded into wv_lat_pad below), the factor itself otherwise. Deliberately not called
     # `v_U` -- it differs from `lr.v_U` exactly when fast_v, and that shadowing is a trap.
     u_v_eff = torch.eye(head_dim).expand(n_kv_heads, head_dim, head_dim) if fast_v else lr.v_U
     for h in range(n_kv_heads):
-        if r_k == head_dim:
+        g, hh = h // gs, h % gs
+        if gs == 1 and r_k == head_dim:
             wk_lat_pad[h * head_dim:(h + 1) * head_dim] = reverse_permute(lr.k_U[h] @ lr.k_VT[h], 1, head_dim, dim)
-        else:
-            wk_lat_pad[h * head_dim:h * head_dim + r_k] = lr.k_VT[h]
+        elif hh == 0:
+            # the group's VT goes once, into the first r_k rows of the group's gs*head_dim slot
+            wk_lat_pad[g * gs * head_dim:g * gs * head_dim + r_k] = lr.k_VT[h]
         if fast_v:
             # no reverse_permute on the V side: V never sees RoPE, so it stays in HF head order
             wv_lat_pad[h * head_dim:(h + 1) * head_dim] = lr.v_U[h] @ lr.v_VT[h]
-        else:
-            wv_lat_pad[h * head_dim:h * head_dim + r_v] = lr.v_VT[h]
+        elif hh == 0:
+            wv_lat_pad[g * gs * head_dim:g * gs * head_dim + r_v] = lr.v_VT[h]
         # K leaves the latent in Meta-permuted head order (RoPE convention of tt_transformers)
         u_k[h] = reverse_permute(lr.k_U[h], 1, head_dim, r_k).T
         u_v[h] = u_v_eff[h].T
     wo = hf_attn["o"].float()                       # [dim, n_heads*hd]
-    wo_fused = torch.zeros_like(wo)
-    rep = n_heads // n_kv_heads
-    for qh in range(n_heads):
-        kv = qh // rep
-        wo_fused[:, qh * head_dim:qh * head_dim + r_v] = wo[:, qh * head_dim:(qh + 1) * head_dim] @ u_v_eff[kv]
+    if gs > 1:
+        wo_fused = wo.clone()
+    else:
+        wo_fused = torch.zeros_like(wo)
+        rep = n_heads // n_kv_heads
+        for qh in range(n_heads):
+            kv = qh // rep
+            wo_fused[:, qh * head_dim:qh * head_dim + r_v] = wo[:, qh * head_dim:(qh + 1) * head_dim] @ u_v_eff[kv]
     return {"wk_lat_pad": wk_lat_pad, "wv_lat_pad": wv_lat_pad, "u_k": u_k, "u_v": u_v, "wo_fused": wo_fused,
             "w_rot": fused.w_rot_from_u_k(u_k)}
 
@@ -210,4 +240,6 @@ def add_palu_to_state_dict(state_dict: dict, hf_dir: Path, palu_dir: Optional[Pa
         rank_k.append(lr.r_k)
         rank_v.append(lr.r_v)
     cache_id = "identity" if palu_dir is None else palu_dir_cache_id(palu_dir)
-    return PaluConfig(rank_k=rank_k, rank_v=rank_v, cache_id=cache_id)
+    gs = {lr.group_size for lr in (lrs.values() if lrs else [])} or {1}
+    assert len(gs) == 1, f"mixed group sizes across layers: {gs}"
+    return PaluConfig(rank_k=rank_k, rank_v=rank_v, cache_id=cache_id, group_size=gs.pop())

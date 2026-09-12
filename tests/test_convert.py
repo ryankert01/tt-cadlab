@@ -1,3 +1,5 @@
+import json
+
 import torch
 
 from models.tt_transformers.tt.load_checkpoints import reverse_permute
@@ -327,10 +329,90 @@ def test_layer_tensors_include_w_rot_built_from_u_k():
     torch.testing.assert_close(t["w_rot"], fused.w_rot_from_u_k(t["u_k"]))
 
 
-def test_convert_version_is_3_and_runtime_flags_default_off():
-    assert convert.CONVERT_VERSION == 3
+def test_convert_version_is_4_and_runtime_flags_default_off():
+    assert convert.CONVERT_VERSION == 4
     rt = convert.PaluRuntime()
     assert rt.use_fused_k is False and rt.cs_recurrence is False
     assert rt.fused_k_chunk is None
     cfg = convert.PaluConfig(rank_k=[32], rank_v=[64], cache_id="x")
     assert cfg.device_tables == {}
+
+
+def _group_lowrank(w, gs, r):
+    """A synthetic group factorisation: one U_g [gs*HD, r] and VT_g [r, DIM] per group of gs KV heads."""
+    n_groups = NKV // gs
+    VT = torch.randn(n_groups, r, DIM)
+    U = torch.randn(n_groups, gs * HD, r)
+    return VT, U
+
+
+def _write_group_dump(tmp_path, VT, U, gs):
+    """Palu's on-disk layout for head_group_size gs: U.{g}.weight [gs*hd, r_g], one stacked VT.weight, one rank per group."""
+    from safetensors.torch import save_file
+    d = tmp_path / "glrd"; d.mkdir()
+    n_groups, r, _ = VT.shape
+    tensors, ranks = {}, {}
+    for proj, (vt, u) in {"k_proj": (VT, U), "v_proj": (VT * 0.5, U * 2.0)}.items():
+        key = f"model.layers.0.self_attn.{proj}"
+        tensors[f"{key}.VT.weight"] = vt.reshape(n_groups * r, DIM).contiguous()
+        for g in range(n_groups):
+            tensors[f"{key}.U.{g}.weight"] = u[g].contiguous()
+        ranks[key] = [r] * n_groups
+    save_file(tensors, str(d / "palu_lowrank.safetensors"))
+    (d / "config.json").write_text(json.dumps({"head_wise_ranks": ranks}))
+    return d
+
+
+def test_load_palu_dir_expands_groups_to_heads(tmp_path):
+    gs, r = 2, 8                                   # NKV = 2 -> one group of two heads
+    VT, U = _group_lowrank(_hf_attn(), gs, r)
+    d = _write_group_dump(tmp_path, VT, U, gs)
+    lr = convert.load_palu_dir(d, 1, NKV, HD, rank_multiple=8)[0]
+    assert lr.group_size == gs and lr.r_k == r
+    x = torch.randn(5, DIM)
+    for h in range(NKV):
+        g, hh = h // gs, h % gs
+        assert torch.equal(lr.k_VT[h], VT[g])                          # the group's VT, shared by its heads
+        assert torch.equal(lr.k_U[h], U[g, hh * HD:(hh + 1) * HD])      # the head's slice of the group's U
+        k_h = x @ VT[g].T @ U[g, hh * HD:(hh + 1) * HD].T             # what Palu computes for head h
+        assert torch.allclose(x @ lr.k_VT[h].T @ lr.k_U[h].T, k_h, atol=1e-5)
+        assert torch.allclose(lr.v_U[h], 2.0 * U[g, hh * HD:(hh + 1) * HD]) and torch.allclose(lr.v_VT[h], 0.5 * VT[g])
+
+
+def test_group_size_one_dump_still_loads_as_before(tmp_path):
+    d = _tiny_palu_dir(tmp_path / "p", r=HDR)
+    lr = convert.load_palu_dir(d, 1, NKV, HDR)[0]
+    assert lr.group_size == 1
+
+
+def test_layer_tensors_lay_the_group_latent_into_the_groups_head_slots():
+    gs, r = 2, 8
+    w = _hf_attn()
+    VT, U = _group_lowrank(w, gs, r)
+    heads = []
+    for h in range(NKV):
+        g, hh = h // gs, h % gs
+        heads.append((VT[g], U[g, hh * HD:(hh + 1) * HD]))
+    lr = convert.LowRank(k_VT=torch.stack([a for a, _ in heads]), k_U=torch.stack([b for _, b in heads]),
+                         v_VT=torch.stack([a for a, _ in heads]), v_U=torch.stack([b for _, b in heads]), group_size=gs)
+    t = convert.palu_layer_tensors(w, lr, NH, NKV, HD)
+    # K block: group g's VT sits at rows [g*gs*HD, g*gs*HD + r), the rest of the group's rows are zero
+    assert torch.equal(t["wk_lat_pad"][:r], VT[0]) and torch.count_nonzero(t["wk_lat_pad"][r:gs * HD]) == 0
+    assert torch.equal(t["wv_lat_pad"][:r], VT[0])
+    # per-head up-projections carry the group rank, in Meta order for K
+    assert t["u_k"].shape == (NKV, r, HD) and t["u_v"].shape == (NKV, r, HD) and t["w_rot"].shape == (NKV, r, 2 * HD)
+    lat = torch.randn(3, r)
+    for h in range(NKV):
+        hh = h % gs
+        v_h = lat @ U[0, hh * HD:(hh + 1) * HD].T
+        assert torch.allclose(lat @ t["u_v"][h], v_h, atol=1e-5)
+        k_h_meta = reverse_permute(U[0, hh * HD:(hh + 1) * HD], 1, HD, r).T
+        assert torch.allclose(t["u_k"][h], k_h_meta, atol=1e-6)
+    # grouped rows never absorb V: wo_fused is wo
+    assert torch.equal(t["wo_fused"], w["o"].float())
+
+
+def test_convert_version_is_4_and_group_size_default_is_1():
+    assert convert.CONVERT_VERSION == 4
+    cfg = convert.PaluConfig(rank_k=[32], rank_v=[64], cache_id="x")
+    assert cfg.group_size == 1

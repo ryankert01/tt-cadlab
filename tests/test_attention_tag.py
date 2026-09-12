@@ -8,8 +8,8 @@ from palu_tt.convert import CONVERT_VERSION
 
 
 def test_tag_carries_cache_id_and_ranks():
-    assert cache_tag("identity", 128, 128) == "palu_v3_identity_rk128_rv128"
-    assert cache_tag("palu_full_0.5-3fa2b1c0", 32, 128) == "palu_v3_palu_full_0.5-3fa2b1c0_rk32_rv128"
+    assert cache_tag("identity", 128, 128) == "palu_v4_identity_rk128_rv128"
+    assert cache_tag("palu_full_0.5-3fa2b1c0", 32, 128) == "palu_v4_palu_full_0.5-3fa2b1c0_rk32_rv128"
 
 
 def test_tag_carries_the_converter_version():
