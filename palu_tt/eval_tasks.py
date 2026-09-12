@@ -3,7 +3,7 @@
 Usage: python -m palu_tt.eval_tasks --row glrd_50 --kind palu --palu-dir compressed/glrd_0.5 [--fused p2] [--limit 20]
 Writes docs/results/raw/tasks_<row>.json. First run needs the datasets downloaded once (README).
 """
-import argparse, importlib.util, json, time
+import argparse, hashlib, importlib.util, json, os, time
 from pathlib import Path
 
 import lm_eval
@@ -17,9 +17,10 @@ TASKS = ("openbookqa", "piqa", "arc_easy", "arc_challenge", "winogrande")
 TASK_NAME_MAP = {"openbookqa_hub": "openbookqa", "piqa_hub": "piqa", "winogrande_hub": "winogrande"}
 # Committed templates: the `include:` path depends on where lm-eval is installed (a venv under a
 # worktree that may not exist elsewhere), so it is never committed literally -- write_task_dir()
-# substitutes it in at runtime, into a cache directory outside the repo tree.
+# substitutes it in at runtime, into a cache directory outside the repo tree, one per lm-eval install
+# (two checkouts with their own venvs render different paths; a shared directory would race).
 TEMPLATE_DIR = Path(__file__).parent / "lm_eval_tasks"
-CACHE_DIR = Path.home() / ".cache" / "palu_tt" / "lm_eval_tasks"
+CACHE_ROOT = Path.home() / ".cache" / "palu_tt" / "lm_eval_tasks"
 
 
 def _lm_eval_tasks_root():
@@ -33,13 +34,16 @@ def write_task_dir():
     the installed lm-eval location, into a per-user cache dir outside the repo tree. Re-renders only
     when the content actually changes, so it is safe (and fast) to call on every task_manager()."""
     tasks_root = _lm_eval_tasks_root()
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_dir = CACHE_ROOT / hashlib.sha1(str(tasks_root).encode()).hexdigest()[:12]
+    cache_dir.mkdir(parents=True, exist_ok=True)
     for template in sorted(TEMPLATE_DIR.glob("*.yaml")):
         rendered = template.read_text().replace("{LM_EVAL_TASKS}", str(tasks_root))
-        out = CACHE_DIR / template.name
+        out = cache_dir / template.name
         if not out.exists() or out.read_text() != rendered:
-            out.write_text(rendered)
-    return CACHE_DIR
+            tmp = out.with_suffix(f".{os.getpid()}.tmp")   # atomic replace: a concurrent reader never sees a partial file
+            tmp.write_text(rendered)
+            os.replace(tmp, out)
+    return cache_dir
 
 
 def task_manager():

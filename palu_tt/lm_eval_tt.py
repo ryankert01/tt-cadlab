@@ -68,10 +68,10 @@ class TTLM(TemplateLM):
             # sentinel "start of sequence" marker, not real context); we supply our own BOS below, so drop
             # that sentinel here rather than double up two special tokens in front of the continuation.
             ctx_enc = [] if context == "" else context_enc
-            # Clip like lm-eval's HF model: the slice below clips the context first (drops it from the
-            # left once ctx+continuation exceeds max_length); n_cont is then clipped too, so that if the
-            # continuation alone is longer than max_length, it is clipped from the left (n_cont shrinks
-            # to max_length) and the row slice below can never wrap.
+            # Length cap: the slice below drops context from the left once ctx+continuation exceeds
+            # max_length (as lm-eval's HF model does); a continuation longer than max_length on its own
+            # is clipped from the left too (lm-eval's HF model asserts instead), so the row slice below
+            # can never wrap. None of the five tasks comes near the cap.
             n_cont = min(len(continuation_enc), self._max_length)
             whole = (ctx_enc + continuation_enc)[-(self._max_length):]
             key = (tuple(whole), n_cont)                 # n_cont must be in the key: two requests can
