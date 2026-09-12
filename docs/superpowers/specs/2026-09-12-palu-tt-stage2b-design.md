@@ -1,7 +1,7 @@
 # Palu on Tenstorrent — Stage 2b: G-LRD and Task Accuracy
 
 Date: 2026-09-12
-Status: approved in conversation 2026-09-12, pending written review
+Status: approved in conversation 2026-09-12 (incl. the in-kernel V decision), pending written review
 Depends on: stage 2 (`docs/superpowers/specs/2026-09-10-palu-tt-stage2-design.md`, merged at 668e250)
 
 ## 0. Two findings that shape this stage
@@ -93,17 +93,29 @@ Success is descriptive rather than a bar:
   (`n_groups_local = 1` here). `kv_bytes_per_token` becomes
   `n_groups_local · (r_k_g + r_v_g) · 1.0625`.
 - **Prefill** reconstructs each head from the shared latent with its own U slice
-  (`u_k_prefill` stays `[1, n_kv, 128, 128]`-shaped per head; the latent is broadcast to the
-  heads with a `repeat`/expand before the matmul). The absorbed-V trick and `wo_fused` are
-  unchanged: each query head already carries its own `U_v` slice.
-- **Naive decode** reconstructs K from the group latent per head the same way (`u_k_decode`
-  per head, latent expanded over heads), so the G-LRD rows have a naive timing row too.
+  (`u_k_prefill`/`u_v_prefill` become `[1, n_kv, r_g_pad, 128]` per head; the group latent is
+  expanded over the heads before the matmul).
+- **V is not absorbed on the G-LRD decode path.** The absorbed-V trick makes the attention
+  output as wide as the V latent; with a group latent of up to 512 that would make the fused
+  output projection four times wider (about 1.6 GB more weight per chip and an estimated 6-8
+  ms per step) and would cost context capacity. Instead the fused kernel reconstructs V per
+  head on core (§4) and the stock `wo` is used; `wo_fused` and the V-absorption remain the
+  M-LRD path (`r_v ≤ 128`, group size 1). The calibration result confirms the need: at ratio
+  0.5 the G-LRD V group ranks are 416-512 (V nearly uncompressed), K group ranks 64-288.
+- **Naive decode** reconstructs K and V from the group latents per head the same way
+  (`u_k_decode`/`u_v_decode` per head, latents expanded over heads, then the stock
+  `scaled_dot_product_attention_decode` on full K and V), so the G-LRD rows have a naive
+  timing row too.
+- **Latent caches are no longer written to the weight cache.** Stage 1 passed a
+  `cache_file_name` for the zero-initialised latent caches; every batch/context shape then
+  left a file of up to 273 MB behind (212 GB found and deleted on 2026-09-12). The caches are
+  created with `ttnn.from_torch`/zeros directly.
 - **Group size 1** is the same code with `n_groups = n_kv`; the stage-1/2 rows must stay
   bit-identical (tests assert the converter output and the device caches).
 
 ## 4. G-LRD in the fused kernel
 
-Three changes to `palu_sdpa_decode`:
+Four changes to `palu_sdpa_decode`:
 
 - **Group indexing.** New op attribute `heads_per_group` (derived on the host as
   `w_rot.shape[1] / k_latent.shape[1]`, must divide evenly). The reader offsets the K-latent
@@ -117,14 +129,28 @@ Three changes to `palu_sdpa_decode`:
   one block instead of two (~194 KB at `r_k = 384`); the factory's existing size assert
   remains the backstop. `PaluAttention` passes the chunk it computes to `_fused_tables` as
   today, so `rot_step` matches.
-- **Tests.** Op-level: `heads_per_group = 4` with `r_k ∈ {128, 256, 384}` against the fp32
-  reference and the stock MLA op on host-rotated K; `heads_per_group = 1` unchanged.
-  Attention-level: naive-vs-fused on a G-LRD dump, byte-identical caches.
+- **In-kernel V reconstruction (new mode, selected by passing `u_v`).** Inputs `v_latent
+  [B, n_groups, S, r_v_g]` (read into the stock V slot `c_2`, sized for the latent width) and
+  `u_v [1, n_kv, r_v_g, 128]` bf16, appended to the per-head resident weight block in `c_4`
+  (`[w_rot | u_v | T]`, one push per head, CB a whole number of blocks). Per chunk, after the
+  QK matmul has consumed `c_1`, the compute kernel builds `V_h = lat_v_g @ u_v[h]` row tile by
+  row tile into `c_1` in row-major tile order (`k·vDHt + n`) with the same helper structure as
+  `palu_build_k_chunk` minus the rotation, and the PV `matmul_blocks` reads in1 from `c_1`
+  instead of `c_2`. `head_dim_v` stays 128, the output shape and the downstream tail are the
+  stock ones. When `u_v` is absent the op behaves exactly as in stage 2 (absorbed V from
+  `c_2`). L1 at chunk 128, r_k_g = 288, r_v_g = 512: weight block ≈ (9·8 + 16·4 + 1) tiles bf16
+  ≈ 274 KB single-buffered, latent chunks ≈ 80 + 140 KB, AB 32 KB; fits with the stock ~300 KB.
+- **Tests.** Op-level: `heads_per_group = 4` with `r_k ∈ {128, 256, 384}` and `u_v` given
+  (`r_v ∈ {256, 512}`) against the fp32 reference (which reconstructs V too) and the stock
+  decode op on host-reconstructed K and V; `heads_per_group = 1` without `u_v` unchanged
+  (bit-identical outputs to stage 2 on the stage-2 test inputs). Attention-level:
+  naive-vs-fused on a G-LRD dump, byte-identical caches.
 
 **Expected decode behaviour, stated up front.** Each of the four head work-items rebuilds its
-head from the full group latent, so per position the reconstruction arithmetic is 4x
-M-LRD's and the latent is read four times: 1024 elements per position at ratio 0.5 versus
-M-LRD's 256 and stock's 512. G-LRD decode will be slower than M-LRD and probably slower than
+head from the full group latents, so per position the K reconstruction arithmetic is ~4x
+M-LRD's, V reconstruction (absent on the M-LRD path) adds `r_v_g × 128` per head, and each
+latent is read four times: at ratio 0.5 about 4 × (107 + 404) ≈ 2000 elements per position
+versus M-LRD's ~540 and stock's 1024. G-LRD decode will be slower than M-LRD and probably slower than
 stock, while remaining far ahead of the naive path. The paper reports the same ordering of
 reconstruction cost. Removing the fourfold read requires one core to build all four heads of
 a group from one latent read, which inverts the kernel's head/chunk loop nesting and needs
@@ -178,3 +204,8 @@ results page (artifact) gets the same tables.
    comparison is directional; every table carries the caveat.
 5. Task evaluation runs prefill only and therefore does not see the fused kernel; decode
    fidelity remains the `decode_check` measurement.
+6. **Disk.** Each full Palu HF dump is 30 GB; the box's root disk filled during the first
+   G-LRD calibration (6 GB free). The dumps are now stored as factors-only files
+   (`palu_lowrank.safetensors`, ~0.6 GB, same key names; `load_palu_dir` reads either form)
+   and the calibration script strips the full dump right after writing it. Anything that
+   writes large regenerable files must not go through the weight cache (see §3).
