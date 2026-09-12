@@ -119,10 +119,17 @@ def test_reference_decode_reconstructs_v_when_u_v_is_given():
 
 
 def test_group_heads_per_core_picks_the_widest_h_that_fits_l1():
-    """The three layer shapes the spec calls out (chunk 128, Phase 2, group size 4, batch 32)."""
-    assert fused.group_heads_per_core(128, 416, 128, True, 4) == 4
+    """The three layer shapes the spec calls out (chunk 128, Phase 2, group size 4, batch 32). H = 4
+    would fit L1 for the first, but at batch 32 it is 32 items over 2 cores (one reduction round) and
+    the stage 2c measurements showed the merge costs more than the reads it saves, so the reduction-free
+    H = 2 wins; the L1 order still shows through the other two."""
+    assert fused.group_heads_per_core(128, 416, 128, True, 4) == 2
     assert fused.group_heads_per_core(288, 512, 128, True, 4) == 2
     assert fused.group_heads_per_core(512, 512, 128, True, 4) == 1
+    # the L1-only order is visible when reductions are ignored: raise the batch so no layout splits
+    fits = [h for h in (4, 2, 1) if h == 1 or fused.palu_l1_cb_bytes(128, 416, 128, True, h, cores_per_head=1,
+                                                                        tree_rounds=0, batch=32) <= fused.L1_CB_BUDGET_BYTES]
+    assert fits == [4, 2, 1]
 
 
 def test_group_heads_per_core_rejects_an_h_that_leaves_the_grid_idle():
@@ -130,17 +137,21 @@ def test_group_heads_per_core_rejects_an_h_that_leaves_the_grid_idle():
 
     At batch 8 a four-head group is 8 items and the factory gives each of them 4 cores (its cap), so
     32 cores work and 32 idle; H = 2 is 16 items over 4 cores each, fills the grid, and still halves
-    the latent reads. At batch 32 H = 4 is 32 items over 2 cores each -- full -- so it wins there."""
-    assert fused.group_heads_per_core(128, 256, 128, True, 4, batch=32) == 4
-    assert fused.group_heads_per_core(128, 256, 128, True, 4, batch=8) == 2
+    the latent reads. At batch 32 H = 4 is 32 items over 2 cores each -- full, but one reduction round
+    -- so the reduction-free H = 2 wins there; at batch 8 every layout reduces (per-head: one round,
+    H = 2: two rounds) and the fewest rounds win: H = 1."""
+    assert fused.group_heads_per_core(128, 256, 128, True, 4, batch=32) == 2
+    assert fused.group_heads_per_core(128, 256, 128, True, 4, batch=8) == 1
     # ... and it really is occupancy, not L1, that rejects H = 4 at batch 8
     cores, rounds, active = fused._split_for(4, 8, 4, 64, 16)
     assert (cores, active) == (4, 32)
     assert fused.palu_l1_cb_bytes(128, 256, 128, True, 4, cores_per_head=cores, tree_rounds=rounds,
                                   batch=8) <= fused.L1_CB_BUDGET_BYTES
     assert fused._split_for(2, 8, 4, 64, 16)[2] == 64
-    # a tie on occupancy keeps the larger H
+    # a tie on occupancy is broken by the reduction rounds (fewest wins), then the larger H
     assert fused._split_for(4, 32, 4, 64, 16)[2] == fused._split_for(2, 32, 4, 64, 16)[2] == 64
+    assert fused._split_for(4, 32, 4, 64, 16)[1] == 1 and fused._split_for(2, 32, 4, 64, 16)[1] == 0
+    assert fused._split_for(1, 8, 4, 64, 16)[1] == 1 and fused._split_for(2, 8, 4, 64, 16)[1] == 2
 
 
 def test_split_for_matches_the_stock_rule_at_h_1():
@@ -161,7 +172,7 @@ def test_group_heads_per_core_divides_the_group_and_never_returns_zero():
 
 
 def test_group_heads_per_core_is_monotone_in_the_budget():
-    small = fused.group_heads_per_core(128, 416, 128, True, 4, l1_budget_bytes=900_000)
+    small = fused.group_heads_per_core(128, 416, 128, True, 4, l1_budget_bytes=700_000)
     big = fused.group_heads_per_core(128, 416, 128, True, 4)
     assert small < big
 
@@ -183,9 +194,11 @@ def test_group_heads_per_core_falls_back_to_the_per_head_kernel_below_batch_8():
     for batch, occ in ((4, (16, 32, 64)), (2, (8, 16, 64)), (1, (4, 8, 64))):
         assert tuple(fused._split_for(h, batch, 4, 64, 16)[2] for h in (4, 2, 1)) == occ
         assert fused.group_heads_per_core(64, 192, 128, True, 4, batch=batch) == 1
-    # ... while batch 8 and 32 still get a group layout for the same (narrow) layer
-    assert fused.group_heads_per_core(64, 192, 128, True, 4, batch=8) == 2
-    assert fused.group_heads_per_core(64, 192, 128, True, 4, batch=32) == 4
+    # ... while batch 32 gets the reduction-free group layout for the same (narrow) layer, and batch 8
+    # and 16 stay per-head (every group layout there adds a reduction round)
+    assert fused.group_heads_per_core(64, 192, 128, True, 4, batch=32) == 2
+    assert fused.group_heads_per_core(64, 192, 128, True, 4, batch=16) == 1
+    assert fused.group_heads_per_core(64, 192, 128, True, 4, batch=8) == 1
 
 
 def test_record_group_heads_indexes_by_layer_and_last_write_wins():

@@ -221,37 +221,40 @@ def group_heads_per_core(r_k: int, r_v: int, chunk: int, phase2: bool, heads_per
     32 and two at batch 8. ``num_kv_heads`` defaults to ``heads_per_group`` (one group per chip, which
     is the N300 G-LRD layout).
 
-    The choice is also occupancy-aware. Halving the item count halves the cores an item can be split
-    over once the grid is already full, so a larger H can leave part of the grid idle: at batch 8 a
-    four-head group is 8 items over 4 cores each (the factory's cap), i.e. 32 of 64 cores, while H = 2
-    is 16 items over 4 and fills the grid *and* still halves the latent reads. So an H whose layout
-    does not fill the grid is rejected when a smaller one does; ties keep the larger H. H = 1 always
-    fills it (that is the split the stock rule is built to produce), so in practice this means "a
-    group layout has to fill the grid".
+    The choice is occupancy- and reduction-aware, in that order, from the stage 2c measurements
+    (docs/results/stage2c.md §2): halving the item count halves the cores an item can be split over
+    once the grid is full, so an H whose layout does not fill the grid is rejected when a smaller one
+    does (at batch 8 a four-head group is 8 items over 4 cores each, 32 of 64 cores). Among the layouts
+    that fill the grid, the one with the fewest tree-reduction rounds wins: every cross-core merge in
+    group mode runs the unfused correction sequence and costs more than the latent reads it saves
+    (batch 32: H = 2 on 64 items with no reduction beat both per-head and H = 4 with one round; batch
+    8: per-head with one round beat H = 2 with two). Ties keep the larger H. In practice: batch 32 ->
+    H = 2, batch 16 and 8 -> H = 1.
 
-    **That gate turns group mode off entirely below batch 8.** At batch 4 a four-head group is 4 items
-    over 4 cores (16 of 64) and even H = 2 only reaches 32, while the per-head kernel spreads a single
-    head over 4 cores and fills the grid; at batch 1 it is 4 / 8 / 64. So this returns H = 1 for every
-    layer at batch 4, 2 and 1, and a batch-1 harness (``palu_tt.decode_check``) runs the stage 2b
-    per-head kernel unless it passes an explicit H. That is deliberate -- nobody has measured whether
-    trading three quarters of the grid for a 4x cut in latent reads pays off at batch 1 -- but it means
-    ``auto`` is not a way to exercise the group kernel at small batch.
+    **Below batch 8 this returns H = 1 for every layer**: at batch 4 a four-head group is 4 items over
+    4 cores (16 of 64) and even H = 2 only reaches 32, while the per-head kernel spreads a single head
+    over 4 cores and fills the grid; at batch 1 it is 4 / 8 / 64. A batch-1 harness
+    (``palu_tt.decode_check``) therefore runs the stage 2b per-head kernel unless it passes an explicit
+    H -- nobody has measured whether trading three quarters of the grid for a 4x cut in latent reads
+    pays off there -- so ``auto`` is not a way to exercise the group kernel at small batch.
 
     H = 1 is always the fallback -- it is the stage 2b per-head kernel, which the op runs with
     ``heads_per_core=None`` and which always fits (it is the program stage 2b already shipped).
     """
     assert heads_per_group >= 1
     n_kv = num_kv_heads or heads_per_group
-    fits = []                                  # (h, active cores), largest h first
+    fits = []                                  # (h, active cores, reduction rounds), largest h first
     for h in range(heads_per_group, 0, -1):
         if heads_per_group % h != 0 or n_kv % h != 0:
             continue
         cores, rounds, active = _split_for(h, batch, n_kv, grid_cores, max_cores_per_head)
         if h == 1 or palu_l1_cb_bytes(r_k, r_v, chunk, phase2, h, cores_per_head=cores,
                                       tree_rounds=rounds, batch=batch, **kwargs) <= l1_budget_bytes:
-            fits.append((h, active))
-    best = max(a for _, a in fits)
-    return max(h for h, a in fits if a == best)
+            fits.append((h, active, rounds))
+    best_active = max(a for _, a, _ in fits)
+    full = [(h, r) for h, a, r in fits if a == best_active]
+    fewest_rounds = min(r for _, r in full)
+    return max(h for h, r in full if r == fewest_rounds)
 
 
 # ---------------- Stage 2c: recording which H each layer actually ran with ----------------
