@@ -69,8 +69,9 @@ attention slope over M-LRD for a 3.6x element-count ratio.
 
 ### 3.2 Group-shared mode
 
-New compile-time mode `PALU_GROUP_SHARED` (host: `group_shared = heads_per_group > 1 &&
-num_heads_per_core > 1`). The host guarantees `num_heads_per_core` divides `heads_per_group` and
+New compile-time mode `PALU_GROUP_SHARED`, opt-in per call (host: `group_shared =
+heads_per_core > 1`, where `heads_per_core` is the new op parameter; `None`/`1` keep the per-head
+kernel and the stock split -- implicit activation would exceed L1 at batch 32 on wide latents). The host guarantees `num_heads_per_core` divides `heads_per_group` and
 that a core's heads are contiguous within one group, so all heads on a core share the same
 latent (`lat_head = cur_head / heads_per_group` is constant on the core).
 
@@ -92,9 +93,9 @@ for h in 0..H-1:
     tree reduction for head h (unchanged code, per head), then output head h
 ```
 
-State is replicated per head as separate CB *regions* addressed by head index, not new CB slots:
-`c_25`, `c_26` (out accumulators), the five statistics CBs, and `c_12` (Phase 2 q-state) are sized
-`H x` their per-head size, and the kernel computes each head's block base from `h`. The
+State is replicated per head as FIFO-rotated blocks in the existing CBs (`c_26`, `c_28`, `c_30` and
+the reduction scratch CBs sized `H x`); Q and the Phase-2 rotated-query state are per *core*, not per
+head (one Q tile holds every q head of the core, as in stock), so `c_0`/`c_12` keep one block. The
 per-head math, chunk order and accumulation order are unchanged, so head `h`'s result is
 bit-identical to the per-head mode.
 
