@@ -236,3 +236,43 @@ def test_fused_flag_is_ignored_on_the_v_only_row(mesh_device):
     m = _tt_attention(PaluAttention, mesh_device, args, sd, rope, tt_ccl)
     assert not m.recon_k and not m.use_fused_k and not hasattr(m, "w_rot")
 
+
+
+def test_glrd_prefill_and_naive_decode_match_reference(mesh_device):
+    """Group size 4: one K latent and one V latent per chip; prefill and the naive decode rebuild every
+    head from the shared latent. Reference = the per-head CPU module on the expanded factors."""
+    batch = 32
+    args, sd, rope, tt_ccl, ref = _setup(mesh_device, "compressed/glrd_0.5", batch=batch, max_seq_len=SEQ)
+    args.palu.runtime.check = True
+    tt = _tt_attention(PaluAttention, mesh_device, args, sd, rope, tt_ccl)
+    assert tt.gs == 4 and tt.n_local_groups == 1 and not tt.use_fused_k
+    assert tuple(tt.layer_past[0].shape)[:2] == (batch, 1) and tuple(tt.layer_past[1].shape)[:2] == (batch, 1)
+    assert tt.kv_bytes_per_token() == 1 * (tt.r_k + tt.r_v) * 1.0625
+    P = 128
+    x_pre = torch.randn(1, P, args.dim) * 0.05
+    y_ref = ref.forward(x_pre, start_pos=0)
+    rot = [rope.cos_matrix_prefill[:, :, :P, :], rope.sin_matrix_prefill[:, :, :P, :]]
+    y = tt.forward(args.prepare_residual_tensor_prefill(x_pre, force_replicated=True), None, rot_mats=rot, user_id=0, mode=Mode.PREFILL)
+    y = _to_torch(mesh_device, args, y)[0, 0, :P, : args.dim]
+    ok, msg = comp_pcc(y_ref[0], y, 0.99)
+    logger.info(f"prefill {msg}")
+    assert ok, f"prefill {msg}"
+    for step in range(4):
+        pos = P + step
+        x = torch.randn(1, 1, args.dim) * 0.05
+        y_ref = ref.forward(x, start_pos=pos)
+        current_pos = torch.full((batch,), pos)
+        args.palu.runtime.recon_len = ((pos + 1 + 31) // 32) * 32
+        x_tt, pos_tt, rot_mats = _decode_inputs(mesh_device, args, rope, x.expand(batch, 1, -1).contiguous(), current_pos)
+        y = tt.forward(x_tt, pos_tt, rot_mats=rot_mats, mode=Mode.DECODE)
+        y = _to_torch(mesh_device, args, y)[:, 0:1, :batch, : args.dim].view(batch, 1, args.dim)
+        ok, msg = comp_pcc(y_ref, y[0:1], 0.99)
+        logger.info(f"pos={pos} {msg}")
+        assert ok, f"pos={pos} {msg}"
+    # the group latent is the per-head latent of any head in the group (the reference keeps it per head)
+    for i, ref_cache in ((0, ref.cache_k_lat), (1, ref.cache_v_lat)):
+        c = ttnn.to_torch(tt.layer_past[i], mesh_composer=ttnn.ConcatMesh2dToTensor(mesh_device, dims=(0, 1), mesh_shape=args.cluster_shape))
+        got = c[:1, :, : P + 4, :]                                  # [1, n_groups(2), P+4, r]
+        want = ref_cache[:, ::tt.gs, : P + 4, :]                    # head 0 of each group
+        ok, msg = comp_pcc(want, got, 0.99)
+        assert ok, f"cache {i} {msg}"

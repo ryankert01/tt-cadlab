@@ -13,7 +13,7 @@ from palu_tt import fused
 from palu_tt.convert import CONVERT_VERSION
 
 
-def cache_tag(cache_id: str, r_k: int, r_v: int) -> str:
+def cache_tag(cache_id: str, r_k: int, r_v: int, gs: int = 1) -> str:
     """Prefix for every Palu-specific weight-cache entry.
 
     ttnn.as_tensor reuses an on-disk cache file whenever name/shape/dtype match -- it never looks at
@@ -25,7 +25,7 @@ def cache_tag(cache_id: str, r_k: int, r_v: int) -> str:
     full-rank V factorisation into the QKV weight) must not be served an entry from the old scheme.
     """
     assert isinstance(cache_id, str) and cache_id, f"PaluConfig.cache_id must be a non-empty string, got {cache_id!r}"
-    return f"palu_v{CONVERT_VERSION}_{cache_id}_rk{r_k}_rv{r_v}"
+    return f"palu_v{CONVERT_VERSION}_{cache_id}_rk{r_k}_rv{r_v}" + (f"_gs{gs}" if gs > 1 else "")
 
 
 def _fused_tables(configuration, mesh_device, chunk):
@@ -101,23 +101,30 @@ class PaluAttention(LightweightModule):
         self.compute_kernel_config_hifi2 = configuration.compute_kernel_config_hifi2
         self.scale = self.head_dim ** -0.5
         self.palu = configuration.palu
-        self.r_k = self.palu.rank_k[layer_num]
+        self.gs = int(self.palu.group_size)                          # heads sharing one latent (1 = M-LRD)
+        assert self.n_local_kv_heads % self.gs == 0, \
+            f"group size {self.gs} must divide {self.n_local_kv_heads} local KV heads"
+        self.n_local_groups = self.n_local_kv_heads // self.gs
+        self.r_k = self.palu.rank_k[layer_num]                       # group latent widths (per head at gs == 1)
         self.r_v = self.palu.rank_v[layer_num]
-        assert self.r_k % 32 == 0 and self.r_v % 32 == 0 and self.r_k <= self.head_dim and self.r_v <= self.head_dim
+        assert self.r_k % 32 == 0 and self.r_v % 32 == 0 and self.r_k <= self.gs * self.head_dim \
+            and self.r_v <= self.gs * self.head_dim
         # r_k == head_dim (the V-only row and the identity row) buys nothing on the K side: the
         # converter then puts the plain Meta-permuted wk in the fused QKV weight, so the "latent"
         # already *is* K in the order the stock RoPE and SDPA want. Run the stock K path in that
         # case -- no per-step reconstruction, no prefill-mode RoPE over the whole context.
-        self.recon_k = self.r_k < self.head_dim
+        # Those full-rank fast paths exist for per-head factors only (see convert.palu_layer_tensors):
+        # a grouped latent is always a latent, reconstructed per head.
+        self.recon_k = self.gs > 1 or self.r_k < self.head_dim
         # Same argument on the V side: at r_v == head_dim (only the identity row) the prefill
         # up-projection is an identity matmul, and routing the latent through it costs a
         # bfp8 -> bf16 -> bfp8 round trip that stock does not do.
-        self.recon_v = self.r_v < self.head_dim
+        self.recon_v = self.gs > 1 or self.r_v < self.head_dim
 
         rt = self.palu.runtime
         # stage 2: fused K reconstruction. Only where K really is low rank; on the V-only and identity
-        # rows the stock K path stays, flag or no flag.
-        self.use_fused_k = self.recon_k and bool(rt.use_fused_k)
+        # rows the stock K path stays, flag or no flag. Grouped rows join in Task 4 (in-kernel V).
+        self.use_fused_k = self.recon_k and bool(rt.use_fused_k) and self.gs == 1
         self.phase2 = self.use_fused_k and bool(rt.cs_recurrence)
 
         opt = self.args.decoders_optimizations
@@ -136,7 +143,7 @@ class PaluAttention(LightweightModule):
         self.li_o_prefill_compute_kernel_cfg = fid(OpGroup.LI_O_PREFILL)
 
         layer_name = configuration.get_state_dict_prefix("Attention", layer_num)
-        tag = cache_tag(self.palu.cache_id, self.r_k, self.r_v)
+        tag = cache_tag(self.palu.cache_id, self.r_k, self.r_v, self.gs)
         # "_kstock2" marks the V-only fast path: same ranks, *different* K block in the fused QKV
         # weight (the full per-head K weight rebuilt from the factors, not the padded latent). The
         # on-disk weight cache is keyed by name/shape/dtype only, so without this an existing cache
@@ -176,9 +183,11 @@ class PaluAttention(LightweightModule):
         # tensor no forward touches. The attribute is simply absent there -- every use below is
         # guarded by the same `recon_*` flag that decides whether it is built.
         shard_heads = ttnn.ShardTensorToMesh(mesh_device, dim=1)
-        # prefill: zero-padded to [1, n_kv, hd, hd] so the padded latent heads need no slicing
+        # prefill: zero-padded to [1, n_kv, gs*hd, hd] -- the width of the latent as the head split
+        # delivers it (one 128-wide slot per head, gs slots concatenated for a group) -- so the
+        # latent needs no slicing before the up-projection.
         def pad_u(u, r):
-            t = torch.zeros(self.n_kv_heads, self.head_dim, self.head_dim)
+            t = torch.zeros(self.n_kv_heads, self.gs * self.head_dim, self.head_dim)
             t[:, :r, :] = u
             return t.unsqueeze(0)
         if self.recon_k:
@@ -201,6 +210,15 @@ class PaluAttention(LightweightModule):
             u_v = state_dict[f"{P}.u_v"]  # [n_kv, r_v, hd]
             self.u_v_prefill = ttnn.as_tensor(pad_u(u_v, self.r_v), dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT, device=mesh_device,
                                               memory_config=ttnn.DRAM_MEMORY_CONFIG, mesh_mapper=shard_heads, cache_file_name=cache_name(f"{tag}_u_v_prefill"))
+            if self.gs > 1:
+                # grouped rows do not absorb V into wo (the group latent is up to gs*hd wide, which
+                # would widen the fused output projection by gs); the naive decode reconstructs V
+                # per head just like K.
+                self.u_v_decode = ttnn.as_tensor(
+                    u_v.unsqueeze(0).expand(B, -1, -1, -1).contiguous(), dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT,
+                    device=mesh_device, memory_config=ttnn.DRAM_MEMORY_CONFIG, mesh_mapper=shard_heads,
+                    cache_file_name=cache_name(f"{tag}_u_v_decode_b{B}"),
+                )
 
         # --- output projections: stock wo (prefill) and fused wo (decode) ------------------------------
         wo_mem = configuration.create_dram_sharded_mem_config((configuration.n_heads * configuration.head_dim) // self.num_devices, configuration.dim)
@@ -212,16 +230,18 @@ class PaluAttention(LightweightModule):
         # r_v == head_dim: the converter emits wo_fused == wo (U_v is folded into the QKV weight and
         # the identity handed downstream), so a second upload would be a byte-identical duplicate of
         # a ~300 MB/device tensor. Alias it instead.
-        self.wo_fused = wo_tensor(state_dict[f"{P}.wo_fused"], f"{tag}_wo_fused") if self.recon_v else self.wo
+        # Grouped rows: the converter emits wo_fused == wo too (no V absorption), so alias it there as well.
+        self.wo_fused = wo_tensor(state_dict[f"{P}.wo_fused"], f"{tag}_wo_fused") if (self.recon_v and self.gs == 1) else self.wo
 
         # --- latent caches ---------------------------------------------------------------------------
         self.layer_past = []
-        for r, nm in ((self.r_k, "k"), (self.r_v, "v")):
-            z = torch.zeros(B, self.n_local_kv_heads, self.max_seq_len, r)
-            self.layer_past.append(ttnn.as_tensor(
+        for r in (self.r_k, self.r_v):
+            z = torch.zeros(B, self.n_local_groups, self.max_seq_len, r)
+            # Never through the weight cache: the content is zeros and every batch/context shape would
+            # leave a file of up to 273 MB behind (212 GB of them found on disk during stage 2b).
+            self.layer_past.append(ttnn.from_torch(
                 z, dtype=self.latent_dtype, layout=ttnn.TILE_LAYOUT, device=mesh_device,
                 memory_config=ttnn.DRAM_MEMORY_CONFIG, mesh_mapper=ttnn.ReplicateTensorToMesh(mesh_device),
-                cache_file_name=cache_name(f"{tag}_latcache_{nm}_{tuple(z.shape)}") if weight_cache_path else None,
             ))
 
         if self.recon_k and not self.use_fused_k:
@@ -254,7 +274,7 @@ class PaluAttention(LightweightModule):
     def kv_bytes_per_token(self):
         """Bytes per token per layer on one chip (tile-padded), for the results table."""
         bpe = {ttnn.bfloat8_b: 1.0625, ttnn.bfloat16: 2.0, ttnn.bfloat4_b: 0.5625}[self.latent_dtype]
-        return self.n_local_kv_heads * (self.r_k + self.r_v) * bpe
+        return self.n_local_groups * (self.r_k + self.r_v) * bpe
 
     def _latent_shard_cfg(self, width):
         return ttnn.create_sharded_memory_config(
@@ -264,7 +284,7 @@ class PaluAttention(LightweightModule):
 
     def _kv_prefill_shard_cfg(self, seq_len, width):
         return ttnn.create_sharded_memory_config(
-            (self.n_local_kv_heads * seq_len // 64, width), ttnn.CoreGrid(y=8, x=8),
+            (self.n_local_groups * seq_len // 64, width), ttnn.CoreGrid(y=8, x=8),
             ttnn.ShardStrategy.HEIGHT, ttnn.ShardOrientation.ROW_MAJOR, use_height_and_width_as_shard_shape=True,
         )
 
@@ -303,12 +323,26 @@ class PaluAttention(LightweightModule):
             xqkv, num_heads=self.n_local_heads, num_kv_heads=self.n_local_kv_heads, transpose_k_heads=False, memory_config=ttnn.DRAM_MEMORY_CONFIG)
         ttnn.deallocate(xqkv)
 
+        # group latents: the head-split slots at gs == 1, their head-major concatenation for a group --
+        k_slot = self._group_latent_prefill(k_lat_pad)      # [1, n_local_groups, S, gs*128]
+        v_slot = self._group_latent_prefill(v_lat_pad)
+        if self.gs > 1:
+            ttnn.deallocate(k_lat_pad)                      # consumed by the concat (gs > 1 => recon_k/recon_v)
+            ttnn.deallocate(v_lat_pad)
+
         # reconstruct V (and K, unless the V-only fast path applies) from the padded latents ---------
-        # ([1, nkv, S, 128] @ [1, nkv, 128, 128]); at r_k == head_dim k_lat_pad is already full K.
-        k_pre = ttnn.matmul(k_lat_pad, self.u_k_prefill, dtype=ttnn.bfloat16, memory_config=ttnn.DRAM_MEMORY_CONFIG,
-                            compute_kernel_config=self.compute_kernel_config_hifi2) if self.recon_k else k_lat_pad
-        v_full = ttnn.matmul(v_lat_pad, self.u_v_prefill, dtype=ttnn.bfloat16, memory_config=ttnn.DRAM_MEMORY_CONFIG,
-                             compute_kernel_config=self.compute_kernel_config_hifi2) if self.recon_v else v_lat_pad
+        # ([1, nkv, S, w] @ [1, nkv, w, 128], w = gs*128 the slot width, matching u_*_prefill's zero
+        # padding); at gs == 1 and r_k == head_dim k_lat_pad is already full K.
+        def recon(slot, u):
+            # ttnn.matmul cannot broadcast a batched in1, so a group latent is materialised per head
+            src = slot if self.gs == 1 else ttnn.repeat(slot, ttnn.Shape([1, self.gs, 1, 1]))
+            out = ttnn.matmul(src, u, dtype=ttnn.bfloat16, memory_config=ttnn.DRAM_MEMORY_CONFIG,
+                              compute_kernel_config=self.compute_kernel_config_hifi2)
+            if src is not slot:
+                ttnn.deallocate(src)
+            return out
+        k_pre = recon(k_slot, self.u_k_prefill) if self.recon_k else k_lat_pad
+        v_full = recon(v_slot, self.u_v_prefill) if self.recon_v else v_lat_pad
 
         # RoPE on q and K (stock prefill op) ------------------------------------------------------------
         q = ttnn.experimental.rotary_embedding_llama(q_pre, rot_mats[0], rot_mats[1], self.transformation_mats["prefill"], is_decode_mode=False)
@@ -318,17 +352,21 @@ class PaluAttention(LightweightModule):
 
         # caches: latents, except the fast path's K cache which holds rotated full K like stock --------
         keys, values = self.layer_past
-        for src, r, cache in (((k_lat_pad if self.recon_k else k_rot), self.r_k, keys), (v_lat_pad, self.r_v, values)):
-            lat = src[:, :, :, :r] if r < self.head_dim else src
+        for src, r, cache in (((k_slot if self.recon_k else k_rot), self.r_k, keys), (v_slot, self.r_v, values)):
+            lat = src[:, :, :, :r] if r < src.shape[-1] else src
             lat = ttnn.typecast(lat, dtype=cache.dtype)
             if seq_len >= self.min_kv_prefill_shard_seqlen:
                 lat = ttnn.interleaved_to_sharded(lat, self._kv_prefill_shard_cfg(seq_len, r))
             ttnn.fill_cache(cache, lat, user_id % self.batch_size_per_device_group)
             ttnn.deallocate(lat)
-        if self.recon_k:
-            ttnn.deallocate(k_lat_pad)
-        if self.recon_v:
-            ttnn.deallocate(v_lat_pad)      # otherwise v_lat_pad *is* v_full, freed after the SDPA
+        if self.gs > 1:
+            ttnn.deallocate(k_slot)
+            ttnn.deallocate(v_slot)
+        else:
+            if self.recon_k:
+                ttnn.deallocate(k_lat_pad)
+            if self.recon_v:
+                ttnn.deallocate(v_lat_pad)  # otherwise v_lat_pad *is* v_full, freed after the SDPA
 
         # SDPA (stock, with reconstructed K/V) -----------------------------------------------------------
         q8 = ttnn.typecast(q, dtype=self.activation_dtype or ttnn.bfloat8_b)
@@ -380,6 +418,43 @@ class PaluAttention(LightweightModule):
         ttnn.deallocate(t)
         return ttnn.interleaved_to_sharded(t2, self._latent_shard_cfg(r))
 
+    def _group_latent_prefill(self, heads_1KSD):
+        """[1, n_local_kv, S, 128] (the head-split latent slots) -> the group latent at slot width:
+        the input itself at gs == 1, else [1, n_local_groups, S, gs*128].
+
+        The group's VT occupies its heads' consecutive slots (convert.palu_layer_tensors), so the latent
+        is the concatenation of the group's head slices along the last dim; with one group per chip that
+        is exactly nlp_concat_heads. The *full* slot width is returned (not the r-slice) because the
+        up-projection wants it padded -- see pad_u -- and the caller slices it once for the cache write.
+        """
+        if self.gs == 1:
+            return heads_1KSD
+        assert self.n_local_groups == 1, "one group per chip is what nlp_concat_heads gives; generalise with a reshape if needed"
+        return ttnn.experimental.nlp_concat_heads(heads_1KSD, memory_config=ttnn.DRAM_MEMORY_CONFIG)  # [1, 1, S, n_local_kv*128]
+
+    def _group_latent(self, heads_1BKD, r):
+        """Decode: [1, B, n_local_kv, 128] height-sharded -> [1, B, n_local_groups, r] height-sharded
+        (shard [32, r] per batch core), the layout paged_update_cache wants."""
+        if self.gs == 1:
+            return self._slice_latent(heads_1BKD, r)
+        assert self.n_local_groups == 1, "one group per chip is what nlp_concat_heads_decode gives"
+        B = self.batch_size_per_device_group
+        t = ttnn.to_memory_config(heads_1BKD, self.args.get_attn_sdpa_output_mem_config(Mode.DECODE, B, None))
+        cat = ttnn.experimental.nlp_concat_heads_decode(t, num_heads=self.n_local_kv_heads)           # [1, 1, B, n_local_kv*128]
+        ttnn.deallocate(t)
+        ttnn.deallocate(heads_1BKD)
+        cat = ttnn.sharded_to_interleaved(cat, ttnn.L1_MEMORY_CONFIG)
+        lat = cat[:, :, :, :r] if r < cat.shape[-1] else cat
+        if lat is not cat:
+            ttnn.deallocate(cat)
+        lat_r = ttnn.reshape(lat, (1, B, self.n_local_groups, r))
+        return ttnn.interleaved_to_sharded(lat_r, self._latent_shard_cfg(r))
+
+    def _expand_latent_over_heads(self, lat):
+        """[B, n_local_groups, S, r] -> [B, n_local_kv, S, r]: every head of a group reads the group's
+        latent. ttnn.matmul cannot broadcast a batched in1, so the latent is materialised per head."""
+        return lat if self.gs == 1 else ttnn.repeat(lat, ttnn.Shape([1, self.gs, 1, 1]))
+
     def forward_decode(self, x, current_pos, rot_mats=None, page_table=None, kv_cache=None):
         assert page_table is None and kv_cache is None
         B = self.batch_size_per_device_group
@@ -408,9 +483,9 @@ class PaluAttention(LightweightModule):
 
         # latents -> caches -----------------------------------------------------------------------------
         keys, values = self.layer_past
-        v_lat = self._slice_latent(v_lat_pad, self.r_v)
+        v_lat = self._group_latent(v_lat_pad, self.r_v)
         if self.recon_k:
-            k_new = self._slice_latent(k_lat_pad, self.r_k)
+            k_new = self._group_latent(k_lat_pad, self.r_k)
         else:
             # V-only fast path: the K "latent" is full K in Meta order, so this is the stock K path
             # -- decode-mode RoPE straight into a head_dim cache.
@@ -434,10 +509,13 @@ class PaluAttention(LightweightModule):
             if self.recon_k:
                 # K reconstruction (the naive Palu path; stage 2 fuses this) ---------------------------------
                 S = self._recon_len(current_pos)
-                k_lat_S = keys[:, :, :S, :] if S < self.max_seq_len else keys                 # [B, nkv, S, r_k]
-                v_att = values[:, :, :S, :] if S < self.max_seq_len else values               # [B, nkv, S, r_v]
-                k_rec = ttnn.matmul(k_lat_S, self.u_k_decode, dtype=ttnn.bfloat16, memory_config=ttnn.DRAM_MEMORY_CONFIG,
+                k_lat_S = keys[:, :, :S, :] if S < self.max_seq_len else keys                 # [B, n_local_groups, S, r_k]
+                v_att = values[:, :, :S, :] if S < self.max_seq_len else values               # [B, n_local_groups, S, r_v]
+                k_src = self._expand_latent_over_heads(k_lat_S)                               # [B, nkv, S, r_k]
+                k_rec = ttnn.matmul(k_src, self.u_k_decode, dtype=ttnn.bfloat16, memory_config=ttnn.DRAM_MEMORY_CONFIG,
                                     compute_kernel_config=self.compute_kernel_config_hifi2)   # [B, nkv, S, 128]
+                if k_src is not k_lat_S:
+                    ttnn.deallocate(k_src)
                 if S < self.max_seq_len:
                     ttnn.deallocate(k_lat_S)
                 k_rec = ttnn.reshape(k_rec, (1, B * self.n_local_kv_heads, S, self.head_dim))
@@ -455,23 +533,41 @@ class PaluAttention(LightweightModule):
                 k_rot = ttnn.reshape(k_rot, (B, self.n_local_kv_heads, S, self.head_dim))
                 k_att = ttnn.typecast(k_rot, dtype=self.kv_cache_dtype)                       # same precision as a stock K cache
                 ttnn.deallocate(k_rot)
+                if self.gs > 1:
+                    # grouped V is reconstructed too (no absorption into wo): stock decode SDPA on full V
+                    v_src = self._expand_latent_over_heads(v_att)                             # [B, nkv, S, r_v]
+                    v_rec = ttnn.matmul(v_src, self.u_v_decode, dtype=ttnn.bfloat16, memory_config=ttnn.DRAM_MEMORY_CONFIG,
+                                        compute_kernel_config=self.compute_kernel_config_hifi2)   # [B, nkv, S, 128]
+                    ttnn.deallocate(v_src)
+                    if S < self.max_seq_len:
+                        ttnn.deallocate(v_att)
+                    v_att = ttnn.typecast(v_rec, dtype=self.kv_cache_dtype)
+                    ttnn.deallocate(v_rec)
             else:
                 # Both caches carry seq dim max_seq_len, which is what the MLA op's equal-seq-len check
                 # wants -- exactly how stock hands its full caches to SDPA decode.
                 S, k_att, v_att = self.max_seq_len, keys, values
 
             # attention on K (reconstructed, or the cache itself) and the V latent ---------------------------
-            attn = ttnn.transformer.flash_multi_latent_attention_decode(
-                q, k_att, v_att, head_dim_v=self.r_v, cur_pos_tensor=current_pos, scale=self.scale,
-                program_config=self.args.get_attn_sdpa_decode_program_config(None),
-                compute_kernel_config=self.sdpa_decode_compute_kernel_cfg, memory_config=ttnn.DRAM_MEMORY_CONFIG)  # [1, B, nh, r_v]
+            if self.gs > 1:
+                # V is full width here, so this is the stock decode SDPA
+                attn = ttnn.transformer.scaled_dot_product_attention_decode(
+                    q, k_att, v_att, cur_pos_tensor=current_pos, scale=self.scale,
+                    program_config=self.args.get_attn_sdpa_decode_program_config(None),
+                    compute_kernel_config=self.sdpa_decode_compute_kernel_cfg, memory_config=ttnn.DRAM_MEMORY_CONFIG)  # [1, B, nh, 128]
+            else:
+                attn = ttnn.transformer.flash_multi_latent_attention_decode(
+                    q, k_att, v_att, head_dim_v=self.r_v, cur_pos_tensor=current_pos, scale=self.scale,
+                    program_config=self.args.get_attn_sdpa_decode_program_config(None),
+                    compute_kernel_config=self.sdpa_decode_compute_kernel_cfg, memory_config=ttnn.DRAM_MEMORY_CONFIG)  # [1, B, nh, r_v]
             ttnn.deallocate(q)
             if self.recon_k:
                 ttnn.deallocate(k_att)
-                if S < self.max_seq_len:
+                if self.gs > 1 or S < self.max_seq_len:
                     ttnn.deallocate(v_att)
-        if self.r_v < self.head_dim:
-            attn_p = ttnn.pad(attn, padding=[(0, 0), (0, 0), (0, 0), (0, self.head_dim - self.r_v)], value=0.0)
+        # only the absorbed-V path leaves the attention output narrower than a head
+        if attn.shape[-1] < self.head_dim:
+            attn_p = ttnn.pad(attn, padding=[(0, 0), (0, 0), (0, 0), (0, self.head_dim - attn.shape[-1])], value=0.0)
             ttnn.deallocate(attn)
             attn = attn_p
 
