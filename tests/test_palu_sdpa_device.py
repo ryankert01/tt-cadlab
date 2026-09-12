@@ -249,3 +249,8 @@ def test_group_envelope_is_enforced(mesh_device):
     with pytest.raises(RuntimeError, match="head_dim_v"):           # u_v given but head_dim_v is not 128
         ttnn.transformer.palu_sdpa_decode(_dev(mesh_device, q), _dev(mesh_device, k_lat), w, cs, _dev(mesh_device, v_lat),
                                           u_v=_dev(mesh_device, u_v[None]), **{**good, "head_dim_v": 256})
+
+
+def test_grouped_latents_full_rank_group(mesh_device):
+    """glrd_0.7 has layers at K group rank 512 and V group rank 512: the widest latents the envelope allows."""
+    _check_group(mesh_device, 32, 1024, 512, 512, gs=4, k_chunk=0, phase2=True)
