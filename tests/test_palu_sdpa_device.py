@@ -263,18 +263,24 @@ def test_grouped_latents_full_rank_group(mesh_device):
 # ---------------- Stage 2c: group-shared mode (a core's heads share one latent read) ----------------
 
 
-def _group_ref_pcc(q, k_lat, u_k, v_lat, u_v, pos, cos, sin, out, gs=4):
+def _group_ref_pcc(q, k_lat, u_k, v_lat, u_v, pos, cos, sin, out, gs=4, pcc=0.99):
     ref = fused.reference_decode(q, _expand(k_lat, gs), u_k, _expand(v_lat, gs), pos, cos, sin, HD ** -0.5, u_v=u_v)
-    return comp_pcc(ref, out, 0.99)
+    return comp_pcc(ref, out, pcc)
 
 
-# The bit-identity bar only applies when both sides run the *same* work split. Once the sequence is
-# split over cores the flash states are merged pairwise instead of accumulated in one chunk order, and
-# the group-shared branch merges them with the plain max/sub_exp/mul/add primitives rather than the
-# fused correction_block the per-head branch uses (see the compute kernel: the fused helper drops the
-# child's contribution in that branch). Both are legitimate orderings of the same online softmax, so
-# the two differ in the last bf16 places and the bar is PCC (spec: >= 0.9999).
+# The bit-identity bar cannot apply to any comparison in which a child is merged. The group-shared
+# branch does the softmax correction with the plain max / sub_exp / mul / add primitives instead of the
+# fused correction_block the per-head branch uses -- correction_block needs five dst tiles and this
+# program's window is four under fp32 dest accumulate, and in the group branch that overflow drops the
+# child's contribution outright (see the compute kernel for the measurements). The primitives are the
+# same values but *not* the same precision: correction_block keeps its six steps in fp32 dst across one
+# acquisition, the primitives pack to bf16 after each, so six extra quantisations per child merge. On
+# top of that, an H that changes the work split also changes the order the chunks are accumulated in.
+# Either alone puts the two outputs a few bf16 ulps apart, so those comparisons are PCC (spec: 0.9999).
 SPLIT_PCC = 0.9999
+# The same cases against the fp32 reference: 0.99996-0.99998 measured, so 0.9995 catches a regression
+# in the merge while leaving room for the bf16 noise.
+SPLIT_REF_PCC = 0.9995
 
 
 def _assert_matches(per_head, shared, msg, bitwise):
@@ -290,21 +296,24 @@ def _assert_matches(per_head, shared, msg, bitwise):
 def test_group_shared_matches_per_head(mesh_device, r_k, r_v, phase2):
     """Group-shared mode against the per-head mode at batch 16.
 
-    heads_per_core=1 is the stock split there: one (batch, KV head) item per core, 64 cores, the whole
-    sequence on each. heads_per_core=2 halves the item count, so the layout gives each item two cores
-    and the sequence is split -- the Phase B path. Different split, so the bar is PCC, not bit
-    identity; test_group_shared_batch32_matches_stock_split is the bit-identical comparison."""
+    A child is merged here, so the bar is PCC: the group branch's correction is the primitive sequence,
+    not the fused correction_block, and it packs to bf16 six more times per merge (see SPLIT_PCC).
+    heads_per_core=1 is the stock split at batch 16 -- one (batch, KV head) item per core, 64 cores,
+    the whole sequence on each -- while heads_per_core=2 halves the item count and gives each item two
+    cores, so the chunk order differs too. test_group_shared_batch32_matches_stock_split is the
+    bit-identical comparison: same layout, and no reduction to merge."""
     args = _inputs_group(16, 2048, r_k, r_v, 4)
     per_head = _fused_group(mesh_device, *args, 128, phase2, heads_per_core=1)
     shared = _fused_group(mesh_device, *args, 128, phase2, heads_per_core=2)
     _assert_matches(per_head, shared, "group-shared vs per-head", bitwise=False)
-    ok, msg = _group_ref_pcc(*args, shared)
+    ok, msg = _group_ref_pcc(*args, shared, pcc=SPLIT_REF_PCC)
     assert ok, f"vs fp32 reference: {msg}"
 
 
 def test_group_shared_whole_group_on_one_core(mesh_device):
     """H = 4 with the whole sequence on the core (Phase A): the state CBs hold four blocks and the FIFO
-    rotation has to hand each head its own block back three extra times per chunk.
+    rotation has to hand each head its own block back three extra times per chunk. No child is merged,
+    so the correction never runs and the output must be bit-identical.
 
     A 4x4 grid at batch 16 is the layout that gives one core per (batch, group of 4 heads) and no
     sequence split: 16 cores, one item each. On the full 8x8 grid the same H would additionally split
@@ -335,8 +344,12 @@ def test_group_shared_envelope_is_enforced(mesh_device):
 @pytest.mark.parametrize("batch,H", [(8, 4), (16, 4), (32, 4), (8, 2)], ids=["b8_h4", "b16_h4", "b32_h4", "b8_h2"])
 def test_group_shared_with_sequence_split_matches_per_head(mesh_device, batch, H):
     """Phase B: a core owns H heads *and* only part of the sequence, so the tree reduction runs once
-    per head. Compared against ``heads_per_core=None`` -- the stock split with the per-head kernel,
-    i.e. the stage 2b program -- which must be bit-identical.
+    per head, against ``heads_per_core=None`` -- the stock split with the per-head kernel.
+
+    PCC, not bit identity, for two independent reasons: the group branch's softmax correction is the
+    primitive sequence rather than the fused correction_block (six extra bf16 quantisations per child
+    merge -- see SPLIT_PCC), and H also changes the work split, so the chunks are accumulated in a
+    different order.
 
     The layouts on the 64-core grid (4 KV heads, one group; the factory caps a group-mode split at 4
     cores per item): batch 32 / H=4 is 32 items over 2 cores each, batch 16 / H=4 is 16 items over 4,
@@ -346,7 +359,7 @@ def test_group_shared_with_sequence_split_matches_per_head(mesh_device, batch, H
     per_head = _fused_group(mesh_device, *args, 128, True, heads_per_core=None)
     shared = _fused_group(mesh_device, *args, 128, True, heads_per_core=H)
     _assert_matches(per_head, shared, f"batch={batch} H={H}: group-shared vs the stock split", bitwise=False)
-    ok, msg = _group_ref_pcc(*args, shared)
+    ok, msg = _group_ref_pcc(*args, shared, pcc=SPLIT_REF_PCC)
     assert ok, f"vs fp32 reference: {msg}"
 
 
@@ -356,7 +369,8 @@ def test_group_shared_batch32_matches_stock_split(mesh_device, r_k, r_v, phase2)
     """``heads_per_core=None`` at batch 32 is the stock split -- two heads per core, one core per head,
     per-head kernel. ``heads_per_core=2`` is the group kernel on exactly that layout -- two heads per
     core, one core per head, no sequence split -- so this isolates the shared latent read from any
-    change of work assignment, and it is the case where the bit-identity bar applies."""
+    change of work assignment. No core has a child here, so the branch that differs in precision (the
+    softmax correction) never runs and the bit-identity bar applies."""
     args = _inputs_group(32, 2048, r_k, r_v, 4)
     stock = _fused_group(mesh_device, *args, 128, phase2, heads_per_core=None)
     shared = _fused_group(mesh_device, *args, 128, phase2, heads_per_core=2)
@@ -413,3 +427,18 @@ def test_pinned_heads_per_core_that_does_not_fit_the_grid_is_rejected(mesh_devic
     with pytest.raises(RuntimeError, match="only 4 available"):
         ttnn.transformer.palu_sdpa_decode(_dev(mesh_device, q), _dev(mesh_device, k_lat), w, cs,
                                           _dev(mesh_device, v_lat), heads_per_core=2, **good)
+
+
+def test_per_head_reduction_is_accurate_under_fp32_dest_acc(mesh_device):
+    """The per-head branch keeps the fused ``correction_block``, which stages five operands through dst
+    registers 0..4 while this program's window is four tiles (``fp32_dest_acc_en`` is on, and Phase 2
+    requires it). That overflow is what corrupts the merged max in the group branch. This pins the
+    per-head branch, which is the stage 2b decode path: batch 8 is two cores per (batch, KV head), so
+    ``correction_block`` runs, and the result has to stay tight against the fp32 reference.
+
+    Measured 0.99998 here (and 0.99935 at batch 1, where the tree is three rounds deep and the bf16
+    merge error genuinely accumulates), against 0.334 for the same helper in the group branch."""
+    args = _inputs_group(8, 4096, 128, 256, 4)
+    out = _fused_group(mesh_device, *args, 128, True, heads_per_core=None)
+    ok, msg = _group_ref_pcc(*args, out, pcc=0.9999)
+    assert ok, f"per-head tree reduction under fp32 dest accumulate: {msg}"

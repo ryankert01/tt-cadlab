@@ -122,10 +122,18 @@ def reference_decode(q, k_lat, u_k, v_lat, cur_pos, cos, sin, scale: float, u_v=
 L1_MAX_BYTES = 1_499_136          # the allocator's ceiling in the factory's error message
 L1_RUNTIME_BASE_BYTES = 105_696   # measured: reported total minus this model's CB sum
 # The op does not get the whole of L1 inside a model: tt_transformers keeps L1-sharded activations at
-# the top of the bank, and the CB region has to end below them. Measured on Llama-3.1-8B decode at
-# batch 8, the first L1 buffer sits at 1413120 ("static circular buffers ... clash with L1 buffers ...
-# L1 buffer allocated at 1413120"), so that -- not 1499136 -- is the ceiling this estimate has to
-# respect. The margin covers the batch-to-batch drift of that address.
+# the top of the bank and the CB region has to end below them, so 1499136 is not the ceiling that
+# matters. Measured on Llama-3.1-8B decode (glrd_0.5 layer 0, H = 4 forced):
+#
+#   batch  8 : clash, "L1 buffer allocated at 1413120 ... region ends at 1415456"
+#   batch 16 : no clash with the region ending at 1415648, so the ceiling is above that
+#   batch 32 : no clash with the region ending at 1366496 (a lower bound only)
+#
+# The smallest of those is the batch-8 one, and that is what this uses. The margin below is the
+# estimator's own slack on top of it -- the model's buffer address is not something this can predict,
+# so PaluAttention also halves H and retries when the allocator does refuse (see attention.py).
+# Raising the margin past ~22.5 KB would push the spec's H = 4 layer (128 / 416 at batch 32, which
+# needs the region to end at 1390560) below the bar, so the retry carries the residual risk.
 L1_MODEL_CEILING_BYTES = 1_413_120
 L1_SAFETY_BYTES = 16_384
 L1_CB_BUDGET_BYTES = L1_MODEL_CEILING_BYTES - L1_RUNTIME_BASE_BYTES - L1_SAFETY_BYTES
@@ -182,16 +190,24 @@ def palu_l1_cb_bytes(r_k: int, r_v: int, chunk: int, phase2: bool, heads_per_cor
 
 
 def _split_for(h: int, batch: int, num_kv_heads: int, grid_cores: int, max_cores_per_head: int):
-    """(cores per item, tree rounds) the program factory derives for heads_per_core = h.
+    """(cores per item, tree rounds, active cores) the program factory derives for heads_per_core = h.
 
-    Mirror of the factory: an item is (batch, group of h heads), the cores per batch come from the
-    grid and max_cores_per_head_batch, and group mode caps the split at 4 cores per item.
+    Mirror of the factory: an item is (batch, group of h heads), the cores per batch come from the grid
+    and max_cores_per_head_batch, and group mode caps the split at 4 cores per item. h = 1 is the stock
+    rule instead -- the split the op picks on its own, which is what heads_per_core=None builds.
     """
-    uncapped = min(grid_cores, max_cores_per_head * batch * num_kv_heads) // max(1, batch)
-    items = max(1, num_kv_heads // h)
-    cores = max(1, min(4, uncapped // items)) if h > 1 else max(1, uncapped // num_kv_heads)
+    uncapped = max(1, min(grid_cores, max_cores_per_head * batch * num_kv_heads) // max(1, batch))
+    if h > 1:
+        items = max(1, num_kv_heads // h)
+        cores = max(1, min(4, uncapped // items))
+    else:
+        heads_per_core = max(1, -(-num_kv_heads // uncapped))       # the stock ceil, then round up
+        while num_kv_heads % heads_per_core:
+            heads_per_core += 1
+        items = num_kv_heads // heads_per_core
+        cores = max(1, uncapped // num_kv_heads)
     rounds = 0 if cores <= 1 else (cores - 1).bit_length()
-    return cores, rounds
+    return cores, rounds, batch * items * cores
 
 
 def group_heads_per_core(r_k: int, r_v: int, chunk: int, phase2: bool, heads_per_group: int,
@@ -205,17 +221,26 @@ def group_heads_per_core(r_k: int, r_v: int, chunk: int, phase2: bool, heads_per
     32 and two at batch 8. ``num_kv_heads`` defaults to ``heads_per_group`` (one group per chip, which
     is the N300 G-LRD layout).
 
+    The choice is also occupancy-aware. Halving the item count halves the cores an item can be split
+    over once the grid is already full, so a larger H can leave part of the grid idle: at batch 8 a
+    four-head group is 8 items over 4 cores each (the factory's cap), i.e. 32 of 64 cores, while H = 2
+    is 16 items over 4 and fills the grid *and* still halves the latent reads. So an H whose layout
+    does not fill the grid is rejected when a smaller one does; ties keep the larger H. H = 1 always
+    fills it (that is the split the stock rule is built to produce), so in practice this means "a
+    group layout has to fill the grid".
+
     H = 1 is always the fallback -- it is the stage 2b per-head kernel, which the op runs with
     ``heads_per_core=None`` and which always fits (it is the program stage 2b already shipped).
     """
     assert heads_per_group >= 1
     n_kv = num_kv_heads or heads_per_group
-    for h in range(heads_per_group, 1, -1):
+    fits = []                                  # (h, active cores), largest h first
+    for h in range(heads_per_group, 0, -1):
         if heads_per_group % h != 0 or n_kv % h != 0:
             continue
-        cores, rounds = _split_for(h, batch, n_kv, grid_cores, max_cores_per_head)
-        fit = palu_l1_cb_bytes(r_k, r_v, chunk, phase2, h, cores_per_head=cores, tree_rounds=rounds,
-                               batch=batch, **kwargs)
-        if fit <= l1_budget_bytes:
-            return h
-    return 1
+        cores, rounds, active = _split_for(h, batch, n_kv, grid_cores, max_cores_per_head)
+        if h == 1 or palu_l1_cb_bytes(r_k, r_v, chunk, phase2, h, cores_per_head=cores,
+                                      tree_rounds=rounds, batch=batch, **kwargs) <= l1_budget_bytes:
+            fits.append((h, active))
+    best = max(a for _, a in fits)
+    return max(h for h, a in fits if a == best)

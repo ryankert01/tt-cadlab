@@ -119,10 +119,36 @@ def test_reference_decode_reconstructs_v_when_u_v_is_given():
 
 
 def test_group_heads_per_core_picks_the_widest_h_that_fits_l1():
-    """The three layer shapes the spec calls out (chunk 128, Phase 2, group size 4)."""
+    """The three layer shapes the spec calls out (chunk 128, Phase 2, group size 4, batch 32)."""
     assert fused.group_heads_per_core(128, 416, 128, True, 4) == 4
     assert fused.group_heads_per_core(288, 512, 128, True, 4) == 2
     assert fused.group_heads_per_core(512, 512, 128, True, 4) == 1
+
+
+def test_group_heads_per_core_rejects_an_h_that_leaves_the_grid_idle():
+    """128 / 256 fits L1 at H = 4 at either batch, but only fills the 64-core grid at batch 32.
+
+    At batch 8 a four-head group is 8 items and the factory gives each of them 4 cores (its cap), so
+    32 cores work and 32 idle; H = 2 is 16 items over 4 cores each, fills the grid, and still halves
+    the latent reads. At batch 32 H = 4 is 32 items over 2 cores each -- full -- so it wins there."""
+    assert fused.group_heads_per_core(128, 256, 128, True, 4, batch=32) == 4
+    assert fused.group_heads_per_core(128, 256, 128, True, 4, batch=8) == 2
+    # ... and it really is occupancy, not L1, that rejects H = 4 at batch 8
+    cores, rounds, active = fused._split_for(4, 8, 4, 64, 16)
+    assert (cores, active) == (4, 32)
+    assert fused.palu_l1_cb_bytes(128, 256, 128, True, 4, cores_per_head=cores, tree_rounds=rounds,
+                                  batch=8) <= fused.L1_CB_BUDGET_BYTES
+    assert fused._split_for(2, 8, 4, 64, 16)[2] == 64
+    # a tie on occupancy keeps the larger H
+    assert fused._split_for(4, 32, 4, 64, 16)[2] == fused._split_for(2, 32, 4, 64, 16)[2] == 64
+
+
+def test_split_for_matches_the_stock_rule_at_h_1():
+    """H = 1 is the split the op picks on its own, and it always fills the grid -- which is why the
+    occupancy rule reduces to "a group layout has to fill the grid"."""
+    for batch, cores in ((32, 1), (16, 1), (8, 2), (4, 4), (1, 16)):
+        got_cores, _, active = fused._split_for(1, batch, 4, 64, 16)
+        assert (got_cores, active) == (cores, 64), (batch, got_cores, active)
 
 
 def test_group_heads_per_core_divides_the_group_and_never_returns_zero():

@@ -13,8 +13,12 @@ from loguru import logger
 from palu_tt import fused
 from palu_tt.convert import CONVERT_VERSION
 
-# heads_per_core values already logged, so a 32-layer model prints one line per distinct H, not 32.
-_LOGGED_GROUP_HEADS = set()
+# Tile size of one 32x32 latent tile per cache dtype, for the stage 2c L1 estimate.
+LATENT_TILE_BYTES = {}
+try:                                        # keep this module importable without a device
+    LATENT_TILE_BYTES = {ttnn.bfloat8_b: 1088, ttnn.bfloat16: 2048, ttnn.bfloat4_b: 576}
+except AttributeError:                      # pragma: no cover
+    pass
 
 
 def cache_tag(cache_id: str, r_k: int, r_v: int, gs: int = 1) -> str:
@@ -294,16 +298,21 @@ class PaluAttention(LightweightModule):
             if self.gs > 1:
                 h = rt.group_heads_per_core
                 if h is None:
-                    # The batch decides the sequence split, and the split decides how many
-                    # tree-reduction receive slots each head needs, so it is part of the L1 estimate.
-                    h = fused.group_heads_per_core(self.r_k, self.r_v, chunk, self.phase2, self.gs,
-                                                   batch=self.max_batch_size,
-                                                   num_kv_heads=self.n_local_kv_heads)
+                    # The batch decides the sequence split; the split decides how many tree-reduction
+                    # receive slots each head needs and how much of the grid the layout fills, so both
+                    # are part of the choice. The latent cache dtype sets the latent CBs' tile size.
+                    h = fused.group_heads_per_core(
+                        self.r_k, self.r_v, chunk, self.phase2, self.gs,
+                        batch=self.max_batch_size, num_kv_heads=self.n_local_kv_heads,
+                        latent_tile_bytes=LATENT_TILE_BYTES.get(self.latent_dtype, 2048))
                 self.group_heads = max(1, min(int(h), self.gs))
                 if self.gs % self.group_heads != 0:
                     self.group_heads = 1
-                if self.group_heads not in _LOGGED_GROUP_HEADS:
-                    _LOGGED_GROUP_HEADS.add(self.group_heads)
+                # Once per distinct H per *model build*: the config object is shared by the model's
+                # layers and dies with it, so a second model in the same process logs again.
+                seen = self.palu.device_tables.setdefault("group_heads_logged", set())
+                if self.group_heads not in seen:
+                    seen.add(self.group_heads)
                     logger.info(f"palu G-LRD layer {layer_num}: heads_per_core={self.group_heads} "
                                 f"(r_k={self.r_k}, r_v={self.r_v}, chunk={chunk}, group_size={self.gs}, "
                                 f"batch={self.max_batch_size})")
@@ -556,12 +565,27 @@ class PaluAttention(LightweightModule):
             # Stage 2b: grouped rows also rebuild V per head in-kernel from the group latent (u_v),
             # so the op is asked for a full head_dim output rather than the r_v-wide absorbed form.
             grouped = self.gs > 1
-            attn = ttnn.transformer.palu_sdpa_decode(
-                q, keys, self.w_rot, self.cs_tab, values, self.head_dim if grouped else self.r_v, current_pos,
-                rot_step=self.rot_step, trans_mat=self.trans_mat, u_v=self.u_v_kernel if grouped else None, scale=self.scale,
-                heads_per_core=self.group_heads if self.group_heads > 1 else None,
-                program_config=self.fused_program_config, compute_kernel_config=self.fused_compute_cfg,
-                memory_config=ttnn.DRAM_MEMORY_CONFIG)                                        # [1, B, nh, r_v] or [1, B, nh, 128]
+            def _fused_call(hpc):
+                return ttnn.transformer.palu_sdpa_decode(
+                    q, keys, self.w_rot, self.cs_tab, values, self.head_dim if grouped else self.r_v, current_pos,
+                    rot_step=self.rot_step, trans_mat=self.trans_mat, u_v=self.u_v_kernel if grouped else None,
+                    scale=self.scale, heads_per_core=hpc if hpc > 1 else None,
+                    program_config=self.fused_program_config, compute_kernel_config=self.fused_compute_cfg,
+                    memory_config=ttnn.DRAM_MEMORY_CONFIG)                                    # [1, B, nh, r_v] or [1, B, nh, 128]
+            while True:
+                try:
+                    attn = _fused_call(self.group_heads)
+                    break
+                except RuntimeError as e:
+                    # fused.group_heads_per_core models the op's own circular buffers against a measured
+                    # ceiling; it cannot see where this model's L1-sharded activations actually landed.
+                    # If they leave too little room, halve H and retry -- H = 1 is the stage 2b program,
+                    # whose CBs stage 2b already proved fit.
+                    if self.group_heads <= 1 or "ircular buffer" not in str(e):
+                        raise
+                    logger.warning(f"palu G-LRD: heads_per_core={self.group_heads} does not fit L1 beside "
+                                   f"the model's own buffers; falling back to {self.group_heads // 2}")
+                    self.group_heads //= 2
             ttnn.deallocate(q)
         else:
             if self.recon_k:
