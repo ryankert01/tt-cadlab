@@ -330,3 +330,46 @@ def test_glrd_prefill_at_512_tokens_matches_reference(mesh_device):
         c = ttnn.to_torch(tt.layer_past[i], mesh_composer=ttnn.ConcatMesh2dToTensor(mesh_device, dims=(0, 1), mesh_shape=args.cluster_shape))
         ok, msg = comp_pcc(ref_cache[:, ::tt.gs, :P, :], c[:1, :, :P, :], 0.99)
         assert ok, f"cache {i} {msg}"
+
+
+@pytest.mark.parametrize("batch", [32, 8], ids=["b32", "b8"])
+def test_glrd_group_shared_decode_matches_per_head(mesh_device, batch):
+    """Stage 2c: PaluAttention with the automatic H (group-shared kernel) against H = 1 (the stage 2b
+    per-head kernel). Same outputs and same caches.
+
+    Layer 0 of glrd_0.5 is r_k 64 / r_v 512 at group size 4, which the L1 estimate puts at H = 4, so
+    both batches run a core that owns the whole group while the sequence is split over cores -- the
+    Phase B path (per-head tree reduction) rather than Phase A."""
+    args, sd, rope, tt_ccl, _ = _setup(mesh_device, "compressed/glrd_0.5", batch=batch, max_seq_len=SEQ)
+    args.palu.runtime.use_fused_k, args.palu.runtime.cs_recurrence = True, True
+    args.palu.runtime.group_heads_per_core = 1
+    per_head = _tt_attention(PaluAttention, mesh_device, args, sd, rope, tt_ccl)
+    args.palu.runtime.group_heads_per_core = None
+    shared = _tt_attention(PaluAttention, mesh_device, args, sd, rope, tt_ccl)
+    assert per_head.group_heads == 1 and shared.group_heads > 1, \
+        f"expected an automatic H > 1 for r_k={shared.r_k} r_v={shared.r_v}, got {shared.group_heads}"
+    logger.info(f"glrd_0.5 layer 0: r_k={shared.r_k} r_v={shared.r_v} heads_per_core={shared.group_heads}")
+    P = 128
+    x_pre = torch.randn(1, P, args.dim) * 0.05
+    rot = [rope.cos_matrix_prefill[:, :, :P, :], rope.sin_matrix_prefill[:, :, :P, :]]
+    for m in (per_head, shared):
+        m.forward(args.prepare_residual_tensor_prefill(x_pre, force_replicated=True), None, rot_mats=rot, user_id=0, mode=Mode.PREFILL)
+    for step in range(6):
+        pos = P + step
+        x = torch.randn(batch, 1, args.dim) * 0.05
+        current_pos = torch.full((batch,), pos)
+        args.palu.runtime.recon_len = ((pos + 1 + 31) // 32) * 32
+        ys = []
+        for m in (per_head, shared):
+            x_tt, pos_tt, rot_mats = _decode_inputs(mesh_device, args, rope, x, current_pos)
+            y = m.forward(x_tt, pos_tt, rot_mats=rot_mats, mode=Mode.DECODE)
+            ys.append(_to_torch(mesh_device, args, y)[:, 0:1, :batch, : args.dim].view(batch, 1, args.dim))
+        # H > 1 halves the item count, so the sequence is split over cores where H = 1 was not: the
+        # flash states are merged pairwise instead of accumulated in one chunk order, which is a
+        # different (equally valid) bf16 rounding. The op-level bit-identity test is the one that runs
+        # both sides on the same layout.
+        ok, msg = comp_pcc(ys[0], ys[1], 0.9999)
+        assert ok, f"step={step}: group-shared vs per-head: {msg} (max |diff| = {(ys[0] - ys[1]).abs().max()})"
+    for i in range(2):
+        assert torch.equal(_cache_torch(mesh_device, args, per_head, i),
+                           _cache_torch(mesh_device, args, shared, i)), f"cache {i}"

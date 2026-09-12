@@ -113,3 +113,38 @@ def test_reference_decode_reconstructs_v_when_u_v_is_given():
     exp = fused.reference_decode(q, k, u_k, v_full, torch.tensor([S - 1]), cos, sin, 1.0)
     assert out.shape == (1, B, nh, HD)
     torch.testing.assert_close(out, exp, atol=1e-5, rtol=1e-4)
+
+
+# ---------------- Stage 2c: how many KV heads one core may own ----------------
+
+
+def test_group_heads_per_core_picks_the_widest_h_that_fits_l1():
+    """The three layer shapes the spec calls out (chunk 128, Phase 2, group size 4)."""
+    assert fused.group_heads_per_core(128, 416, 128, True, 4) == 4
+    assert fused.group_heads_per_core(288, 512, 128, True, 4) == 2
+    assert fused.group_heads_per_core(512, 512, 128, True, 4) == 1
+
+
+def test_group_heads_per_core_divides_the_group_and_never_returns_zero():
+    for gs in (1, 2, 4):
+        for r_k, r_v in ((64, 128), (512, 512)):
+            h = fused.group_heads_per_core(r_k, r_v, 128, True, gs)
+            assert 1 <= h <= gs and gs % h == 0
+    # a budget below even H = 1 still falls back to the per-head kernel rather than 0
+    assert fused.group_heads_per_core(512, 512, 128, True, 4, l1_budget_bytes=1) == 1
+
+
+def test_group_heads_per_core_is_monotone_in_the_budget():
+    small = fused.group_heads_per_core(128, 416, 128, True, 4, l1_budget_bytes=900_000)
+    big = fused.group_heads_per_core(128, 416, 128, True, 4)
+    assert small < big
+
+
+def test_l1_cb_model_matches_the_factory_allocator_report():
+    """Calibration point: the factory refused r_k = r_v = 512, chunk 128, Phase 2, H = 2, bf16 latents,
+    one core per head with 'circular buffers ... grow to 1813984 B'. Task 1's state-CB sizing gave every
+    state CB H blocks; task 2 keeps only O/m/l per head, worth (H-1) * (2*out_tiles + 5*PNHt) tiles."""
+    cb = fused.palu_l1_cb_bytes(512, 512, 128, True, 2, cores_per_head=1, latent_tile_bytes=2048)
+    task1_extra = (2 - 1) * (2 * 4 + 5 * 1) * 2048
+    assert cb + task1_extra + fused.L1_RUNTIME_BASE_BYTES == 1_813_984
+    assert fused.L1_CB_BUDGET_BYTES + fused.L1_RUNTIME_BASE_BYTES < fused.L1_MAX_BYTES

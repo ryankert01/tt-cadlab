@@ -61,6 +61,9 @@ def main():
     p.add_argument("--palu-dir", required=True)
     p.add_argument("--fused", choices=["p1", "p2"], required=True)
     p.add_argument("--fused-k-chunk", type=int, default=None)
+    p.add_argument("--group-heads", choices=["auto", "1", "2", "4"], default="auto",
+                   help="stage-2c group-shared mode: KV heads per core in the fused op (auto = the "
+                        "largest that fits L1 per layer, 1 = the stage 2b per-head kernel).")
     p.add_argument("--steps", type=int, default=64)
     a = p.parse_args()
     RAW.mkdir(parents=True, exist_ok=True)
@@ -70,7 +73,8 @@ def main():
         ids = eval_ppl.wikitext2_ids(args_tok.tokenizer)
         naive = _logits(md, a.palu_dir, ids, a.steps)
         fused = _logits(md, a.palu_dir, ids, a.steps, use_fused_k=True, cs_recurrence=a.fused == "p2",
-                        fused_k_chunk=a.fused_k_chunk)
+                        fused_k_chunk=a.fused_k_chunk,
+                        group_heads=None if a.group_heads == "auto" else int(a.group_heads))
     finally:
         dev.close(md)
     # Index 0 of both stacks is the shared prefill logit (bit-identical on both paths, since the
@@ -78,6 +82,7 @@ def main():
     naive_decode, fused_decode = naive[1:], fused[1:]
     pccs = [_pcc(naive_decode[i], fused_decode[i]) for i in range(naive_decode.shape[0])]
     r = {"row": a.row, "palu_dir": a.palu_dir, "fused": a.fused, "fused_k_chunk": a.fused_k_chunk,
+         "group_heads": a.group_heads,
          "steps": naive_decode.shape[0],
          "pcc_mean": sum(pccs) / len(pccs), "pcc_min": min(pccs),
          "argmax_agree": float((naive_decode.argmax(-1) == fused_decode.argmax(-1)).float().mean())}

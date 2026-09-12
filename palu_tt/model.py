@@ -12,10 +12,13 @@ from palu_tt.attention import PaluAttention
 
 def build_model(mesh_device, kind: str, palu_dir: Optional[str] = None, max_batch_size: int = 1, max_seq_len: int = 2048,
                 n_layers: Optional[int] = None, dtype=ttnn.bfloat8_b, latent_dtype=None,
-                use_fused_k: bool = False, cs_recurrence: bool = False, fused_k_chunk: Optional[int] = None):
+                use_fused_k: bool = False, cs_recurrence: bool = False, fused_k_chunk: Optional[int] = None,
+                group_heads: Optional[int] = None):
     """latent_dtype: optional ttnn dtype for the Palu latent K/V caches (None = the model's KV cache
     dtype, i.e. bfp8). use_fused_k / cs_recurrence / fused_k_chunk: stage-2 fused decode kernel
-    (Phase 1, Phase 2, chunk override). Only meaningful for kind="palu"."""
+    (Phase 1, Phase 2, chunk override). group_heads: stage-2c KV heads per core in the fused op's
+    group-shared mode (None = pick the largest that fits L1 per layer, 1 = the stage 2b per-head
+    kernel). Only meaningful for kind="palu"."""
     assert kind in ("stock", "palu")
     args = ModelArgs(mesh_device, instruct=True, max_batch_size=max_batch_size, max_seq_len=max_seq_len, cache_hf=False)
     args.use_qk_fused = False          # same RoPE path for both kinds
@@ -28,6 +31,7 @@ def build_model(mesh_device, kind: str, palu_dir: Optional[str] = None, max_batc
                                              args.n_heads, args.n_kv_heads, args.head_dim)
         cfg.latent_dtype = latent_dtype
         cfg.runtime.use_fused_k, cfg.runtime.cs_recurrence, cfg.runtime.fused_k_chunk = use_fused_k, cs_recurrence, fused_k_chunk
+        cfg.runtime.group_heads_per_core = group_heads
         args.palu = cfg
     model = Transformer(args=args, mesh_device=mesh_device, dtype=dtype, state_dict=state_dict,
                         weight_cache_path=args.weight_cache_path(dtype),

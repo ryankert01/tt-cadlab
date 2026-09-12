@@ -102,3 +102,120 @@ def reference_decode(q, k_lat, u_k, v_lat, cur_pos, cos, sin, scale: float, u_v=
         mask[b, :, :, int(cur_pos[b]) + 1:] = float("-inf")
     out = torch.nn.functional.scaled_dot_product_attention(Q, K, V, attn_mask=mask, scale=scale)
     return out.permute(2, 0, 1, 3)                            # [1, B, nh, r_v]
+
+
+# ---------------- Stage 2c: how many KV heads one core may own (group-shared mode) ----------------
+#
+# ``palu_sdpa_decode(heads_per_core=H)`` keeps H per-head weight blocks and H flash states resident on
+# every core so the H heads of a group share one latent read. What bounds H is L1, and the bound is
+# tight enough that H has to be picked per layer: the weight block alone is
+# (r_k/32 * 8 + r_v/32 * 4 + phase2) tiles of 2 KB -- 174 KB at r_k 128 / r_v 416, 395 KB at 512/512.
+#
+# ``palu_l1_cb_bytes`` is a byte-exact model of the program factory's circular-buffer sum for the Palu
+# envelope (unpaged, causal, no sink / sliding window / block padding, DRAM Q and output, cur_pos as a
+# tensor, in-kernel V). It is calibrated against the allocator: the factory reports "circular buffers
+# ... grow to 1813984 B" for r_k = r_v = 512, chunk 128, Phase 2, H = 2, bf16 latents, one core per head
+# -- with stage 2c task 1's state-CB sizing (every state CB H blocks). This model, with the same sizing,
+# sums to 1708288 B, so the runtime's own L1 base is exactly 1813984 - 1708288 = 105696 B; it sits below
+# the CBs and is charged against the same 1499136 B limit. (Task 2 shrank the transient state CBs back
+# to one block, worth 26624 B at H = 2, so the model's CB sum for that configuration is 1681664 B now.)
+L1_MAX_BYTES = 1_499_136          # the allocator's ceiling in the factory's error message
+L1_RUNTIME_BASE_BYTES = 105_696   # measured: reported total minus this model's CB sum
+# The op does not get the whole of L1 inside a model: tt_transformers keeps L1-sharded activations at
+# the top of the bank, and the CB region has to end below them. Measured on Llama-3.1-8B decode at
+# batch 8, the first L1 buffer sits at 1413120 ("static circular buffers ... clash with L1 buffers ...
+# L1 buffer allocated at 1413120"), so that -- not 1499136 -- is the ceiling this estimate has to
+# respect. The margin covers the batch-to-batch drift of that address.
+L1_MODEL_CEILING_BYTES = 1_413_120
+L1_SAFETY_BYTES = 16_384
+L1_CB_BUDGET_BYTES = L1_MODEL_CEILING_BYTES - L1_RUNTIME_BASE_BYTES - L1_SAFETY_BYTES
+
+
+def palu_l1_cb_bytes(r_k: int, r_v: int, chunk: int, phase2: bool, heads_per_core: int,
+                     cores_per_head: int = 4, tree_rounds: int = 2, head_dim: int = 128,
+                     q_head_tiles: int = 1, latent_tile_bytes: int = 1088, batch: int = 32) -> int:
+    """Bytes of circular buffer the program factory allocates per core, for one fused-decode program.
+
+    ``cores_per_head`` / ``tree_rounds`` describe the sequence split; the default is the widest one
+    group-shared mode allows (the program factory caps it at 4 cores per item, i.e. two tree rounds),
+    because the receive slots for the tree reduction are sized per head in group-shared mode.
+    ``latent_tile_bytes`` is 1088 for a bfp8 latent cache (the default), 2048 for bf16.
+    """
+    t, f = 2048, 4096                       # bf16 / fp32 32x32 tile
+    dht = head_dim // 32                    # head dim in tiles
+    wt = 2 * dht                            # [u_k | u_k T] width
+    sk = chunk // 32                        # K chunk in row tiles
+    rt, rvt = r_k // 32, r_v // 32          # latent widths in tiles
+    p2 = 1 if phase2 else 0
+    h = max(1, int(heads_per_core))
+    out_tiles = q_head_tiles * dht          # PNHt * vDHt
+    cur_pos_stick = max(32, ((batch * 4 + 31) // 32) * 32)
+    n = 0
+    n += q_head_tiles * dht * t                                   # c_0  Q
+    n += sk * dht * 2 * t                                         # c_1  K_rot (double buffered)
+    n += sk * rvt * 2 * latent_tile_bytes                         # c_2  V latent
+    n += sk * q_head_tiles * t                                    # c_3  causal mask
+    n += 3 * t                                                    # c_5 scale, c_6 m_in, c_7 l_in
+    n += 2 * cur_pos_stick                                        # c_8 / c_15 cur_pos
+    n += sk * rt * 2 * latent_tile_bytes                          # c_9  K latent
+    n += h * (rt * wt + rvt * dht + p2) * t                       # c_4  H resident weight blocks
+    n += 2 * wt * t                                               # c_10 AB
+    n += (sk * wt if phase2 else 2 * sk * wt) * t                 # c_13 [cos | sin]
+    if phase2:
+        n += 4 * q_head_tiles * dht * f                           # c_12 rotated-query state
+        n += wt * f                                               # c_14 R_{-c} constants
+    n += t                                                        # c_11 column identity
+    n += sk * q_head_tiles * t                                    # c_24 QK
+    n += out_tiles * t                                            # c_25 out_im       (transient)
+    n += h * out_tiles * t                                        # c_26 out_acc      (per head)
+    n += q_head_tiles * t                                         # c_27 cur_max      (transient)
+    n += h * q_head_tiles * t                                     # c_28 prev_max     (per head)
+    n += q_head_tiles * t                                         # c_29 cur_sum      (transient)
+    n += h * q_head_tiles * t                                     # c_30 prev_sum     (per head)
+    n += 3 * q_head_tiles * t                                     # c_31, c_21, c_22  (transient)
+    n += out_tiles * t                                            # c_23 out_acc_2    (transient)
+    n += out_tiles * t + 2 * q_head_tiles * t                     # c_16 / c_17 / c_18 payload
+    slots = 0 if cores_per_head <= 1 else (tree_rounds if h > 1 else cores_per_head - 1)
+    n += (out_tiles + 2 * q_head_tiles) * slots * h * t           # c_19 receive slots
+    n += out_tiles * t                                            # c_20 output
+    return n
+
+
+def _split_for(h: int, batch: int, num_kv_heads: int, grid_cores: int, max_cores_per_head: int):
+    """(cores per item, tree rounds) the program factory derives for heads_per_core = h.
+
+    Mirror of the factory: an item is (batch, group of h heads), the cores per batch come from the
+    grid and max_cores_per_head_batch, and group mode caps the split at 4 cores per item.
+    """
+    uncapped = min(grid_cores, max_cores_per_head * batch * num_kv_heads) // max(1, batch)
+    items = max(1, num_kv_heads // h)
+    cores = max(1, min(4, uncapped // items)) if h > 1 else max(1, uncapped // num_kv_heads)
+    rounds = 0 if cores <= 1 else (cores - 1).bit_length()
+    return cores, rounds
+
+
+def group_heads_per_core(r_k: int, r_v: int, chunk: int, phase2: bool, heads_per_group: int,
+                         l1_budget_bytes: int = L1_CB_BUDGET_BYTES, batch: int = 32,
+                         num_kv_heads: int = 0, grid_cores: int = 64, max_cores_per_head: int = 16,
+                         **kwargs) -> int:
+    """Largest H dividing ``heads_per_group`` whose program fits L1 (spec §3.3).
+
+    ``batch`` (and the grid) matter because the sequence split follows from them, and in group mode the
+    tree-reduction receive slots are sized per head: the same layer needs one round of slots at batch
+    32 and two at batch 8. ``num_kv_heads`` defaults to ``heads_per_group`` (one group per chip, which
+    is the N300 G-LRD layout).
+
+    H = 1 is always the fallback -- it is the stage 2b per-head kernel, which the op runs with
+    ``heads_per_core=None`` and which always fits (it is the program stage 2b already shipped).
+    """
+    assert heads_per_group >= 1
+    n_kv = num_kv_heads or heads_per_group
+    for h in range(heads_per_group, 1, -1):
+        if heads_per_group % h != 0 or n_kv % h != 0:
+            continue
+        cores, rounds = _split_for(h, batch, n_kv, grid_cores, max_cores_per_head)
+        fit = palu_l1_cb_bytes(r_k, r_v, chunk, phase2, h, cores_per_head=cores, tree_rounds=rounds,
+                               batch=batch, **kwargs)
+        if fit <= l1_budget_bytes:
+            return h
+    return 1

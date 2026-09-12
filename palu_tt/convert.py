@@ -38,6 +38,11 @@ class PaluRuntime:
     # op's own choice (largest power of two dividing max_seq_len, capped at 512), which is what the
     # stock decode op uses too.
     fused_k_chunk: Optional[int] = None
+    # stage 2c: how many KV heads one core owns in the fused op's group-shared mode, so that a core's
+    # heads share one latent read. None = pick the largest H that fits L1 per layer
+    # (fused.group_heads_per_core); 1 = the stage 2b per-head kernel with the stock work split. Only
+    # meaningful with grouped latents (group_size > 1).
+    group_heads_per_core: Optional[int] = None
 
 
 @dataclass

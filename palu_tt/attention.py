@@ -8,8 +8,13 @@ from models.tt_transformers.tt.common import Mode
 from models.tt_transformers.tt.model_config import OpGroup, TensorGroup, num_to_corerange
 from models.tt_transformers.tt.rope import get_rot_mats
 
+from loguru import logger
+
 from palu_tt import fused
 from palu_tt.convert import CONVERT_VERSION
+
+# heads_per_core values already logged, so a 32-layer model prints one line per distinct H, not 32.
+_LOGGED_GROUP_HEADS = set()
 
 
 def cache_tag(cache_id: str, r_k: int, r_v: int, gs: int = 1) -> str:
@@ -104,6 +109,7 @@ class PaluAttention(LightweightModule):
         assert self.n_local_kv_heads % self.gs == 0, \
             f"group size {self.gs} must divide {self.n_local_kv_heads} local KV heads"
         self.n_local_groups = self.n_local_kv_heads // self.gs
+        self.group_heads = 1                                         # stage 2c: KV heads per core in the fused op
         self.r_k = self.palu.rank_k[layer_num]                       # group latent widths (per head at gs == 1)
         self.r_v = self.palu.rank_v[layer_num]
         assert self.r_k % 32 == 0 and self.r_v % 32 == 0 and self.r_k <= self.gs * self.head_dim \
@@ -278,6 +284,29 @@ class PaluAttention(LightweightModule):
             cfg = self.sdpa_decode_compute_kernel_cfg
             # Phase 2 keeps the rotated query in fp32 and needs an fp32 dest; the HiFi4 preset has it
             self.fused_compute_cfg = cfg if (not self.phase2 or cfg.fp32_dest_acc_en) else configuration.compute_kernel_config_hifi4
+            # Stage 2c: how many of the group's KV heads one core owns. With H > 1 the op runs its
+            # group-shared program -- the core's H heads share one read of each latent chunk instead of
+            # reading it once per head -- which costs H resident weight blocks and H flash states in L1,
+            # so H is picked per layer from the factory's own CB sum (fused.group_heads_per_core). Only
+            # grouped rows can share anything (gs == 1 means one head per latent), and H = 1 is passed as
+            # None so the op builds exactly the stage 2b program.
+            self.group_heads = 1
+            if self.gs > 1:
+                h = rt.group_heads_per_core
+                if h is None:
+                    # The batch decides the sequence split, and the split decides how many
+                    # tree-reduction receive slots each head needs, so it is part of the L1 estimate.
+                    h = fused.group_heads_per_core(self.r_k, self.r_v, chunk, self.phase2, self.gs,
+                                                   batch=self.max_batch_size,
+                                                   num_kv_heads=self.n_local_kv_heads)
+                self.group_heads = max(1, min(int(h), self.gs))
+                if self.gs % self.group_heads != 0:
+                    self.group_heads = 1
+                if self.group_heads not in _LOGGED_GROUP_HEADS:
+                    _LOGGED_GROUP_HEADS.add(self.group_heads)
+                    logger.info(f"palu G-LRD layer {layer_num}: heads_per_core={self.group_heads} "
+                                f"(r_k={self.r_k}, r_v={self.r_v}, chunk={chunk}, group_size={self.gs}, "
+                                f"batch={self.max_batch_size})")
 
     # ------------------------------------------------------------------------------------------------
     def kv_bytes_per_token(self):
@@ -530,6 +559,7 @@ class PaluAttention(LightweightModule):
             attn = ttnn.transformer.palu_sdpa_decode(
                 q, keys, self.w_rot, self.cs_tab, values, self.head_dim if grouped else self.r_v, current_pos,
                 rot_step=self.rot_step, trans_mat=self.trans_mat, u_v=self.u_v_kernel if grouped else None, scale=self.scale,
+                heads_per_core=self.group_heads if self.group_heads > 1 else None,
                 program_config=self.fused_program_config, compute_kernel_config=self.fused_compute_cfg,
                 memory_config=ttnn.DRAM_MEMORY_CONFIG)                                        # [1, B, nh, r_v] or [1, B, nh, 128]
             ttnn.deallocate(q)

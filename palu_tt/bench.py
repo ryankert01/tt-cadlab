@@ -55,7 +55,7 @@ BATCH = 32
 # Stage 2: the fused-kernel runtime flags for this process, set once by ``main`` from ``--fused``
 # and passed to every model/attention build below. ``--fused off`` (the default) reproduces the
 # stage-1 rows exactly -- ``build_model``'s own defaults are these same three values.
-FUSED = {"use_fused_k": False, "cs_recurrence": False, "fused_k_chunk": None}
+FUSED = {"use_fused_k": False, "cs_recurrence": False, "fused_k_chunk": None, "group_heads": None}
 
 
 class Mesh:
@@ -174,6 +174,7 @@ def _attention_one(md, kind, palu_dir, ctx):
             args.palu.runtime.use_fused_k = FUSED["use_fused_k"]
             args.palu.runtime.cs_recurrence = FUSED["cs_recurrence"]
             args.palu.runtime.fused_k_chunk = FUSED["fused_k_chunk"]
+            args.palu.runtime.group_heads_per_core = FUSED["group_heads"]
             cls = PaluAttention
         rope = RotarySetup(md, BATCH, args.head_dim, ctx, args.rope_theta, args.rope_scaling, False)
         attn = cls(md, TT_CCL(md), args, sd, weight_cache_path=args.weight_cache_path(ttnn.bfloat8_b), layer_num=0,
@@ -361,6 +362,10 @@ def main():
     p.add_argument("--fused-k-chunk", type=int, default=None,
                    help="override the fused op's K chunk (default: the op's own choice; Phase 1 is "
                         "pinned to 128 by PaluAttention).")
+    p.add_argument("--group-heads", choices=["auto", "1", "2", "4"], default="auto",
+                   help="stage-2c group-shared mode: KV heads per core in the fused op. auto = the "
+                        "largest that fits L1 per layer; 1 reproduces the stage 2b per-head kernel. "
+                        "Grouped (G-LRD) Palu rows only.")
     p.add_argument("--batch", type=int, default=32,
                    help="batch size for decode, attention and maxctx (default: 32). "
                         "tt_transformers accepts any value <= 32. prefill is single-user by "
@@ -374,7 +379,8 @@ def main():
         p.error("--fused is a Palu-path flag; --kind stock has no K reconstruction to fuse")
     if not 1 <= a.batch <= 32:
         p.error("--batch must be between 1 and 32 (tt_transformers's cap)")
-    FUSED.update(use_fused_k=a.fused != "off", cs_recurrence=a.fused == "p2", fused_k_chunk=a.fused_k_chunk)
+    FUSED.update(use_fused_k=a.fused != "off", cs_recurrence=a.fused == "p2", fused_k_chunk=a.fused_k_chunk,
+                 group_heads=None if a.group_heads == "auto" else int(a.group_heads))
     BATCH = a.batch
     RAW.mkdir(parents=True, exist_ok=True)
     mesh = Mesh()
@@ -387,7 +393,7 @@ def main():
     finally:
         mesh.close()
     r = {"row": a.row, "kind": a.kind, "palu_dir": a.palu_dir, "what": a.what,
-         "fused": a.fused, "fused_k_chunk": a.fused_k_chunk, "batch": a.batch}
+         "fused": a.fused, "fused_k_chunk": a.fused_k_chunk, "group_heads": a.group_heads, "batch": a.batch}
     if a.what in ("decode", "attention"):  # prefill/maxctx use their own fixed lengths, not CONTEXTS
         r["contexts"] = list(CONTEXTS)
     r["data"] = data

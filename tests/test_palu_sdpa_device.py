@@ -15,9 +15,9 @@ HD, NH, NKV = 128, 16, 4
 THETA = 500000.0
 
 
-def _cfg(k_chunk):
+def _cfg(k_chunk, grid=(8, 8)):
     return dict(
-        program_config=ttnn.SDPAProgramConfig(compute_with_storage_grid_size=(8, 8), q_chunk_size=0, k_chunk_size=k_chunk,
+        program_config=ttnn.SDPAProgramConfig(compute_with_storage_grid_size=grid, q_chunk_size=0, k_chunk_size=k_chunk,
                                               exp_approx_mode=False),
         compute_kernel_config=ttnn.WormholeComputeKernelConfig(math_fidelity=ttnn.MathFidelity.HiFi4, math_approx_mode=False,
                                                                fp32_dest_acc_en=True, packer_l1_acc=False),
@@ -183,7 +183,7 @@ def _stock_on_reconstructed_kv(md, q, k_full_rot, v_full, pos, k_chunk):
     return _host(out)
 
 
-def _fused_group(md, q, k_lat, u_k, v_lat, u_v, pos, cos, sin, k_chunk, phase2, heads_per_core=None):
+def _fused_group(md, q, k_lat, u_k, v_lat, u_v, pos, cos, sin, k_chunk, phase2, heads_per_core=None, grid=(8, 8)):
     S = k_lat.shape[2]
     extra = dict(u_v=_dev(md, u_v[None]))
     if phase2:
@@ -195,7 +195,7 @@ def _fused_group(md, q, k_lat, u_k, v_lat, u_v, pos, cos, sin, k_chunk, phase2, 
         extra["heads_per_core"] = heads_per_core
     out = ttnn.transformer.palu_sdpa_decode(
         _dev(md, q), _dev(md, k_lat), _dev(md, fused.w_rot_from_u_k(u_k)[None]), _dev(md, fused.cs_table(cos, sin, S)[None, None]),
-        _dev(md, v_lat), head_dim_v=HD, cur_pos_tensor=_pos(md, pos), scale=HD ** -0.5, **extra, **_cfg(k_chunk))
+        _dev(md, v_lat), head_dim_v=HD, cur_pos_tensor=_pos(md, pos), scale=HD ** -0.5, **extra, **_cfg(k_chunk, grid))
     return _host(out)
 
 
@@ -268,32 +268,52 @@ def _group_ref_pcc(q, k_lat, u_k, v_lat, u_v, pos, cos, sin, out, gs=4):
     return comp_pcc(ref, out, 0.99)
 
 
+# The bit-identity bar only applies when both sides run the *same* work split. Once the sequence is
+# split over cores the flash states are merged pairwise instead of accumulated in one chunk order, and
+# the group-shared branch merges them with the plain max/sub_exp/mul/add primitives rather than the
+# fused correction_block the per-head branch uses (see the compute kernel: the fused helper drops the
+# child's contribution in that branch). Both are legitimate orderings of the same online softmax, so
+# the two differ in the last bf16 places and the bar is PCC (spec: >= 0.9999).
+SPLIT_PCC = 0.9999
+
+
+def _assert_matches(per_head, shared, msg, bitwise):
+    if bitwise:
+        assert torch.equal(per_head, shared), f"{msg}: max |diff| = {(per_head - shared).abs().max()}"
+    else:
+        ok, detail = comp_pcc(per_head, shared, SPLIT_PCC)
+        assert ok, f"{msg}: {detail}"
+
+
 @pytest.mark.parametrize("r_k,r_v", [(64, 512), (128, 256), (288, 512)], ids=["rk64_rv512", "rk128_rv256", "rk288_rv512"])
 @pytest.mark.parametrize("phase2", [False, True], ids=["p1", "p2"])
 def test_group_shared_matches_per_head(mesh_device, r_k, r_v, phase2):
-    """Group-shared mode (the two heads a core owns share one latent read) must give the same bf16
-    output as the per-head mode, bit for bit: same per-head math, same chunk order.
+    """Group-shared mode against the per-head mode at batch 16.
 
-    Batch 16, not 32: heads_per_core=1 puts one (batch, KV head) item on each core, and at batch 32
-    that is 128 items on the 64-core grid (which is why the stock rule already picks H=2 there). At
-    batch 16 both layouts fit -- H=1 on 64 cores (the stage 2b kernel) and H=2 on 32."""
+    heads_per_core=1 is the stock split there: one (batch, KV head) item per core, 64 cores, the whole
+    sequence on each. heads_per_core=2 halves the item count, so the layout gives each item two cores
+    and the sequence is split -- the Phase B path. Different split, so the bar is PCC, not bit
+    identity; test_group_shared_batch32_matches_stock_split is the bit-identical comparison."""
     args = _inputs_group(16, 2048, r_k, r_v, 4)
     per_head = _fused_group(mesh_device, *args, 128, phase2, heads_per_core=1)
     shared = _fused_group(mesh_device, *args, 128, phase2, heads_per_core=2)
-    assert torch.equal(per_head, shared), (
-        f"group-shared output differs from per-head: max |diff| = {(per_head - shared).abs().max()}")
+    _assert_matches(per_head, shared, "group-shared vs per-head", bitwise=False)
     ok, msg = _group_ref_pcc(*args, shared)
     assert ok, f"vs fp32 reference: {msg}"
 
 
 def test_group_shared_whole_group_on_one_core(mesh_device):
-    """H = 4: a core owns the whole group, so the state CBs hold four blocks and the FIFO rotation
-    has to hand each head its own block back three extra times per chunk."""
+    """H = 4 with the whole sequence on the core (Phase A): the state CBs hold four blocks and the FIFO
+    rotation has to hand each head its own block back three extra times per chunk.
+
+    A 4x4 grid at batch 16 is the layout that gives one core per (batch, group of 4 heads) and no
+    sequence split: 16 cores, one item each. On the full 8x8 grid the same H would additionally split
+    the sequence over 4 cores, which is the Phase B path that
+    test_group_shared_with_sequence_split_matches_per_head covers."""
     args = _inputs_group(16, 2048, 128, 256, 4)
-    per_head = _fused_group(mesh_device, *args, 128, True, heads_per_core=1)
-    shared = _fused_group(mesh_device, *args, 128, True, heads_per_core=4)
-    assert torch.equal(per_head, shared), (
-        f"H=4 output differs from per-head: max |diff| = {(per_head - shared).abs().max()}")
+    per_head = _fused_group(mesh_device, *args, 128, True, heads_per_core=1, grid=(4, 4))
+    shared = _fused_group(mesh_device, *args, 128, True, heads_per_core=4, grid=(4, 4))
+    _assert_matches(per_head, shared, "H=4 vs per-head", bitwise=True)
     ok, msg = _group_ref_pcc(*args, shared)
     assert ok, f"vs fp32 reference: {msg}"
 
@@ -307,3 +327,89 @@ def test_group_shared_envelope_is_enforced(mesh_device):
     with pytest.raises(RuntimeError, match="heads_per_core"):      # 3 does not divide heads_per_group 4
         ttnn.transformer.palu_sdpa_decode(_dev(mesh_device, q), _dev(mesh_device, k_lat), w, cs,
                                           _dev(mesh_device, v_lat), heads_per_core=3, **good)
+
+
+# ---------------- Stage 2c Phase B: H heads per core with the sequence split over cores ----------------
+
+
+@pytest.mark.parametrize("batch,H", [(8, 4), (16, 4), (32, 4), (8, 2)], ids=["b8_h4", "b16_h4", "b32_h4", "b8_h2"])
+def test_group_shared_with_sequence_split_matches_per_head(mesh_device, batch, H):
+    """Phase B: a core owns H heads *and* only part of the sequence, so the tree reduction runs once
+    per head. Compared against ``heads_per_core=None`` -- the stock split with the per-head kernel,
+    i.e. the stage 2b program -- which must be bit-identical.
+
+    The layouts on the 64-core grid (4 KV heads, one group; the factory caps a group-mode split at 4
+    cores per item): batch 32 / H=4 is 32 items over 2 cores each, batch 16 / H=4 is 16 items over 4,
+    batch 8 / H=4 is 8 items over 4 (32 cores busy -- the cap costs the other half of the grid there),
+    batch 8 / H=2 is 16 items over 4. All four exercise the per-head tree reduction."""
+    args = _inputs_group(batch, 4096, 128, 256, 4)
+    per_head = _fused_group(mesh_device, *args, 128, True, heads_per_core=None)
+    shared = _fused_group(mesh_device, *args, 128, True, heads_per_core=H)
+    _assert_matches(per_head, shared, f"batch={batch} H={H}: group-shared vs the stock split", bitwise=False)
+    ok, msg = _group_ref_pcc(*args, shared)
+    assert ok, f"vs fp32 reference: {msg}"
+
+
+@pytest.mark.parametrize("r_k,r_v", [(64, 512), (128, 256), (288, 512)], ids=["rk64_rv512", "rk128_rv256", "rk288_rv512"])
+@pytest.mark.parametrize("phase2", [False, True], ids=["p1", "p2"])
+def test_group_shared_batch32_matches_stock_split(mesh_device, r_k, r_v, phase2):
+    """``heads_per_core=None`` at batch 32 is the stock split -- two heads per core, one core per head,
+    per-head kernel. ``heads_per_core=2`` is the group kernel on exactly that layout -- two heads per
+    core, one core per head, no sequence split -- so this isolates the shared latent read from any
+    change of work assignment, and it is the case where the bit-identity bar applies."""
+    args = _inputs_group(32, 2048, r_k, r_v, 4)
+    stock = _fused_group(mesh_device, *args, 128, phase2, heads_per_core=None)
+    shared = _fused_group(mesh_device, *args, 128, phase2, heads_per_core=2)
+    _assert_matches(stock, shared, "group-shared vs the stock split", bitwise=True)
+    ok, msg = _group_ref_pcc(*args, shared)
+    assert ok, f"vs fp32 reference: {msg}"
+
+
+def test_heads_per_core_1_is_the_stock_split(mesh_device):
+    """heads_per_core=1 must mean 'per-head kernel, stock work split' -- not 'pin one head per core'.
+    At batch 32 the stock split is two heads per core, so pinning 1 would ask for 128 items on the
+    64-core grid; the op must instead build the same program as heads_per_core=None."""
+    args = _inputs_group(32, 1024, 128, 256, 4)
+    unset = _fused_group(mesh_device, *args, 128, True, heads_per_core=None)
+    one = _fused_group(mesh_device, *args, 128, True, heads_per_core=1)
+    assert torch.equal(unset, one)
+
+
+def test_group_shared_phase_b_envelope_is_enforced(mesh_device):
+    """The validation messages Phase B makes reachable."""
+    q, k_lat, u_k, v_lat, u_v, pos, cos, sin = _inputs_group(1, 256, 128, 128, 4)
+    w = _dev(mesh_device, fused.w_rot_from_u_k(u_k)[None])
+    cs = _dev(mesh_device, fused.cs_table(cos, sin, 256)[None, None])
+    good = dict(head_dim_v=HD, cur_pos_tensor=_pos(mesh_device, pos), u_v=_dev(mesh_device, u_v[None]),
+                scale=HD ** -0.5, **_cfg(128))
+    with pytest.raises(RuntimeError, match="KV head count"):        # 8 > the 4 KV heads
+        ttnn.transformer.palu_sdpa_decode(_dev(mesh_device, q), _dev(mesh_device, k_lat), w, cs,
+                                          _dev(mesh_device, v_lat), heads_per_core=8, **good)
+    # heads_per_group 2 (2 latent heads, 4 KV heads): 4 divides the KV heads but not the group
+    k_lat2 = _bf(torch.randn(1, 2, 256, 128))
+    v_lat2 = _bf(torch.randn(1, 2, 256, 128))
+    with pytest.raises(RuntimeError, match="heads_per_group"):
+        ttnn.transformer.palu_sdpa_decode(_dev(mesh_device, q), _dev(mesh_device, k_lat2), w, cs,
+                                          _dev(mesh_device, v_lat2), heads_per_core=4, **good)
+    # per-head latents: sharing a latent between heads is meaningless
+    k_lat1 = _bf(torch.randn(1, NKV, 256, 128))
+    v_lat1 = _bf(torch.randn(1, NKV, 256, 128))
+    with pytest.raises(RuntimeError, match="grouped latents"):
+        ttnn.transformer.palu_sdpa_decode(_dev(mesh_device, q), _dev(mesh_device, k_lat1), w, cs,
+                                          _dev(mesh_device, v_lat1), heads_per_core=2, **good)
+
+
+def test_pinned_heads_per_core_that_does_not_fit_the_grid_is_rejected(mesh_device):
+    """The core-count fatal still fires for a layout that genuinely does not fit: batch 4 on a 2x2
+    grid is one core per batch, and heads_per_core=2 wants two items on it."""
+    q, k_lat, u_k, v_lat, u_v, pos, cos, sin = _inputs_group(4, 256, 128, 128, 4)
+    tiny = dict(_cfg(128))
+    tiny["program_config"] = ttnn.SDPAProgramConfig(compute_with_storage_grid_size=(2, 2), q_chunk_size=0,
+                                                    k_chunk_size=128, exp_approx_mode=False)
+    good = dict(head_dim_v=HD, cur_pos_tensor=_pos(mesh_device, pos), u_v=_dev(mesh_device, u_v[None]),
+                scale=HD ** -0.5, **tiny)
+    w = _dev(mesh_device, fused.w_rot_from_u_k(u_k)[None])
+    cs = _dev(mesh_device, fused.cs_table(cos, sin, 256)[None, None])
+    with pytest.raises(RuntimeError, match="only 4 available"):
+        ttnn.transformer.palu_sdpa_decode(_dev(mesh_device, q), _dev(mesh_device, k_lat), w, cs,
+                                          _dev(mesh_device, v_lat), heads_per_core=2, **good)

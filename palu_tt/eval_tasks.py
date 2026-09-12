@@ -89,6 +89,9 @@ def main():
     p.add_argument("--kind", choices=["stock", "palu"], required=True)
     p.add_argument("--palu-dir", default=None)
     p.add_argument("--fused", choices=["off", "p1", "p2"], default="off")
+    p.add_argument("--group-heads", choices=["auto", "1", "2", "4"], default="auto",
+                   help="stage-2c group-shared mode: KV heads per core in the fused op (auto = the "
+                        "largest that fits L1 per layer, 1 = the stage 2b per-head kernel).")
     p.add_argument("--tasks", default=",".join(TASKS))
     p.add_argument("--limit", type=int, default=None)
     a = p.parse_args()
@@ -97,13 +100,15 @@ def main():
     md = dev.open_n300()
     try:
         args, model, _ = pm.build_model(md, a.kind, a.palu_dir, max_batch_size=1, max_seq_len=2048,
-                                        use_fused_k=a.fused != "off", cs_recurrence=a.fused == "p2")
+                                        use_fused_k=a.fused != "off", cs_recurrence=a.fused == "p2",
+                                        group_heads=None if a.group_heads == "auto" else int(a.group_heads))
         lm = lm_eval_tt.TTLM.for_device(args, model, hf.snapshot_dir())
         r = run(lm, [t for t in a.tasks.split(",") if t], a.limit)
     finally:
         dev.close(md)
     import importlib.metadata as m
-    r.update({"row": a.row, "kind": a.kind, "palu_dir": a.palu_dir, "fused": a.fused, "limit": a.limit,
+    r.update({"row": a.row, "kind": a.kind, "palu_dir": a.palu_dir, "fused": a.fused,
+              "group_heads": a.group_heads, "limit": a.limit,
               "lm_eval_version": m.version("lm_eval")})
     (RAW / f"tasks_{a.row}.json").write_text(json.dumps(r, indent=1, default=str))
     print(json.dumps(r["tasks"]))
