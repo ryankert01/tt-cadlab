@@ -101,3 +101,15 @@ def test_reference_decode_rotates_k_like_rotary_embedding_llama():
     K = K * cos[:S] + (K @ fused.rope_transformation_matrix(HD)) * sin[:S]
     exp = torch.softmax(q[0, 0, 0] @ K.T, -1) @ v[0, 0]
     torch.testing.assert_close(out[0, 0, 0], exp, atol=1e-5, rtol=1e-4)
+
+
+def test_reference_decode_reconstructs_v_when_u_v_is_given():
+    B, nkv, nh, S, r_k, r_v = 1, 2, 4, 16, 32, 48
+    q = torch.randn(1, B, nh, HD); k = torch.randn(B, nkv, S, r_k); u_k = torch.randn(nkv, r_k, HD)
+    v_lat = torch.randn(B, nkv, S, r_v); u_v = torch.randn(nkv, r_v, HD)
+    cos, sin = fused.cos_sin_tables(HD, S, 500000.0, None)
+    out = fused.reference_decode(q, k, u_k, v_lat, torch.tensor([S - 1]), cos, sin, 1.0, u_v=u_v)
+    v_full = torch.einsum("bhsr,hrd->bhsd", v_lat, u_v)
+    exp = fused.reference_decode(q, k, u_k, v_full, torch.tensor([S - 1]), cos, sin, 1.0)
+    assert out.shape == (1, B, nh, HD)
+    torch.testing.assert_close(out, exp, atol=1e-5, rtol=1e-4)

@@ -76,12 +76,15 @@ def rot_step_table(cos: torch.Tensor, sin: torch.Tensor, chunk: int) -> torch.Te
     return torch.cat([cos[chunk], sin[chunk]]).expand(32, -1).contiguous().float()
 
 
-def reference_decode(q, k_lat, u_k, v_lat, cur_pos, cos, sin, scale: float) -> torch.Tensor:
+def reference_decode(q, k_lat, u_k, v_lat, cur_pos, cos, sin, scale: float, u_v=None) -> torch.Tensor:
     """fp32 torch model of palu_sdpa_decode.
 
     q [1, B, nh, hd] (already rotated), k_lat [B, nkv, S, r_k], u_k [nkv, r_k, hd], v_lat [B, nkv, S, r_v],
     cur_pos [B] ints (inclusive last valid position), cos/sin [>= S, hd] Meta-interleaved.
-    GQA: query head h attends KV head h // (nh // nkv). Returns [1, B, nh, r_v]."""
+    GQA: query head h attends KV head h // (nh // nkv). Returns [1, B, nh, r_v].
+
+    u_v [nkv, r_v, hd] (optional): V is reconstructed per head as v_lat @ u_v (the kernel's in-kernel V
+    mode); without it v_lat is attended over directly (the absorbed-V path)."""
     B, nkv, S, _ = k_lat.shape
     nh = q.shape[2]
     T = rope_transformation_matrix(u_k.shape[-1])
@@ -89,7 +92,10 @@ def reference_decode(q, k_lat, u_k, v_lat, cur_pos, cos, sin, scale: float) -> t
     K = K * cos[None, None, :S] + (K @ T) * sin[None, None, :S]
     rep = nh // nkv
     K = K.repeat_interleave(rep, dim=1)                       # [B, nh, S, hd]
-    V = v_lat.float().repeat_interleave(rep, dim=1)           # [B, nh, S, r_v]
+    V = v_lat.float()
+    if u_v is not None:
+        V = torch.einsum("bhsr,hrd->bhsd", V, u_v.float())    # in-kernel V mode: rebuild V per head
+    V = V.repeat_interleave(rep, dim=1)                       # [B, nh, S, r_v (or hd)]
     Q = q.float().permute(1, 2, 0, 3)                         # [B, nh, 1, hd]
     mask = torch.zeros(B, 1, 1, S)
     for b in range(B):
