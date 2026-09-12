@@ -332,22 +332,24 @@ def test_glrd_prefill_at_512_tokens_matches_reference(mesh_device):
         assert ok, f"cache {i} {msg}"
 
 
-@pytest.mark.parametrize("batch", [32, 8], ids=["b32", "b8"])
-def test_glrd_group_shared_decode_matches_per_head(mesh_device, batch):
-    """Stage 2c: PaluAttention with the automatic H (group-shared kernel) against H = 1 (the stage 2b
-    per-head kernel). Same outputs and same caches.
+@pytest.mark.parametrize("batch,group_heads", [(32, None), (8, 2)], ids=["b32_auto", "b8_h2"])
+def test_glrd_group_shared_decode_matches_per_head(mesh_device, batch, group_heads):
+    """Stage 2c: PaluAttention's group-shared kernel against H = 1 (the stage 2b per-head kernel).
+    Same outputs and same caches.
 
-    Layer 0 of glrd_0.5 is r_k 64 / r_v 512 at group size 4, which the L1 estimate puts at H = 4, so
-    both batches run a core that owns the whole group while the sequence is split over cores -- the
-    Phase B path (per-head tree reduction) rather than Phase A."""
+    Layer 0 of glrd_0.5 is r_k 64 / r_v 512 at group size 4. At batch 32 the automatic selector
+    (fewest reduction rounds, then largest H) picks H = 2 with no sequence split -- the shipped mode,
+    Phase A. At batch 8 it picks H = 1 (any group layout there adds a reduction round), so the Phase B
+    path -- a core owning two heads while its item is split over four cores, two per-head reduction
+    rounds -- is forced with group_heads_per_core = 2."""
     args, sd, rope, tt_ccl, _ = _setup(mesh_device, "compressed/glrd_0.5", batch=batch, max_seq_len=SEQ)
     args.palu.runtime.use_fused_k, args.palu.runtime.cs_recurrence = True, True
     args.palu.runtime.group_heads_per_core = 1
     per_head = _tt_attention(PaluAttention, mesh_device, args, sd, rope, tt_ccl)
-    args.palu.runtime.group_heads_per_core = None
+    args.palu.runtime.group_heads_per_core = group_heads
     shared = _tt_attention(PaluAttention, mesh_device, args, sd, rope, tt_ccl)
-    assert per_head.group_heads == 1 and shared.group_heads > 1, \
-        f"expected an automatic H > 1 for r_k={shared.r_k} r_v={shared.r_v}, got {shared.group_heads}"
+    assert per_head.group_heads == 1 and shared.group_heads == 2, \
+        f"expected H = 2 (auto at batch 32 / forced at batch 8) for r_k={shared.r_k} r_v={shared.r_v}, got {shared.group_heads}"
     # what the harnesses copy into their result JSON: the H each layer actually ran with, after any
     # allocator fallback. One entry here because _setup builds a single layer.
     assert fused.group_heads_used(args.palu) == [shared.group_heads], \
