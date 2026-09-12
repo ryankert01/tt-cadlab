@@ -65,12 +65,15 @@ def main():
     p.add_argument("--palu-dir", required=True)
     p.add_argument("--fused", choices=["p1", "p2"], required=True)
     p.add_argument("--fused-k-chunk", type=int, default=None)
-    p.add_argument("--group-heads", choices=["auto", "1", "2", "4"], default="4",
-                   help="stage-2c group-shared mode: KV heads per core in the fused op. Default 4 "
+    p.add_argument("--group-heads", choices=["auto", "1", "2", "4"], default="2",
+                   help="stage-2c group-shared mode: KV heads per core in the fused op. Default 2 "
                         "here, not auto: this harness runs at batch 1, and auto's occupancy rule "
-                        "returns 1 for every layer below batch 8 (a four-head group would leave 48 of "
-                        "the 64 cores idle there), so auto at batch 1 measures the stage 2b per-head "
-                        "kernel. Pass 1 for that on purpose, or auto to mirror what bench picks.")
+                        "returns 1 for every layer below batch 8 (a four-head group would use 4 of "
+                        "the 64 cores there), so auto at batch 1 measures the stage 2b per-head "
+                        "kernel. 2 exercises the group kernel and its sequence-split reduction on "
+                        "every layer without the allocator fallback that 4 hits on most layers at "
+                        "batch 1 (4 is a ceiling the run may fall back from). Pass 1 for the "
+                        "per-head kernel on purpose, or auto to mirror what bench picks.")
     p.add_argument("--steps", type=int, default=64)
     a = p.parse_args()
     RAW.mkdir(parents=True, exist_ok=True)
@@ -79,14 +82,14 @@ def main():
         args_tok = pm.ModelArgs(md, instruct=True, max_batch_size=1, max_seq_len=2048, cache_hf=False)
         ids = eval_ppl.wikitext2_ids(args_tok.tokenizer)
         naive = _logits(md, a.palu_dir, ids, a.steps)
-        fused = _logits(md, a.palu_dir, ids, a.steps, use_fused_k=True, cs_recurrence=a.fused == "p2",
+        fused_logits = _logits(md, a.palu_dir, ids, a.steps, use_fused_k=True, cs_recurrence=a.fused == "p2",
                         fused_k_chunk=a.fused_k_chunk,
                         group_heads=None if a.group_heads == "auto" else int(a.group_heads))
     finally:
         dev.close(md)
     # Index 0 of both stacks is the shared prefill logit (bit-identical on both paths, since the
     # fused kernel only replaces decode) -- drop it so the comparison is over decode steps only.
-    naive_decode, fused_decode = naive[1:], fused[1:]
+    naive_decode, fused_decode = naive[1:], fused_logits[1:]
     pccs = [_pcc(naive_decode[i], fused_decode[i]) for i in range(naive_decode.shape[0])]
     r = {"row": a.row, "palu_dir": a.palu_dir, "fused": a.fused, "fused_k_chunk": a.fused_k_chunk,
          "group_heads": a.group_heads, "group_heads_per_layer": list(GROUP_HEADS),
