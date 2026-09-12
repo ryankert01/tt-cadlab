@@ -911,7 +911,7 @@ def _stage2c_lines(raw, rows, loaded):
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="Render docs/results/stage{1,2,2b}.md from the raw JSONs.")
+    ap = argparse.ArgumentParser(description="Render docs/results/stage{1,2,2b,2c}.md from the raw JSONs.")
     ap.add_argument("--raw", default=RAW, type=Path)
     ap.add_argument("--stage", choices=("1", "2", "2b", "2c"), default="1")
     ap.add_argument("--out", default=None, type=Path,

@@ -98,8 +98,8 @@ for h in 0..H-1:
     tree reduction for head h (unchanged code, per head), then output head h
 ```
 
-State is replicated per head as FIFO-rotated blocks in the existing CBs (`c_26`, `c_28`, `c_30` and
-the reduction scratch CBs sized `H x`); Q and the Phase-2 rotated-query state are per *core*, not per
+State is replicated per head as FIFO-rotated blocks in the existing CBs (`c_26`, `c_28`, `c_30`
+sized `H x`; every transient CB stays one block); Q and the Phase-2 rotated-query state are per *core*, not per
 head (one Q tile holds every q head of the core, as in stock), so `c_0`/`c_12` keep one block. The
 per-head math, chunk order and accumulation order are unchanged, so head `h`'s result is
 bit-identical to the per-head mode.
