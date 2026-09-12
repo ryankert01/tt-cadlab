@@ -1,7 +1,7 @@
 # Palu on Tenstorrent — Stage 2b: G-LRD and Task Accuracy
 
 Date: 2026-09-12
-Status: approved in conversation 2026-09-12 (incl. the in-kernel V decision), pending written review
+Status: approved 2026-09-12 ("Lgtm"), including the in-kernel V decision and the device-only evaluation budget
 Depends on: stage 2 (`docs/superpowers/specs/2026-09-10-palu-tt-stage2-design.md`, merged at 668e250)
 
 ## 0. Two findings that shape this stage
@@ -187,8 +187,23 @@ one extra run `glrd_0.5_f256` with 256 Fisher samples as a sensitivity check on 
    Phase 2, next to the stage-2 rows;
 4. decode fidelity (`decode_check`) for the fused G-LRD rows;
 5. max context at batch 8 for the fused G-LRD rows.
-Device time: ~3 h task evaluation, ~1.5 h G-LRD benchmarks, ~1 h fidelity and capacity. The
-results page (artifact) gets the same tables.
+**Time budget (user requirement: evaluation runs on the n300, not the CPU; device time is the
+budget to manage).** All evaluation is device-side; the CPU is used only for calibration
+(done) and unit tests. No CPU fp32 perplexity column for the new rows.
+
+| activity | rows | estimate |
+|---|---|---|
+| zero-shot accuracy, 5 tasks in full | 5 | ~35 min each, ~3 h |
+| perplexity, 141 windows | glrd_50, glrd_70 | ~5 min each |
+| decode + attention benchmarks, 1k/4k/8k, batch 32 | 2 rows × naive/fused | ~40 min |
+| decode fidelity (`decode_check`) | 2 fused rows | ~20 min |
+| batch-8 max context probes | 2 rows | ~20 min |
+| device tests during development | | ~30 min, spread out |
+
+About 5 hours of board time. The accuracy block runs as one queued job (one process at a
+time, gated) overnight so the board is never idle between rows. The optional 256-sample
+Fisher calibration is a CPU background job and costs no device time. The results page
+(artifact) gets the same tables.
 
 ## 8. Risks and caveats
 
