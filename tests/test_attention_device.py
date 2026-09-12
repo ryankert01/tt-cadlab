@@ -238,10 +238,11 @@ def test_fused_flag_is_ignored_on_the_v_only_row(mesh_device):
 
 
 
-def test_glrd_prefill_and_naive_decode_match_reference(mesh_device):
+@pytest.mark.parametrize("batch", [32, 1], ids=["b32", "b1"])
+def test_glrd_prefill_and_naive_decode_match_reference(mesh_device, batch):
     """Group size 4: one K latent and one V latent per chip; prefill and the naive decode rebuild every
-    head from the shared latent. Reference = the per-head CPU module on the expanded factors."""
-    batch = 32
+    head from the shared latent. Reference = the per-head CPU module on the expanded factors.
+    Batch 1 exercises the tile-padded decode batch (32 rows for 1 user) through the group-latent extraction."""
     args, sd, rope, tt_ccl, ref = _setup(mesh_device, "compressed/glrd_0.5", batch=batch, max_seq_len=SEQ)
     args.palu.runtime.check = True
     tt = _tt_attention(PaluAttention, mesh_device, args, sd, rope, tt_ccl)
@@ -278,8 +279,8 @@ def test_glrd_prefill_and_naive_decode_match_reference(mesh_device):
         assert ok, f"cache {i} {msg}"
 
 
-def test_glrd_fused_decode_matches_naive(mesh_device):
-    batch = 32
+@pytest.mark.parametrize("batch", [32, 1], ids=["b32", "b1"])
+def test_glrd_fused_decode_matches_naive(mesh_device, batch):
     args, sd, rope, tt_ccl, _ = _setup(mesh_device, "compressed/glrd_0.5", batch=batch, max_seq_len=SEQ)
     args.palu.runtime.check = True
     naive = _tt_attention(PaluAttention, mesh_device, args, sd, rope, tt_ccl)

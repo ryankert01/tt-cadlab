@@ -415,8 +415,14 @@ class PaluAttention(LightweightModule):
         return out
 
     def _recon_len(self, current_pos):
+        """Rows of the latent cache reconstructed for a naive decode step: the runtime's ``recon_len`` hint
+        (``model.set_recon_len`` rounds the current position up to a multiple of 256) rounded up to a
+        multiple of 64. Never a multiple of 32 only: the decode attention op picks its K chunk as the
+        largest power of two dividing S, and with the stock fp32-accumulate compute config a 32-row chunk
+        is mis-reduced whenever one user's chunks are spread over several cores (batch < 32) --
+        measured PCC 0.17 at S = 160, exact at S = 192 / 320 / 576 (chunk 64) and at batch 32."""
         S = self.palu.runtime.recon_len or self.max_seq_len
-        S = min(nearest_32(S), self.max_seq_len)
+        S = min(-(-S // 64) * 64, self.max_seq_len)
         if self.palu.runtime.check:
             pos = ttnn.to_torch(ttnn.get_device_tensors(current_pos)[0])
             assert int(pos.max()) < S, f"recon_len {S} does not cover current_pos max {int(pos.max())}"
@@ -462,8 +468,9 @@ class PaluAttention(LightweightModule):
         cat = ttnn.experimental.nlp_concat_heads_decode(t, num_heads=self.n_local_kv_heads)           # [1, 1, B, n_local_kv*128]
         ttnn.deallocate(t)
         ttnn.deallocate(heads_1BKD)
-        cat = ttnn.sharded_to_interleaved(cat, ttnn.L1_MEMORY_CONFIG)
-        lat = cat[:, :, :, :r] if r < cat.shape[-1] else cat
+        cat = ttnn.sharded_to_interleaved(cat, ttnn.L1_MEMORY_CONFIG)      # [1, 1, max(B, 32), n_local_kv*128]
+        # nlp_concat_heads_decode pads the user rows to a tile (32); keep the B real users and the latent columns
+        lat = cat[:, :, :B, :r] if (B < cat.shape[2] or r < cat.shape[-1]) else cat
         if lat is not cat:
             ttnn.deallocate(cat)
         lat_r = ttnn.reshape(lat, (1, B, self.n_local_groups, r))
@@ -570,18 +577,13 @@ class PaluAttention(LightweightModule):
                 # wants -- exactly how stock hands its full caches to SDPA decode.
                 S, k_att, v_att = self.max_seq_len, keys, values
 
-            # attention on K (reconstructed, or the cache itself) and the V latent ---------------------------
-            if self.gs > 1:
-                # V is full width here, so this is the stock decode SDPA
-                attn = ttnn.transformer.scaled_dot_product_attention_decode(
-                    q, k_att, v_att, cur_pos_tensor=current_pos, scale=self.scale,
-                    program_config=self.args.get_attn_sdpa_decode_program_config(None),
-                    compute_kernel_config=self.sdpa_decode_compute_kernel_cfg, memory_config=ttnn.DRAM_MEMORY_CONFIG)  # [1, B, nh, 128]
-            else:
-                attn = ttnn.transformer.flash_multi_latent_attention_decode(
-                    q, k_att, v_att, head_dim_v=self.r_v, cur_pos_tensor=current_pos, scale=self.scale,
-                    program_config=self.args.get_attn_sdpa_decode_program_config(None),
-                    compute_kernel_config=self.sdpa_decode_compute_kernel_cfg, memory_config=ttnn.DRAM_MEMORY_CONFIG)  # [1, B, nh, r_v]
+            # attention on K (reconstructed, or the cache itself) and V: the V latent (absorbed into wo) at
+            # gs == 1, the reconstructed full-width V for grouped rows -- the same MLA op either way (at
+            # head_dim_v == head_dim it is the stock decode attention, same kernel) -------------------------
+            attn = ttnn.transformer.flash_multi_latent_attention_decode(
+                q, k_att, v_att, head_dim_v=v_att.shape[-1], cur_pos_tensor=current_pos, scale=self.scale,
+                program_config=self.args.get_attn_sdpa_decode_program_config(None),
+                compute_kernel_config=self.sdpa_decode_compute_kernel_cfg, memory_config=ttnn.DRAM_MEMORY_CONFIG)  # [1, B, nh, r_v | 128]
             ttnn.deallocate(q)
             if self.recon_k:
                 ttnn.deallocate(k_att)
