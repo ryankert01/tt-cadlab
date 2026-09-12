@@ -276,3 +276,33 @@ def test_glrd_prefill_and_naive_decode_match_reference(mesh_device):
         want = ref_cache[:, ::tt.gs, : P + 4, :]                    # head 0 of each group
         ok, msg = comp_pcc(want, got, 0.99)
         assert ok, f"cache {i} {msg}"
+
+
+def test_glrd_fused_decode_matches_naive(mesh_device):
+    batch = 32
+    args, sd, rope, tt_ccl, _ = _setup(mesh_device, "compressed/glrd_0.5", batch=batch, max_seq_len=SEQ)
+    args.palu.runtime.check = True
+    naive = _tt_attention(PaluAttention, mesh_device, args, sd, rope, tt_ccl)
+    args.palu.runtime.use_fused_k, args.palu.runtime.cs_recurrence = True, True
+    fusedm = _tt_attention(PaluAttention, mesh_device, args, sd, rope, tt_ccl)
+    assert fusedm.gs == 4 and fusedm.use_fused_k and fusedm.phase2 and hasattr(fusedm, "u_v_kernel") and not hasattr(fusedm, "u_v_decode")
+    P = 128
+    x_pre = torch.randn(1, P, args.dim) * 0.05
+    rot = [rope.cos_matrix_prefill[:, :, :P, :], rope.sin_matrix_prefill[:, :, :P, :]]
+    for m in (naive, fusedm):
+        m.forward(args.prepare_residual_tensor_prefill(x_pre, force_replicated=True), None, rot_mats=rot, user_id=0, mode=Mode.PREFILL)
+    for step in range(6):
+        pos = P + step
+        x = torch.randn(batch, 1, args.dim) * 0.05
+        current_pos = torch.full((batch,), pos)
+        args.palu.runtime.recon_len = ((pos + 1 + 31) // 32) * 32
+        ys = []
+        for m in (naive, fusedm):
+            x_tt, pos_tt, rot_mats = _decode_inputs(mesh_device, args, rope, x, current_pos)
+            y = m.forward(x_tt, pos_tt, rot_mats=rot_mats, mode=Mode.DECODE)
+            ys.append(_to_torch(mesh_device, args, y)[:, 0:1, :batch, : args.dim].view(batch, 1, args.dim))
+        ok, msg = comp_pcc(ys[0], ys[1], 0.99)
+        logger.info(f"pos={pos} {msg}")
+        assert ok, f"step={step} {msg}"
+    for i in range(2):
+        assert torch.equal(_cache_torch(mesh_device, args, naive, i), _cache_torch(mesh_device, args, fusedm, i)), f"cache {i}"

@@ -123,8 +123,9 @@ class PaluAttention(LightweightModule):
 
         rt = self.palu.runtime
         # stage 2: fused K reconstruction. Only where K really is low rank; on the V-only and identity
-        # rows the stock K path stays, flag or no flag. Grouped rows join in Task 4 (in-kernel V).
-        self.use_fused_k = self.recon_k and bool(rt.use_fused_k) and self.gs == 1
+        # rows the stock K path stays, flag or no flag. Stage 2b (Task 4): grouped rows join too, the
+        # kernel rebuilding V per head in-kernel from the group latent (u_v=).
+        self.use_fused_k = self.recon_k and bool(rt.use_fused_k)
         self.phase2 = self.use_fused_k and bool(rt.cs_recurrence)
 
         opt = self.args.decoders_optimizations
@@ -210,7 +211,12 @@ class PaluAttention(LightweightModule):
             u_v = state_dict[f"{P}.u_v"]  # [n_kv, r_v, hd]
             self.u_v_prefill = ttnn.as_tensor(pad_u(u_v, self.r_v), dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT, device=mesh_device,
                                               memory_config=ttnn.DRAM_MEMORY_CONFIG, mesh_mapper=shard_heads, cache_file_name=cache_name(f"{tag}_u_v_prefill"))
-            if self.gs > 1:
+            if self.gs > 1 and self.use_fused_k:
+                # the kernel rebuilds V per head from the group latent: u_v as [1, n_kv, r_v, 128], head-sharded
+                self.u_v_kernel = ttnn.as_tensor(u_v.unsqueeze(0), dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT, device=mesh_device,
+                                                 memory_config=ttnn.DRAM_MEMORY_CONFIG, mesh_mapper=shard_heads,
+                                                 cache_file_name=cache_name(f"{tag}_u_v_kernel"))
+            elif self.gs > 1:
                 # grouped rows do not absorb V into wo (the group latent is up to gs*hd wide, which
                 # would widen the fused output projection by gs); the naive decode reconstructs V
                 # per head just like K.
@@ -253,9 +259,13 @@ class PaluAttention(LightweightModule):
         if self.use_fused_k:
             if self.phase2:
                 # Phase 2: an explicit override, else the model's stock decode config's chunk (falling
-                # back to the op's own default if that config leaves it at 0 too)
-                chunk = int(rt.fused_k_chunk) if rt.fused_k_chunk else (
-                    self.args.get_attn_sdpa_decode_program_config(None).k_chunk_size or fused.chunk_size(self.max_seq_len))
+                # back to the op's own default if that config leaves it at 0 too). The op itself lowers
+                # its *default* chunk to 128 when r_k > 128 or u_v is given, but this class always pins
+                # the chunk explicitly (rot_step must match it), so it mirrors that rule here for grouped
+                # or wide-r_k rows rather than falling through to the op's stock 512-cap default.
+                wide = self.r_k > 128 or self.gs > 1
+                chunk = int(rt.fused_k_chunk) if rt.fused_k_chunk else (128 if wide else (
+                    self.args.get_attn_sdpa_decode_program_config(None).k_chunk_size or fused.chunk_size(self.max_seq_len)))
             else:
                 # Phase 1: the op's streamed cos/sin table does not fit L1 above k_chunk_size 128
                 chunk = int(rt.fused_k_chunk or 128)
@@ -498,12 +508,15 @@ class PaluAttention(LightweightModule):
         ttnn.deallocate(v_lat)
 
         if self.use_fused_k:
-            # stage 2: K rebuilt and rotated inside the kernel; the caches go in as they are
+            # stage 2: K rebuilt and rotated inside the kernel; the caches go in as they are.
+            # Stage 2b: grouped rows also rebuild V per head in-kernel from the group latent (u_v),
+            # so the op is asked for a full head_dim output rather than the r_v-wide absorbed form.
+            grouped = self.gs > 1
             attn = ttnn.transformer.palu_sdpa_decode(
-                q, keys, self.w_rot, self.cs_tab, values, self.r_v, current_pos,
-                rot_step=self.rot_step, trans_mat=self.trans_mat, scale=self.scale,
+                q, keys, self.w_rot, self.cs_tab, values, self.head_dim if grouped else self.r_v, current_pos,
+                rot_step=self.rot_step, trans_mat=self.trans_mat, u_v=self.u_v_kernel if grouped else None, scale=self.scale,
                 program_config=self.fused_program_config, compute_kernel_config=self.fused_compute_cfg,
-                memory_config=ttnn.DRAM_MEMORY_CONFIG)                                        # [1, B, nh, r_v]
+                memory_config=ttnn.DRAM_MEMORY_CONFIG)                                        # [1, B, nh, r_v] or [1, B, nh, 128]
             ttnn.deallocate(q)
         else:
             if self.recon_k:
