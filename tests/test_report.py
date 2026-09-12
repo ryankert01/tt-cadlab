@@ -343,3 +343,19 @@ def test_scaling_helpers_distinguish_missing_from_errored_and_read_maxctx(tmp_pa
     assert report._scaling_decode_display(raw, "baseline", 1, "1024") == "-"
     assert report._scaling_maxctx(raw, "baseline", 1) == (131072, "model")
     assert report._scaling_maxctx(raw, "baseline", 8) == ("-", "-")
+
+
+def test_stage2b_accuracy_table_and_paper_block(tmp_path):
+    raw = tmp_path / "raw"; raw.mkdir()
+    _write(raw, "tasks_baseline", {"row": "baseline", "tasks": {"openbookqa": {"acc": 0.43, "acc_norm": 0.45, "n": 500},
+                                                                "piqa": {"acc": 0.78, "acc_norm": 0.79, "n": 1838}}})
+    _write(raw, "tasks_glrd_50", {"row": "glrd_50", "tasks": {"openbookqa": {"acc": 0.41, "acc_norm": 0.42, "n": 500}}})
+    _write(raw, "ppl_glrd_50", {"row": "glrd_50", "ppl": 10.5, "windows": 141, "palu_dir": "compressed/glrd_0.5"})
+    out = tmp_path / "stage2b.md"
+    from palu_tt import report
+    report.main(raw=raw, out=out, rows=report.ROWS2B)
+    text = out.read_text()
+    assert "| baseline |" in text and "43.0" in text and "78.0" in text
+    assert "| glrd_50 |" in text and "41.0" in text and " - |" in text          # missing task cells render as dashes
+    assert "Paper (Llama-3-8B-Instruct, 50 %)" in text and "64.45" in text      # the reference block
+    assert "10.500" in text

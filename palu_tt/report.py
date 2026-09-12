@@ -35,6 +35,7 @@ from pathlib import Path
 RAW = Path("docs/results/raw")
 OUT = Path("docs/results/stage1.md")
 OUT2 = Path("docs/results/stage2.md")
+OUT2B = Path("docs/results/stage2b.md")
 
 # row -> human label. Order is the render order of every table.
 ROWS = {
@@ -62,6 +63,32 @@ ROWS2 = {
     "palu_full_70_fk1": "  same, fused Phase 1",
     "palu_full_70_fk2": "  same, fused Phase 2",
 }
+# Stage 2b (Task 5/6): Palu G-LRD rows plus zero-shot task accuracy (``palu_tt.eval_tasks``).
+ROWS2B = {
+    "baseline": "stock `tt_transformers` attention",
+    "palu_full_50": "Palu full recipe (Fisher + whitening), ratio 0.5",
+    "palu_full_70": "Palu full recipe (Fisher + whitening), ratio 0.7",
+    "glrd_50": "Palu G-LRD (group size 4), ratio 0.5",
+    "glrd_70": "Palu G-LRD (group size 4), ratio 0.7",
+}
+TASK_COLS = ("openbookqa", "piqa", "arc_easy", "arc_challenge", "winogrande")
+TASK_LABELS = {"openbookqa": "OBQA", "piqa": "PIQA", "arc_easy": "ARC-e",
+               "arc_challenge": "ARC-c", "winogrande": "WinoGrande"}
+# The paper's reference table (spec Sec 0): Llama-3-8B-Instruct, 50 % compression, lm-eval
+# zero-shot, acc in %. Transcribed verbatim; ``avg5`` is our own addition -- the mean of the five
+# task columns we also evaluate (HellaSwag dropped), recomputed here rather than transcribed.
+PAPER = {
+    "baseline": {"openbookqa": 43.2, "hellaswag": 75.8, "piqa": 80.7, "arc_easy": 81.6,
+                 "arc_challenge": 52.9, "winogrande": 73.7, "avg6": 67.99},
+    "J-LRD": {"openbookqa": 43.0, "hellaswag": 73.7, "piqa": 78.1, "arc_easy": 79.5,
+              "arc_challenge": 51.8, "winogrande": 71.0, "avg6": 66.19},
+    "G-LRD": {"openbookqa": 42.6, "hellaswag": 70.4, "piqa": 76.1, "arc_easy": 76.3,
+              "arc_challenge": 49.0, "winogrande": 72.4, "avg6": 64.45},
+    "M-LRD": {"openbookqa": 36.2, "hellaswag": 61.6, "piqa": 71.6, "arc_easy": 70.9,
+              "arc_challenge": 41.0, "winogrande": 69.1, "avg6": 58.40},
+}
+for _p in PAPER.values():
+    _p["avg5"] = round(sum(_p[t] for t in TASK_COLS) / len(TASK_COLS), 2)
 CONTEXTS = ("1024", "4096", "8192")
 PREFILLS = ("2048", "8192")
 # Stage 2 batch sweep (Task 7): decode step time at these batch sizes, for these rows. 32 is the
@@ -135,7 +162,11 @@ def _per_layer_ranks(palu_dir, cfg):
 
     ranks = cfg["head_wise_ranks"]
     n_layers = sum(1 for k in ranks if k.endswith(".k_proj"))
-    n_kv_heads = len(next(iter(ranks.values())))
+    # A group-wise (G-LRD) dump's rank lists are one entry per *group*, not per head, and carries
+    # the full HF config, so ``num_key_value_heads`` is read from there when present; a head-wise
+    # dump (group size 1, including the minimal ``head_wise_ranks``-only configs in tests) has no
+    # such key and falls back to the rank-list length, which is the head count in that case.
+    n_kv_heads = cfg.get("num_key_value_heads") or len(next(iter(ranks.values())))
     head_dim = int(cfg.get("head_dim", HEAD_DIM))
     lr = load_palu_dir(Path(palu_dir), n_layers, n_kv_heads, head_dim)
     return [lr[i].r_k for i in range(n_layers)], [lr[i].r_v for i in range(n_layers)]
@@ -221,13 +252,14 @@ def _base_row(row):
 
 
 def _row_data(raw, row):
-    """``(ppl, cpu, dec, att, pre, mx, chk)`` for one row.
+    """``(ppl, cpu, dec, att, pre, mx, chk, tsk)`` for one row.
 
     A fused row (``_fk1``/``_fk2``) has its own decode/attention timings and its own decode-fidelity
     JSON; perplexity, prefill, KV bytes and max context are prefill/allocation properties that the
     fused decode kernel cannot change, so they are not re-measured and are read from the base row.
     The row's own file still wins where it exists, so a deliberately re-measured fused perplexity
-    would be picked up.
+    would be picked up. ``tsk`` is the zero-shot task-accuracy JSON (Task 5/stage 2b); stage 1/2
+    ignore it.
     """
     base = _base_row(row)
     ppl = _load(raw, f"ppl_{row}") or _load(raw, f"ppl_{base}")   # prefill measurement: same for fused rows
@@ -237,7 +269,8 @@ def _row_data(raw, row):
     pre = _load(raw, f"bench_prefill_{row}") or _load(raw, f"bench_prefill_{base}")
     mx = _load(raw, f"bench_maxctx_{row}") or _load(raw, f"bench_maxctx_{base}")
     chk = _load(raw, f"decode_check_{row}")
-    return ppl, cpu, dec, att, pre, mx, chk
+    tsk = _load(raw, f"tasks_{row}")
+    return ppl, cpu, dec, att, pre, mx, chk, tsk
 
 
 def _vs_stock(stock_dec, dec, ctx):
@@ -253,6 +286,26 @@ def _fidelity(chk):
     if not chk:
         return "-", "-"
     return f"{chk['pcc_min']:.4f} / {chk['pcc_mean']:.4f}", f"{chk['argmax_agree']:.3f}"
+
+
+def _task_display(tsk, task):
+    """``"43.0"``, ``"43.0 (45.0)"`` when ``acc_norm`` is present, ``"-"`` when missing."""
+    t = (tsk or {}).get("tasks", {}).get(task)
+    if not t or t.get("acc") is None:
+        return "-"
+    s = f"{t['acc'] * 100:.1f}"
+    if t.get("acc_norm") is not None:
+        s += f" ({t['acc_norm'] * 100:.1f})"
+    return s
+
+
+def _avg5(tsk):
+    """Mean ``acc`` over ``TASK_COLS`` as a percentage, or ``"-"`` unless every task is present."""
+    tasks = (tsk or {}).get("tasks", {})
+    accs = [tasks.get(t, {}).get("acc") for t in TASK_COLS]
+    if any(a is None for a in accs):
+        return "-"
+    return f"{sum(accs) / len(accs) * 100:.2f}"
 
 
 def _sweep_filename(row, batch):
@@ -327,6 +380,7 @@ def main(raw=RAW, out=OUT, rows=ROWS):
     """
     raw = Path(raw)
     stage2 = rows is ROWS2
+    stage2b = rows is ROWS2B
     loaded = {row: _row_data(raw, row) for row in rows}
     # A raw directory with nothing in it renders every row as dashes -- and would then overwrite the
     # committed tables with that. That is exactly what a fresh clone or a mistyped --raw looks like,
@@ -344,6 +398,9 @@ def main(raw=RAW, out=OUT, rows=ROWS):
     dev_windows = _windows([v[0] for v in loaded.values()])
     cpu_windows = _windows([v[1] for v in loaded.values()])
     steps = _steps([v[6] for v in loaded.values()])
+
+    if stage2b:
+        return _finish(_stage2b_lines(raw, rows, loaded, base, kv_base, dev_windows), out)
 
     if stage2:
         lines = [
@@ -386,7 +443,7 @@ def main(raw=RAW, out=OUT, rows=ROWS):
             "|---|---|---|---|---|---|---|---|---|---|",
         ]
     for row, label in rows.items():
-        ppl, cpu, dec, att, pre, mx, chk = loaded[row]
+        ppl, cpu, dec, att, pre, mx, chk, tsk = loaded[row]
         rk, rv = _ranks([ppl, dec, att, pre, mx])
         kv = _kv_model_mean(_kv_bytes([dec, att, mx]), [ppl, dec, att, pre, mx])
         kv_total = "-" if kv is None else f"{round(kv * LAYERS * CHIPS)}"
@@ -511,7 +568,14 @@ def main(raw=RAW, out=OUT, rows=ROWS):
                 lines.append(f"- `{row}`: {text}")
             lines.append("")
 
-    lines += ["", MARKER, ""]
+    return _finish(lines, out)
+
+
+def _finish(lines, out):
+    """Append the marker, freeze the text, and (when ``out`` is given) write it back with any
+    hand-written tail preserved -- shared by every stage so the bootstrap/preserve behaviour
+    cannot drift between them."""
+    lines = lines + ["", MARKER, ""]
     text = "\n".join(lines).rstrip("\n") + "\n"
 
     if out is not None:
@@ -524,11 +588,141 @@ def main(raw=RAW, out=OUT, rows=ROWS):
     return text
 
 
+def _stage2b_fk2_rows(raw, rows):
+    """Base rows in render order, each immediately followed by its ``_fk2`` variant when that
+    variant has its own decode-timing JSON (the fused kernel is optional per row)."""
+    out = []
+    for row, label in rows.items():
+        out.append((row, label))
+        fk2 = f"{row}_fk2"
+        if _load(raw, f"bench_decode_{fk2}") is not None:
+            out.append((fk2, "  same, fused Phase 2"))
+    return out
+
+
+def _stage2b_lines(raw, rows, loaded, base, kv_base, dev_windows):
+    """Stage 2b: zero-shot task accuracy (Task 5) plus the G-LRD rows, on top of the same
+    quality/latency tables as stage 1/2. ``_fk2`` variants are picked up when present rather than
+    listed in ``ROWS2B`` itself, since not every row has been re-run with the fused kernel yet."""
+    ext = _stage2b_fk2_rows(raw, rows)
+    ext_loaded = dict(loaded)
+    for row, _ in ext:
+        ext_loaded.setdefault(row, _row_data(raw, row))
+    stock_dec = base[2] if base else None
+
+    lines = [
+        "# Stage 2b results: G-LRD and zero-shot task accuracy on a Wormhole n300",
+        "",
+        f"Generated by `python -m palu_tt.report --stage 2b` from `docs/results/raw/*.json` at commit "
+        f"`{_commit()}`; tt-metal v0.78.0 plus the `palu-sdpa` submodule branch, TP=2 (one n300, two "
+        "chips), bfp8 weights and latent caches, non-paged, untraced decode. Zero-shot task accuracy "
+        "is measured by `palu_tt.eval_tasks` (lm-eval, 0-shot, greedy) on the device.",
+        "",
+        "## Zero-shot accuracy",
+        "",
+        "| row | recipe | " + " | ".join(TASK_LABELS[t] for t in TASK_COLS) + " | avg (5) |",
+        "|---|---|" + "---|" * (len(TASK_COLS) + 1),
+    ]
+    for row, label in rows.items():
+        tsk = loaded[row][7]
+        cells = " | ".join(_task_display(tsk, t) for t in TASK_COLS)
+        lines.append(f"| {row} | {label} | {cells} | {_avg5(tsk)} |")
+
+    lines += [
+        "",
+        "### Paper (Llama-3-8B-Instruct, 50 %)",
+        "",
+        "| method | OBQA | HellaSwag | PIQA | ARC-e | ARC-c | WinoGrande | avg (6) | avg (5) |",
+        "|---|---|---|---|---|---|---|---|---|",
+    ]
+    for method in ("baseline", "J-LRD", "G-LRD", "M-LRD"):
+        p = PAPER[method]
+        lines.append(
+            f"| {method} | {p['openbookqa']:.1f} | {p['hellaswag']:.1f} | {p['piqa']:.1f} | "
+            f"{p['arc_easy']:.1f} | {p['arc_challenge']:.1f} | {p['winogrande']:.1f} | "
+            f"{p['avg6']:.2f} | {p['avg5']:.2f} |"
+        )
+    lines += [
+        "",
+        "The paper's numbers are for Llama-3-8B-Instruct (ours is Llama-3.1-8B-Instruct), calibrated "
+        "with 2048 Fisher samples (ours: 32), and report six tasks; we evaluate five, dropping "
+        "HellaSwag for time -- so `avg (5)` above, not `avg (6)`, is the comparable column.",
+        "",
+        "## Quality and memory",
+        "",
+        f"| row | recipe | r_k | r_v | ppl (device, {dev_windows} windows) | "
+        "KV B/token/layer/chip | KV B/token (32 layers, both chips) | KV reduction | "
+        "max ctx @ batch 32 |",
+        "|---|---|---|---|---|---|---|---|---|",
+    ]
+    for row, label in rows.items():
+        ppl, cpu, dec, att, pre, mx, chk, tsk = loaded[row]
+        rk, rv = _ranks([ppl, dec, att, pre, mx])
+        kv = _kv_model_mean(_kv_bytes([dec, att, mx]), [ppl, dec, att, pre, mx])
+        kv_total = "-" if kv is None else f"{round(kv * LAYERS * CHIPS)}"
+        ratio = "-" if (kv is None or not kv_base) else f"{kv_base / kv:.2f}x"
+        maxctx = (mx.get("data") or {}).get("max_context_batch32") if mx else None
+        lines.append(
+            f"| {row} | {label} | {rk} | {rv} | {_fmt(ppl and ppl.get('ppl'), 3)} | "
+            f"{'-' if kv is None else round(kv)} | {kv_total} | {ratio} | {maxctx or '-'} |"
+        )
+
+    lines += [
+        "",
+        "KV bytes are per token, per layer, per chip, **averaged over the 32 layers**. `bench` reports "
+        "the figure for layer 0; for the calibrated rows (per-layer ranks) it is rescaled by the mean "
+        "rank sum from `head_wise_ranks`. `KV reduction` is stock bytes / row bytes.",
+        "",
+        "## Decode and attention latency, batch 32",
+        "",
+        "Measured on an idle host (device-idle gate passed, no other job of ours running). Decode is "
+        "untraced and therefore partly host-dispatch-bound, so `p50` and `min` are both reported; "
+        "`min` is the cleaner signal and every ratio quoted below the marker uses it. `vs stock` is "
+        "the stock row's decode `min_ms` divided by this row's at the same context (> 1.00x is "
+        "faster than stock); it is a dash at 8192, where stock does not allocate.",
+        "",
+        "| row | context | decode step p50 / min ms | attention-only p50 / min ms | vs stock |",
+        "|---|---|---|---|---|",
+    ]
+    for row, _ in ext:
+        dec, att = ext_loaded[row][2], ext_loaded[row][3]
+        for ctx in CONTEXTS:
+            lines.append(
+                f"| {row} | {ctx} | {_timing(_cell(dec, ctx))} | {_timing(_cell(att, ctx))} | "
+                f"{_vs_stock(stock_dec, dec, ctx)} |"
+            )
+
+    fk2_rows = [(row, label) for row, label in ext if row.endswith("_fk2")]
+    lines += ["", "## Decode fidelity", ""]
+    if fk2_rows:
+        fk2_steps = _steps([ext_loaded[row][6] for row, _ in fk2_rows])
+        lines += [
+            f"Naive vs fused (`palu_tt.decode_check`, teacher-forced, {fk2_steps} steps).",
+            "",
+            "| row | decode PCC (min / mean) | argmax agree |",
+            "|---|---|---|",
+        ]
+        for row, _ in fk2_rows:
+            pcc, agree = _fidelity(ext_loaded[row][6])
+            lines.append(f"| {row} | {pcc} | {agree} |")
+    else:
+        lines.append("No fused-kernel row has a `decode_check_*` JSON yet.")
+
+    lines += ["", "## Batch-8 max context", ""]
+    lines += ["| row | max context | limit |", "|---|---|---|"]
+    for row, _ in ext:
+        mc, limit = _scaling_maxctx(raw, row, 8)
+        lines.append(f"| {row} | {mc} | {limit} |")
+
+    return lines
+
+
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="Render docs/results/stage{1,2}.md from the raw JSONs.")
+    ap = argparse.ArgumentParser(description="Render docs/results/stage{1,2,2b}.md from the raw JSONs.")
     ap.add_argument("--raw", default=RAW, type=Path)
-    ap.add_argument("--stage", type=int, choices=(1, 2), default=1)
-    ap.add_argument("--out", default=None, type=Path, help="default: stage1.md / stage2.md")
+    ap.add_argument("--stage", choices=("1", "2", "2b"), default="1")
+    ap.add_argument("--out", default=None, type=Path, help="default: stage1.md / stage2.md / stage2b.md")
     a = ap.parse_args()
-    print(main(raw=a.raw, out=a.out or (OUT2 if a.stage == 2 else OUT),
-               rows=ROWS2 if a.stage == 2 else ROWS))
+    _rows = {"1": ROWS, "2": ROWS2, "2b": ROWS2B}[a.stage]
+    _default_out = {"1": OUT, "2": OUT2, "2b": OUT2B}[a.stage]
+    print(main(raw=a.raw, out=a.out or _default_out, rows=_rows))
