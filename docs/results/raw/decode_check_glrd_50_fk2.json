@@ -1,0 +1,10 @@
+{
+ "row": "glrd_50_fk2",
+ "palu_dir": "compressed/glrd_0.5",
+ "fused": "p2",
+ "fused_k_chunk": null,
+ "steps": 63,
+ "pcc_mean": 0.9991026034896159,
+ "pcc_min": 0.9976051398725898,
+ "argmax_agree": 0.9047619104385376
+}

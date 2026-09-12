@@ -1,0 +1,36 @@
+{
+ "row": "glrd_70",
+ "kind": "palu",
+ "palu_dir": "compressed/glrd_0.7",
+ "what": "decode",
+ "fused": "off",
+ "fused_k_chunk": null,
+ "batch": 32,
+ "contexts": [
+  1024,
+  4096,
+  8192
+ ],
+ "data": {
+  "1024": {
+   "p50_ms": 218.1688790442422,
+   "min_ms": 218.07384095154703,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 714.0,
+   "mesh_reopened_first": false
+  },
+  "4096": {
+   "p50_ms": 681.7471944959834,
+   "min_ms": 681.3505990430713,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 714.0,
+   "mesh_reopened_first": false
+  },
+  "8192": {
+   "error": "TT_FATAL @ /home/user01/tt-cadlab/.claude/worktrees/bright-elm-xum9/third_party/tt-metal/tt_metal/impl/allocator/bank_manager.cpp:462: false\ninfo:\nOut of Memory: Not enough space to allocate 268435456",
+   "phase": "timing",
+   "exc": "RuntimeError",
+   "mesh_reopened_first": false
+  }
+ }
+}

@@ -1,0 +1,37 @@
+{
+ "row": "glrd_70",
+ "kind": "palu",
+ "palu_dir": "compressed/glrd_0.7",
+ "what": "attention",
+ "fused": "off",
+ "fused_k_chunk": null,
+ "batch": 32,
+ "contexts": [
+  1024,
+  4096,
+  8192
+ ],
+ "data": {
+  "1024": {
+   "p50_ms": 7.155615370720625,
+   "min_ms": 6.301220040768385,
+   "iters": 20,
+   "kv_bytes_per_token_per_layer_per_chip": 714.0,
+   "mesh_reopened_first": false
+  },
+  "4096": {
+   "p50_ms": 21.677382057532668,
+   "min_ms": 20.894314162433147,
+   "iters": 20,
+   "kv_bytes_per_token_per_layer_per_chip": 714.0,
+   "mesh_reopened_first": false
+  },
+  "8192": {
+   "p50_ms": 39.66033994220197,
+   "min_ms": 39.13347306661308,
+   "iters": 20,
+   "kv_bytes_per_token_per_layer_per_chip": 714.0,
+   "mesh_reopened_first": false
+  }
+ }
+}

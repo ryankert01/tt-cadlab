@@ -1,7 +1,7 @@
 # Palu on Tenstorrent — Stage 2b: G-LRD and Task Accuracy
 
 Date: 2026-09-12
-Status: approved 2026-09-12 ("Lgtm"), including the in-kernel V decision and the device-only evaluation budget
+Status: executed 2026-09-12 (approved 2026-09-12, "Lgtm"), including the in-kernel V decision and the device-only evaluation budget
 Depends on: stage 2 (`docs/superpowers/specs/2026-09-10-palu-tt-stage2-design.md`, merged at 668e250)
 
 ## 0. Two findings that shape this stage

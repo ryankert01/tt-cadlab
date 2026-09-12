@@ -1,0 +1,249 @@
+{
+ "tasks": {
+  "winogrande": {
+   "acc": 0.7063930544593529,
+   "acc_norm": null,
+   "n": 1267
+  },
+  "arc_challenge": {
+   "acc": 0.439419795221843,
+   "acc_norm": 0.4761092150170648,
+   "n": 1172
+  },
+  "arc_easy": {
+   "acc": 0.7466329966329966,
+   "acc_norm": 0.7154882154882155,
+   "n": 2376
+  },
+  "piqa": {
+   "acc": 0.7616974972796517,
+   "acc_norm": 0.7769314472252449,
+   "n": 1838
+  },
+  "openbookqa": {
+   "acc": 0.32,
+   "acc_norm": 0.418,
+   "n": 500
+  }
+ },
+ "results": {
+  "winogrande_hub": {
+   "acc,none": 0.7063930544593529,
+   "acc_stderr,none": [],
+   "alias": "winogrande_hub"
+  },
+  "arc_challenge": {
+   "acc,none": 0.439419795221843,
+   "acc_stderr,none": [],
+   "acc_norm,none": 0.4761092150170648,
+   "acc_norm_stderr,none": [],
+   "alias": "arc_challenge"
+  },
+  "arc_easy": {
+   "acc,none": 0.7466329966329966,
+   "acc_stderr,none": [],
+   "acc_norm,none": 0.7154882154882155,
+   "acc_norm_stderr,none": [],
+   "alias": "arc_easy"
+  },
+  "piqa_hub": {
+   "acc,none": 0.7616974972796517,
+   "acc_stderr,none": [],
+   "acc_norm,none": 0.7769314472252449,
+   "acc_norm_stderr,none": [],
+   "alias": "piqa_hub"
+  },
+  "openbookqa_hub": {
+   "acc,none": 0.32,
+   "acc_stderr,none": [],
+   "acc_norm,none": 0.418,
+   "acc_norm_stderr,none": [],
+   "alias": "openbookqa_hub"
+  }
+ },
+ "versions": {
+  "arc_challenge": 1.0,
+  "arc_easy": 1.0,
+  "openbookqa_hub": 1.0,
+  "piqa_hub": 1.0,
+  "winogrande_hub": 1.0
+ },
+ "configs": {
+  "arc_challenge": {
+   "task": "arc_challenge",
+   "group": [
+    "ai2_arc"
+   ],
+   "dataset_path": "allenai/ai2_arc",
+   "dataset_name": "ARC-Challenge",
+   "training_split": "train",
+   "validation_split": "validation",
+   "test_split": "test",
+   "doc_to_text": "Question: {{question}}\nAnswer:",
+   "doc_to_target": "{{choices.label.index(answerKey)}}",
+   "doc_to_choice": "{{choices.text}}",
+   "description": "",
+   "target_delimiter": " ",
+   "fewshot_delimiter": "\n\n",
+   "num_fewshot": 0,
+   "metric_list": [
+    {
+     "metric": "acc",
+     "aggregation": "mean",
+     "higher_is_better": true
+    },
+    {
+     "metric": "acc_norm",
+     "aggregation": "mean",
+     "higher_is_better": true
+    }
+   ],
+   "output_type": "multiple_choice",
+   "repeats": 1,
+   "should_decontaminate": true,
+   "doc_to_decontamination_query": "Question: {{question}}\nAnswer:",
+   "metadata": {
+    "version": 1.0
+   }
+  },
+  "arc_easy": {
+   "task": "arc_easy",
+   "group": [
+    "ai2_arc"
+   ],
+   "dataset_path": "allenai/ai2_arc",
+   "dataset_name": "ARC-Easy",
+   "training_split": "train",
+   "validation_split": "validation",
+   "test_split": "test",
+   "doc_to_text": "Question: {{question}}\nAnswer:",
+   "doc_to_target": "{{choices.label.index(answerKey)}}",
+   "doc_to_choice": "{{choices.text}}",
+   "description": "",
+   "target_delimiter": " ",
+   "fewshot_delimiter": "\n\n",
+   "num_fewshot": 0,
+   "metric_list": [
+    {
+     "metric": "acc",
+     "aggregation": "mean",
+     "higher_is_better": true
+    },
+    {
+     "metric": "acc_norm",
+     "aggregation": "mean",
+     "higher_is_better": true
+    }
+   ],
+   "output_type": "multiple_choice",
+   "repeats": 1,
+   "should_decontaminate": true,
+   "doc_to_decontamination_query": "Question: {{question}}\nAnswer:",
+   "metadata": {
+    "version": 1.0
+   }
+  },
+  "openbookqa_hub": {
+   "task": "openbookqa_hub",
+   "dataset_path": "allenai/openbookqa",
+   "dataset_name": "main",
+   "training_split": "train",
+   "validation_split": "validation",
+   "test_split": "test",
+   "doc_to_text": "question_stem",
+   "doc_to_target": "{{choices.label.index(answerKey.lstrip())}}",
+   "doc_to_choice": "{{choices.text}}",
+   "description": "",
+   "target_delimiter": " ",
+   "fewshot_delimiter": "\n\n",
+   "num_fewshot": 0,
+   "metric_list": [
+    {
+     "metric": "acc",
+     "aggregation": "mean",
+     "higher_is_better": true
+    },
+    {
+     "metric": "acc_norm",
+     "aggregation": "mean",
+     "higher_is_better": true
+    }
+   ],
+   "output_type": "multiple_choice",
+   "repeats": 1,
+   "should_decontaminate": true,
+   "doc_to_decontamination_query": "question_stem",
+   "metadata": {
+    "version": 1.0
+   }
+  },
+  "piqa_hub": {
+   "task": "piqa_hub",
+   "dataset_path": "ybisk/piqa",
+   "dataset_name": "plain_text",
+   "training_split": "train",
+   "validation_split": "validation",
+   "doc_to_text": "Question: {{goal}}\nAnswer:",
+   "doc_to_target": "label",
+   "doc_to_choice": "{{[sol1, sol2]}}",
+   "description": "",
+   "target_delimiter": " ",
+   "fewshot_delimiter": "\n\n",
+   "num_fewshot": 0,
+   "metric_list": [
+    {
+     "metric": "acc",
+     "aggregation": "mean",
+     "higher_is_better": true
+    },
+    {
+     "metric": "acc_norm",
+     "aggregation": "mean",
+     "higher_is_better": true
+    }
+   ],
+   "output_type": "multiple_choice",
+   "repeats": 1,
+   "should_decontaminate": true,
+   "doc_to_decontamination_query": "goal",
+   "metadata": {
+    "version": 1.0
+   }
+  },
+  "winogrande_hub": {
+   "task": "winogrande_hub",
+   "dataset_path": "allenai/winogrande",
+   "dataset_name": "winogrande_xl",
+   "training_split": "train",
+   "validation_split": "validation",
+   "doc_to_text": "def doc_to_text(doc):\n    answer_to_num = {\"1\": 0, \"2\": 1}\n    return answer_to_num[doc[\"answer\"]]\n",
+   "doc_to_target": "def doc_to_target(doc):\n    idx = doc[\"sentence\"].index(\"_\") + 1\n    return doc[\"sentence\"][idx:].strip()\n",
+   "doc_to_choice": "def doc_to_choice(doc):\n    idx = doc[\"sentence\"].index(\"_\")\n    options = [doc[\"option1\"], doc[\"option2\"]]\n    return [doc[\"sentence\"][:idx] + opt for opt in options]\n",
+   "description": "",
+   "target_delimiter": " ",
+   "fewshot_delimiter": "\n\n",
+   "num_fewshot": 0,
+   "metric_list": [
+    {
+     "metric": "acc",
+     "aggregation": "mean",
+     "higher_is_better": true
+    }
+   ],
+   "output_type": "multiple_choice",
+   "repeats": 1,
+   "should_decontaminate": true,
+   "doc_to_decontamination_query": "sentence",
+   "metadata": {
+    "version": 1.0
+   }
+  }
+ },
+ "seconds": 3168.8742921352386,
+ "row": "glrd_50",
+ "kind": "palu",
+ "palu_dir": "compressed/glrd_0.5",
+ "fused": "off",
+ "limit": null,
+ "lm_eval_version": "0.4.2"
+}
