@@ -79,8 +79,10 @@ the Fisher-uniform rank search accumulates gradients over (default 32, the stage
 it is not 32 the output directory gets a `_f<n>` suffix, and `scripts/patch_palu_cpu.sh` keys Palu's
 Fisher cache file by the calibration-set size (`..._calib_fisher_info_n<n>.pt`) so the two sample
 counts do not overwrite each other's cache. Only the Fisher pass is affected: Palu's whitening
-already uses its own default of 256 samples at every setting. Cost is ~66 s per Fisher sample in
-fp32 on 12 threads (4.7 h for 256), paid once — both ratios share the cache.
+already uses its own default of 256 samples at every setting. Cost is ~69 s per Fisher sample in
+fp32 on 12 threads (**4.9 h** for 256; the whole ratio-0.5 run was 4 h 57 min), paid once — both ratios
+share the cache, so the second ratio took 3 minutes. The cache key is what makes that safe: without
+the `_n<n>` suffix the 32-sample cache would be reused silently.
 
 Budget ~35 min for the Fisher stage and ~8 h for whitening + decomposition (~17 min/layer × 32); the
 stats cache under `third_party/palu/cache` is reused, so a second ratio only redoes the decomposition.
@@ -254,18 +256,23 @@ phases) — open the n300 and must go through the gate.
   K chunk is 32 rows and a user's chunks are spread over several cores (batch < 32). `PaluAttention`
   reconstructs the latent caches in multiples of 64 rows to stay clear of it (see `_recon_len`).
 - tt-metal's fused `correction_block` (`ttnn/.../compute_kernel_api/reduction`, the flash-decode
-  cross-core merge) stages five operands through `dst_reg_0..4` inside one `tile_regs_acquire`, but a
-  program compiled with `fp32_dest_acc_en` and without `dst_full_sync_en` has a **four-tile** DST
-  window. The fifth operand aliases, the helper returns the local maximum as the merged maximum, and
-  the merged result silently collapses onto the reducer core's own slice: PCC **0.334** against an
-  fp32 reference on the group-shared branch. Confirmed as the window and not the phase by two
-  experiments — the same layout with `dst_full_sync_en=True` gives **0.99997**, and in Phase 1 without
-  fp32 accumulation **0.99994**. The group branch works around it with primitives (`max_block`, two
-  `sub_exp_block`, `mul_block_inplace` x2, `add_block_inplace`), which cost six extra bf16 packs per
-  child merge. The per-head branch still calls the helper under the same four-tile window and gets
-  away with it (measured PCC 0.99998 at batch 8, 0.99935 at batch 1, pinned by
-  `test_per_head_reduction_is_accurate_under_fp32_dest_acc`) — correct by luck, not by construction.
-  The upstream fix is to split the helper over two acquisitions; worth reporting to tt-metal.
+  cross-core merge) stages five operands through `dst_reg_0..4` inside one `tile_regs_acquire`, while
+  the program factory sizes its DST sub-block as `dst_size = fp32_dest_acc_en ? 4 : 8` (a host-side
+  constant in the factory, not the hardware DST limit). Called from the **group-shared** branch under
+  fp32 destination accumulation it returns the local maximum as the merged maximum and the merged
+  result silently collapses onto the reducer core's own slice: PCC **0.334** against an fp32
+  reference. Within that branch the failure tracks the sub-block size and not the phase — the same
+  layout with `dst_full_sync_en=True` gives **0.99997**, and Phase 1 without fp32 accumulation
+  **0.99994**. The branch works around it with primitives (`max_block`, two `sub_exp_block`,
+  `mul_block_inplace` x2, `add_block_inplace`), at six extra bf16 packs per child merge.
+  **The per-head branch calls the same helper in the same program under the same sub-block size and
+  does not fail** (measured PCC 0.99998 at batch 8, 0.99935 at batch 1, pinned by
+  `test_per_head_reduction_is_accurate_under_fp32_dest_acc`), so the stage 2b results stand on that
+  measurement. Why one branch fails and the other does not is **unexplained**: the experiments vary
+  the sub-block size but do not control for the group branch feeding the helper repurposed circular
+  buffers (`c_24`/`c_10`/`c_25`) where the per-head branch uses `c_28`/`c_30`/`c_26`, and an
+  operand-aliasing explanation would fit equally well. An upstream report should lead with the
+  reproducer, not the diagnosis; two acquisitions is the obvious candidate fix, untested here.
 - Group mode deadlocks on a three-round reduction tree (the first layout with a node that has both two
   children and a parent), cause unresolved; the factory caps a group split at
   `group_max_cores_per_head = 4` so it never builds one. Reproducer: batch 4, S 1024, r_k 128,
