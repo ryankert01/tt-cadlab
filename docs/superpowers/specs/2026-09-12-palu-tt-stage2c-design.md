@@ -1,6 +1,11 @@
 # Stage 2c: 256-sample calibration for G-LRD, and a shared-latent (group) decode kernel
 
-Status: approved approach (user chose the group work item, 2026-09-12); spec written for execution.
+Status: executed (2026-09-12/13). Results and the analysis are in `docs/results/stage2c.md`; the
+recorded deviations from this spec are §1's bit-identity bar (met where the work split is the same,
+PCC >= 0.9995 where a child merges — see that document's §6.2 for why it provably cannot be met
+otherwise), the group split capped at 4 cores per item instead of §3.3's 8 and 16 (an unresolved
+three-round-reduction deadlock, §6.3), and the host's choice of H being occupancy-aware as well as
+L1-aware, which turns group mode off below batch 8.
 
 Stage 2b left two follow-ups at the top of its list: (1) the leading explanation for our G-LRD
 shortfall against the paper is the 32-sample Fisher calibration, untested; (2) fused G-LRD decode

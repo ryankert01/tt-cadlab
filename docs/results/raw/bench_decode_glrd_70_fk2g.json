@@ -1,0 +1,72 @@
+{
+ "row": "glrd_70_fk2g",
+ "kind": "palu",
+ "palu_dir": "compressed/glrd_0.7",
+ "what": "decode",
+ "fused": "p2",
+ "fused_k_chunk": null,
+ "group_heads": "auto",
+ "group_heads_per_layer": [
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  4,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  1
+ ],
+ "batch": 32,
+ "contexts": [
+  1024,
+  4096,
+  8192
+ ],
+ "data": {
+  "1024": {
+   "p50_ms": 59.718381497077644,
+   "min_ms": 59.64578106068075,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 714.0,
+   "mesh_reopened_first": false
+  },
+  "4096": {
+   "p50_ms": 120.07753143552691,
+   "min_ms": 119.94798085652292,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 714.0,
+   "mesh_reopened_first": false
+  },
+  "8192": {
+   "p50_ms": 200.48923057038337,
+   "min_ms": 200.37907711230218,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 714.0,
+   "mesh_reopened_first": false
+  }
+ }
+}

@@ -1,0 +1,10 @@
+{
+ "ppl": 8.135256985382968,
+ "nll": 605022.0331115723,
+ "tokens": 288627,
+ "windows": 141,
+ "seq_len": 2048,
+ "row": "glrd_70_f256",
+ "kind": "palu",
+ "palu_dir": "compressed/glrd_0.7_f256"
+}

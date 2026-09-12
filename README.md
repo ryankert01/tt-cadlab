@@ -66,11 +66,21 @@ scripts/run_calibration.sh 0.5      # -> compressed/palu_full_0.5
 scripts/run_calibration.sh 0.7      # -> compressed/palu_full_0.7
 scripts/run_calibration.sh 0.5 4    # G-LRD, group size 4 -> compressed/glrd_0.5   (stage 2b)
 scripts/run_calibration.sh 0.7 4    # -> compressed/glrd_0.7
+scripts/run_calibration.sh 0.5 4 256  # 256 Fisher samples -> compressed/glrd_0.5_f256 (stage 2c)
+scripts/run_calibration.sh 0.7 4 256  # -> compressed/glrd_0.7_f256
 ```
 
 The optional second argument is Palu's `--head_group_size`: 1 (the default) is M-LRD, one latent per
 KV head; 4 is G-LRD with one group per n300 chip. A G-LRD dump stores one `U.<g>.weight` per group
 and one rank per group in `head_wise_ranks`; `palu_tt.convert.load_palu_dir` reads either form.
+
+The optional third argument is Palu's `--n_fisher_calib_samples`, the number of wikitext-2 sequences
+the Fisher-uniform rank search accumulates gradients over (default 32, the stage-1/2b setting). When
+it is not 32 the output directory gets a `_f<n>` suffix, and `scripts/patch_palu_cpu.sh` keys Palu's
+Fisher cache file by the calibration-set size (`..._calib_fisher_info_n<n>.pt`) so the two sample
+counts do not overwrite each other's cache. Only the Fisher pass is affected: Palu's whitening
+already uses its own default of 256 samples at every setting. Cost is ~66 s per Fisher sample in
+fp32 on 12 threads (4.7 h for 256), paid once — both ratios share the cache.
 
 Budget ~35 min for the Fisher stage and ~8 h for whitening + decomposition (~17 min/layer × 32); the
 stats cache under `third_party/palu/cache` is reused, so a second ratio only redoes the decomposition.
@@ -171,6 +181,36 @@ Task accuracy runs prefill only, so it never enters the fused decode kernel: the
 accepted by `eval_tasks` but the five rows above were scored without it, and decode-path fidelity is
 `decode_check`'s job.
 
+### Stage 2c rows
+
+Two things: the 256-sample recalibration of the G-LRD dumps (rows `glrd_50_f256`, `glrd_70_f256`,
+scored with the harnesses above against the `_f256` dumps) and the shared-latent ("group-shared")
+mode of the fused decode kernel (rows `glrd_50_fk2g`, `glrd_70_fk2g`).
+
+```bash
+scripts/run_device.sh python -m palu_tt.eval_ppl   --row glrd_50_f256 --kind palu --palu-dir compressed/glrd_0.5_f256
+scripts/run_device.sh python -m palu_tt.eval_tasks --row glrd_50_f256 --kind palu --palu-dir compressed/glrd_0.5_f256
+scripts/run_device.sh python -m palu_tt.bench --row glrd_50_fk2g --kind palu --palu-dir compressed/glrd_0.5 \
+    --what decode --fused p2 --group-heads auto                       # also: attention, maxctx --batch 8
+scripts/run_device.sh python -m palu_tt.decode_check --row glrd_50_fk2g --palu-dir compressed/glrd_0.5 \
+    --fused p2 --group-heads 2
+python -m palu_tt.report --stage 2c                                   # -> docs/results/stage2c.md
+```
+
+`--group-heads {auto,1,2,4}` (on `bench`, `decode_check` and `eval_tasks`) is the fused op's
+`heads_per_core`, the number of KV heads of one G-LRD group that a single core owns. `1` is the
+stage-2b per-head kernel, where each of the four heads of a group re-reads the whole group latent;
+`2` and `4` turn on the group-shared kernel, which reads each latent chunk once per core and rebuilds
+that core's heads from it. `auto` (the default for `bench` and `eval_tasks`) lets the host pick the
+largest H per layer that both fits L1 and still fills the 64-core grid; the chosen values reach every
+result JSON as `group_heads_per_layer`. Two consequences worth knowing:
+
+- The occupancy rule returns `H = 1` for every layer below batch 8, because a group-mode split is
+  capped at 4 cores per item while the per-head kernel spreads one head over up to 16. So `auto` at
+  batch 1 measures the stage-2b kernel; `decode_check`, which runs at batch 1, therefore defaults to
+  `--group-heads 2` rather than `auto`.
+- `eval_tasks` scores whole continuations in prefill, so the flag cannot change its numbers at all.
+
 Each harness writes one JSON to `docs/results/raw/`; `palu_tt.report` reads only those and refuses to
 render when none are present. The samples (`docs/results/raw/samples.json`) come from
 `palu_tt.generate.greedy` driven by a short ad-hoc runner, not a committed script.
@@ -209,14 +249,33 @@ phases) — open the n300 and must go through the gate.
   ops, with the stock fp32-accumulate SDPA compute config, return wrong results when the automatic
   K chunk is 32 rows and a user's chunks are spread over several cores (batch < 32). `PaluAttention`
   reconstructs the latent caches in multiples of 64 rows to stay clear of it (see `_recon_len`).
+- tt-metal's fused `correction_block` (`ttnn/.../compute_kernel_api/reduction`, the flash-decode
+  cross-core merge) stages five operands through `dst_reg_0..4` inside one `tile_regs_acquire`, but a
+  program compiled with `fp32_dest_acc_en` and without `dst_full_sync_en` has a **four-tile** DST
+  window. The fifth operand aliases, the helper returns the local maximum as the merged maximum, and
+  the merged result silently collapses onto the reducer core's own slice: PCC **0.334** against an
+  fp32 reference on the group-shared branch. Confirmed as the window and not the phase by two
+  experiments — the same layout with `dst_full_sync_en=True` gives **0.99997**, and in Phase 1 without
+  fp32 accumulation **0.99994**. The group branch works around it with primitives (`max_block`, two
+  `sub_exp_block`, `mul_block_inplace` x2, `add_block_inplace`), which cost six extra bf16 packs per
+  child merge. The per-head branch still calls the helper under the same four-tile window and gets
+  away with it (measured PCC 0.99998 at batch 8, 0.99935 at batch 1, pinned by
+  `test_per_head_reduction_is_accurate_under_fp32_dest_acc`) — correct by luck, not by construction.
+  The upstream fix is to split the helper over two acquisitions; worth reporting to tt-metal.
+- Group mode deadlocks on a three-round reduction tree (the first layout with a node that has both two
+  children and a parent), cause unresolved; the factory caps a group split at
+  `group_max_cores_per_head = 4` so it never builds one. Reproducer: batch 4, S 1024, r_k 128,
+  r_v 256, `heads_per_core=2`.
 
 ## Results
 
-`docs/results/stage1.md` (naive reconstruction), `docs/results/stage2.md` (the fused kernel) and
-`docs/results/stage2b.md` (G-LRD and zero-shot task accuracy) — the tables are generated by
-`python -m palu_tt.report [--stage 2|2b]` from the raw JSONs in `docs/results/raw/` (tracked in git;
-the run logs beside them are not), and everything below the marker in each file is hand-written prose
-that a re-render preserves. The designs and the recorded deviations from them are in
+`docs/results/stage1.md` (naive reconstruction), `docs/results/stage2.md` (the fused kernel),
+`docs/results/stage2b.md` (G-LRD and zero-shot task accuracy) and `docs/results/stage2c.md` (the
+256-sample recalibration and the shared-latent kernel) — the tables are generated by
+`python -m palu_tt.report [--stage 2|2b|2c]` from the raw JSONs in `docs/results/raw/` (tracked in
+git; the run logs beside them are not), and everything below the marker in each file is hand-written
+prose that a re-render preserves. The designs and the recorded deviations from them are in
 `docs/superpowers/specs/2026-09-09-palu-tt-stage1-design.md`,
-`docs/superpowers/specs/2026-09-10-palu-tt-stage2-design.md` and
-`docs/superpowers/specs/2026-09-12-palu-tt-stage2b-design.md`.
+`docs/superpowers/specs/2026-09-10-palu-tt-stage2-design.md`,
+`docs/superpowers/specs/2026-09-12-palu-tt-stage2b-design.md` and
+`docs/superpowers/specs/2026-09-12-palu-tt-stage2c-design.md`.
