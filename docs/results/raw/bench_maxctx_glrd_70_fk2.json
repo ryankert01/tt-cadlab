@@ -1,0 +1,54 @@
+{
+ "row": "glrd_70_fk2",
+ "kind": "palu",
+ "palu_dir": "compressed/glrd_0.7",
+ "what": "maxctx",
+ "fused": "p2",
+ "fused_k_chunk": null,
+ "batch": 32,
+ "data": {
+  "max_context": 10240,
+  "batch": 32,
+  "limit": "oom",
+  "failed_at": 11264,
+  "error": "TT_FATAL @ /home/user01/tt-cadlab/.claude/worktrees/bright-elm-xum9/third_party/tt-metal/tt_metal/impl/allocator/bank_manager.cpp:462: false\ninfo:\nOut of Memory: Not enough space to allocate 196083712",
+  "phase": "build",
+  "exc": "RuntimeError",
+  "kv_bytes_per_token_per_layer_per_chip": 714.0,
+  "probes": [
+   [
+    1024,
+    true
+   ],
+   [
+    2048,
+    true
+   ],
+   [
+    4096,
+    true
+   ],
+   [
+    8192,
+    true
+   ],
+   [
+    16384,
+    false
+   ],
+   [
+    12288,
+    false
+   ],
+   [
+    10240,
+    true
+   ],
+   [
+    11264,
+    false
+   ]
+  ],
+  "max_context_batch32": 10240
+ }
+}
