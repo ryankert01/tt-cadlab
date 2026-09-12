@@ -183,7 +183,7 @@ def _stock_on_reconstructed_kv(md, q, k_full_rot, v_full, pos, k_chunk):
     return _host(out)
 
 
-def _fused_group(md, q, k_lat, u_k, v_lat, u_v, pos, cos, sin, k_chunk, phase2):
+def _fused_group(md, q, k_lat, u_k, v_lat, u_v, pos, cos, sin, k_chunk, phase2, heads_per_core=None):
     S = k_lat.shape[2]
     extra = dict(u_v=_dev(md, u_v[None]))
     if phase2:
@@ -191,6 +191,8 @@ def _fused_group(md, q, k_lat, u_k, v_lat, u_v, pos, cos, sin, k_chunk, phase2):
         c = k_chunk or 128
         extra.update(rot_step=_dev(md, fused.rot_step_table(cos, sin, c)[None, None], ttnn.float32),
                      trans_mat=_dev(md, fused.trans_mat_tile()))
+    if heads_per_core is not None:
+        extra["heads_per_core"] = heads_per_core
     out = ttnn.transformer.palu_sdpa_decode(
         _dev(md, q), _dev(md, k_lat), _dev(md, fused.w_rot_from_u_k(u_k)[None]), _dev(md, fused.cs_table(cos, sin, S)[None, None]),
         _dev(md, v_lat), head_dim_v=HD, cur_pos_tensor=_pos(md, pos), scale=HD ** -0.5, **extra, **_cfg(k_chunk))
@@ -256,3 +258,52 @@ def test_group_envelope_is_enforced(mesh_device):
 def test_grouped_latents_full_rank_group(mesh_device):
     """glrd_0.7 has layers at K group rank 512 and V group rank 512: the widest latents the envelope allows."""
     _check_group(mesh_device, 32, 1024, 512, 512, gs=4, k_chunk=0, phase2=True)
+
+
+# ---------------- Stage 2c: group-shared mode (a core's heads share one latent read) ----------------
+
+
+def _group_ref_pcc(q, k_lat, u_k, v_lat, u_v, pos, cos, sin, out, gs=4):
+    ref = fused.reference_decode(q, _expand(k_lat, gs), u_k, _expand(v_lat, gs), pos, cos, sin, HD ** -0.5, u_v=u_v)
+    return comp_pcc(ref, out, 0.99)
+
+
+@pytest.mark.parametrize("r_k,r_v", [(64, 512), (128, 256), (288, 512)], ids=["rk64_rv512", "rk128_rv256", "rk288_rv512"])
+@pytest.mark.parametrize("phase2", [False, True], ids=["p1", "p2"])
+def test_group_shared_matches_per_head(mesh_device, r_k, r_v, phase2):
+    """Group-shared mode (the two heads a core owns share one latent read) must give the same bf16
+    output as the per-head mode, bit for bit: same per-head math, same chunk order.
+
+    Batch 16, not 32: heads_per_core=1 puts one (batch, KV head) item on each core, and at batch 32
+    that is 128 items on the 64-core grid (which is why the stock rule already picks H=2 there). At
+    batch 16 both layouts fit -- H=1 on 64 cores (the stage 2b kernel) and H=2 on 32."""
+    args = _inputs_group(16, 2048, r_k, r_v, 4)
+    per_head = _fused_group(mesh_device, *args, 128, phase2, heads_per_core=1)
+    shared = _fused_group(mesh_device, *args, 128, phase2, heads_per_core=2)
+    assert torch.equal(per_head, shared), (
+        f"group-shared output differs from per-head: max |diff| = {(per_head - shared).abs().max()}")
+    ok, msg = _group_ref_pcc(*args, shared)
+    assert ok, f"vs fp32 reference: {msg}"
+
+
+def test_group_shared_whole_group_on_one_core(mesh_device):
+    """H = 4: a core owns the whole group, so the state CBs hold four blocks and the FIFO rotation
+    has to hand each head its own block back three extra times per chunk."""
+    args = _inputs_group(16, 2048, 128, 256, 4)
+    per_head = _fused_group(mesh_device, *args, 128, True, heads_per_core=1)
+    shared = _fused_group(mesh_device, *args, 128, True, heads_per_core=4)
+    assert torch.equal(per_head, shared), (
+        f"H=4 output differs from per-head: max |diff| = {(per_head - shared).abs().max()}")
+    ok, msg = _group_ref_pcc(*args, shared)
+    assert ok, f"vs fp32 reference: {msg}"
+
+
+def test_group_shared_envelope_is_enforced(mesh_device):
+    q, k_lat, u_k, v_lat, u_v, pos, cos, sin = _inputs_group(1, 256, 128, 128, 4)
+    w = _dev(mesh_device, fused.w_rot_from_u_k(u_k)[None])
+    cs = _dev(mesh_device, fused.cs_table(cos, sin, 256)[None, None])
+    good = dict(head_dim_v=HD, cur_pos_tensor=_pos(mesh_device, pos), u_v=_dev(mesh_device, u_v[None]),
+                scale=HD ** -0.5, **_cfg(128))
+    with pytest.raises(RuntimeError, match="heads_per_core"):      # 3 does not divide heads_per_group 4
+        ttnn.transformer.palu_sdpa_decode(_dev(mesh_device, q), _dev(mesh_device, k_lat), w, cs,
+                                          _dev(mesh_device, v_lat), heads_per_core=3, **good)
