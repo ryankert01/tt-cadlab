@@ -20,6 +20,11 @@ Stage 2 (``--stage 2``) renders the same tables for the fused-kernel rows into
 their base row -- those are prefill/allocation properties and are identical by construction, so they
 are not re-measured. Both stages go through the same ``main``; ``rows`` selects which.
 
+Stage 2c (``--stage 2c``) adds two more tables into ``docs/results/stage2c.md``: calibration
+sensitivity for G-LRD at 256 Fisher samples (against the stage 2b 32-sample rows), and the
+shared-latent ("group-shared") fused kernel's decode/attention timings against the stage 2b
+per-head ``_fk2`` rows, plus decode fidelity and batch-8 max context for the new rows.
+
 Usage: ``python -m palu_tt.report [--stage 2]`` (writes the file and prints it).
 ``main(raw=..., out=..., rows=...)`` takes the paths and the row set as parameters so either stage
 can be rendered from a fixture directory in tests.
@@ -36,6 +41,7 @@ RAW = Path("docs/results/raw")
 OUT = Path("docs/results/stage1.md")
 OUT2 = Path("docs/results/stage2.md")
 OUT2B = Path("docs/results/stage2b.md")
+OUT2C = Path("docs/results/stage2c.md")
 
 # row -> human label. Order is the render order of every table.
 ROWS = {
@@ -71,6 +77,30 @@ ROWS2B = {
     "glrd_50": "Palu G-LRD (group size 4), ratio 0.5",
     "glrd_70": "Palu G-LRD (group size 4), ratio 0.7",
 }
+# Stage 2c (Task 3/4): 256-sample calibration sensitivity for G-LRD, plus the shared-latent
+# ("group-shared") fused kernel. A single dict, in render order: the four calibration rows first,
+# then the seven kernel-table rows (``main``'s "any data" guard and ``_row_data`` loading run over
+# all of them together; ``_stage2c_lines`` splits them back out per table).
+ROWS2C = {
+    "glrd_50": "Palu G-LRD (group size 4), ratio 0.5",
+    "glrd_50_f256": "  same, 256-sample Fisher calibration",
+    "glrd_70": "Palu G-LRD (group size 4), ratio 0.7",
+    "glrd_70_f256": "  same, 256-sample Fisher calibration",
+    "baseline": "stock `tt_transformers` attention",
+    "palu_full_50_fk2": "Palu full recipe (M-LRD), ratio 0.5, fused Phase 2",
+    "glrd_50_fk2": "Palu G-LRD, ratio 0.5, fused Phase 2 (per-head, stage 2b)",
+    "glrd_50_fk2g": "  same, group-shared kernel",
+    "palu_full_70_fk2": "Palu full recipe (M-LRD), ratio 0.7, fused Phase 2",
+    "glrd_70_fk2": "Palu G-LRD, ratio 0.7, fused Phase 2 (per-head, stage 2b)",
+    "glrd_70_fk2g": "  same, group-shared kernel",
+}
+CALIB_ROWS2C = ("glrd_50", "glrd_50_f256", "glrd_70", "glrd_70_f256")
+KERNEL_ROWS2C = ("baseline", "palu_full_50_fk2", "glrd_50_fk2", "glrd_50_fk2g",
+                 "palu_full_70_fk2", "glrd_70_fk2", "glrd_70_fk2g")
+# Decode fidelity (Task 4) is reported for the group-shared rows and for the fused kernel run on
+# the f256-calibrated dumps -- neither the calibration table nor the kernel table's rows cover the
+# latter, so they are loaded separately in ``_stage2c_lines``.
+DECODE_FIDELITY_ROWS2C = ("glrd_50_fk2g", "glrd_70_fk2g", "glrd_50_f256_fk2", "glrd_70_f256_fk2")
 TASK_COLS = ("openbookqa", "piqa", "arc_easy", "arc_challenge", "winogrande")
 TASK_LABELS = {"openbookqa": "OBQA", "piqa": "PIQA", "arc_easy": "ARC-e",
                "arc_challenge": "ARC-c", "winogrande": "WinoGrande"}
@@ -313,6 +343,61 @@ def _avg5(tsk):
     return f"{sum(accs) / len(accs) * 100:.2f}"
 
 
+def _avg5_paper(tsk):
+    """Mean of the paper's protocol over ``TASK_COLS`` as a percentage, or ``"-"`` unless every
+    required field is present: ``acc_norm`` for openbookqa/arc_challenge, plain ``acc`` for the
+    other three (spec Sec 0; matches the hand-computed ``avg (5) paper protocol`` column in
+    ``stage2b.md``'s hand-written analysis, now generated instead of transcribed)."""
+    tasks = (tsk or {}).get("tasks", {})
+    norm_tasks = {"openbookqa", "arc_challenge"}
+    vals = []
+    for t in TASK_COLS:
+        d = tasks.get(t, {})
+        v = d.get("acc_norm") if t in norm_tasks else d.get("acc")
+        if v is None:
+            return "-"
+        vals.append(v)
+    return f"{sum(vals) / len(vals) * 100:.2f}"
+
+
+def _calib_delta(f256_avg, base_avg):
+    """``f256_avg - base_avg`` (both ``_avg5_paper`` strings) with an explicit sign, or ``"-"``
+    when either side is missing."""
+    if f256_avg == "-" or base_avg == "-":
+        return "-"
+    return f"{float(f256_avg) - float(base_avg):+.2f}"
+
+
+def _min_only(cell):
+    """``min_ms`` formatted to 1 decimal, ``"OOM"``/``"err"`` for an error cell, ``"-"`` when the
+    cell is missing -- like ``_timing`` but the stage 2c kernel table only needs ``min``."""
+    if cell is None:
+        return "-"
+    if "error" in cell:
+        return "OOM" if "Out of Memory" in str(cell["error"]) else "err"
+    if "min_ms" not in cell:
+        return "-"
+    return _fmt(cell["min_ms"], 1)
+
+
+def _slope(att):
+    """``(8k - 1k) / 7`` ms per 1k of context from an attention-only bench JSON, 3 decimals, or
+    ``"-"`` when either context is missing or errored."""
+    c1, c8 = _cell(att, "1024"), _cell(att, "8192")
+    if not c1 or not c8 or "min_ms" not in c1 or "min_ms" not in c8:
+        return "-"
+    return f"{(c8['min_ms'] - c1['min_ms']) / 7:.3f}"
+
+
+def _vs_fk2(dec_fk2, dec_fk2g):
+    """The ``_fk2`` sibling's decode step at 4k divided by the ``_fk2g`` row's at the same context
+    (> 1.00x is faster than per-head) -- mirrors ``_vs_stock``'s ratio direction."""
+    a, b = _cell(dec_fk2, "4096"), _cell(dec_fk2g, "4096")
+    if not a or not b or "min_ms" not in a or "min_ms" not in b:
+        return "-"
+    return f"{a['min_ms'] / b['min_ms']:.2f}x"
+
+
 def _sweep_filename(row, batch):
     """``bench_decode_<row>.json`` at batch 32 (the default, unsuffixed file), else ``_b<batch>``."""
     return f"bench_decode_{row}" if batch == 32 else f"bench_decode_{row}_b{batch}"
@@ -414,6 +499,7 @@ def main(raw=RAW, out=OUT, rows=ROWS):
     raw = Path(raw)
     stage2 = rows is ROWS2
     stage2b = rows is ROWS2B
+    stage2c = rows is ROWS2C
     loaded = {row: _row_data(raw, row) for row in rows}
     # A raw directory with nothing in it renders every row as dashes -- and would then overwrite the
     # committed tables with that. That is exactly what a fresh clone or a mistyped --raw looks like,
@@ -434,6 +520,9 @@ def main(raw=RAW, out=OUT, rows=ROWS):
 
     if stage2b:
         return _finish(_stage2b_lines(raw, rows, loaded, base, kv_base, dev_windows), out)
+
+    if stage2c:
+        return _finish(_stage2c_lines(raw, rows, loaded), out)
 
     if stage2:
         lines = [
@@ -730,12 +819,113 @@ def _stage2b_lines(raw, rows, loaded, base, kv_base, dev_windows):
     return lines
 
 
+def _stage2c_lines(raw, rows, loaded):
+    """Stage 2c (Task 3): calibration sensitivity for G-LRD at 256 Fisher samples, and the
+    shared-latent ("group-shared") fused kernel against the stage 2b per-head ``_fk2`` rows.
+
+    ``loaded`` already carries every ``ROWS2C`` row (``main``'s generic ``_row_data`` loop); the
+    two extra decode-fidelity rows (the fused kernel run on an f256-calibrated dump) are not part
+    of either table above and are loaded here on demand.
+    """
+    lines = [
+        "# Stage 2c results: 256-sample calibration and the shared-latent decode kernel",
+        "",
+        f"Generated by `python -m palu_tt.report --stage 2c` from `docs/results/raw/*.json` at "
+        f"commit `{_commit()}`; tt-metal v0.78.0 plus the `palu-sdpa` submodule branch, TP=2 (one "
+        "n300, two chips), bfp8 weights and latent caches, non-paged, untraced decode. `_f256` rows "
+        "are the G-LRD dumps re-calibrated with 256 Fisher samples in place of stage 2b's 32; "
+        "`_fk2g` rows are the fused Phase 2 kernel in group-shared mode (`heads_per_core` chosen "
+        "automatically per layer), compared against the stage 2b `_fk2` (per-head) rows.",
+        "",
+        "## Calibration sensitivity",
+        "",
+        "Zero-shot task accuracy (`palu_tt.eval_tasks`) and perplexity for the two G-LRD ratios, "
+        "32- vs 256-sample Fisher calibration. `avg (5)` is plain `acc`; `avg (5) paper protocol` "
+        "uses `acc_norm` for OpenBookQA/ARC-Challenge and `acc` for the rest (the paper's "
+        "protocol, spec Sec 0); `delta` is the f256 row's paper-protocol average minus its "
+        "32-sample counterpart's.",
+        "",
+        "| row | recipe | " + " | ".join(TASK_LABELS[t] for t in TASK_COLS) +
+        " | avg (5) | avg (5) paper protocol | delta | ppl (device) | r_k | r_v |",
+        "|---|---|" + "---|" * (len(TASK_COLS) + 5),
+    ]
+    for row in CALIB_ROWS2C:
+        entry = loaded[row]
+        ppl, tsk = entry[0], entry[7]
+        cells = " | ".join(_task_display(tsk, t) for t in TASK_COLS)
+        avg5p = _avg5_paper(tsk)
+        rk, rv, *_rest = _quality_row(entry, None)
+        if row.endswith("_f256"):
+            delta = _calib_delta(avg5p, _avg5_paper(loaded[row[:-len("_f256")]][7]))
+        else:
+            delta = "-"
+        lines.append(
+            f"| {row} | {rows[row]} | {cells} | {_avg5(tsk)} | {avg5p} | {delta} | "
+            f"{_fmt(ppl and ppl.get('ppl'), 3)} | {rk} | {rv} |"
+        )
+
+    lines += [
+        "",
+        "## Shared-latent kernel",
+        "",
+        "Decode step and attention-only `min_ms` (untraced, idle host, same convention as the "
+        "earlier stages -- `min` is the cleaner signal). Batch 32 is the default `bench_decode_*` "
+        "file, batch 8 the `_b8` sweep file. `slope` is `(attention 8k - attention 1k) / 7`, ms per "
+        "1k of context. `vs _fk2` is the `_fk2` sibling's decode step at 4k divided by this row's "
+        "at 4k (> 1.00x is faster than the per-head kernel); it is only rendered for the `_fk2g` "
+        "rows.",
+        "",
+        "| row | recipe | decode 1k b32 | decode 4k b32 | decode 8k b32 | decode 1k b8 | "
+        "decode 4k b8 | decode 8k b8 | attn 1k | attn 8k | slope (ms/1k) | vs `_fk2` |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for row in KERNEL_ROWS2C:
+        dec32, att = loaded[row][2], loaded[row][3]
+        dec8 = _load(raw, f"bench_decode_{row}_b8")
+        d32 = " | ".join(_min_only(_cell(dec32, c)) for c in CONTEXTS)
+        d8 = " | ".join(_min_only(_cell(dec8, c)) for c in CONTEXTS)
+        if row.endswith("_fk2g"):
+            vs = _vs_fk2(loaded[row[:-1]][2], dec32)   # "..._fk2g" -> "..._fk2" sibling
+        else:
+            vs = "-"
+        lines.append(
+            f"| {row} | {rows[row]} | {d32} | {d8} | {_min_only(_cell(att, '1024'))} | "
+            f"{_min_only(_cell(att, '8192'))} | {_slope(att)} | {vs} |"
+        )
+
+    ext_loaded = dict(loaded)
+    for row in DECODE_FIDELITY_ROWS2C:
+        ext_loaded.setdefault(row, _row_data(raw, row))
+    lines += [
+        "",
+        "## Decode fidelity",
+        "",
+        "Naive vs fused (`palu_tt.decode_check`, teacher-forced), for the group-shared rows and for "
+        "the fused kernel run on the f256-calibrated dumps.",
+        "",
+        "| row | decode PCC (min / mean) | argmax agree |",
+        "|---|---|---|",
+    ]
+    for row in DECODE_FIDELITY_ROWS2C:
+        pcc, agree = _fidelity(ext_loaded[row][6])
+        lines.append(f"| {row} | {pcc} | {agree} |")
+
+    lines += ["", "## Batch-8 max context", "", "| row | max context | limit |", "|---|---|---|"]
+    for base in ("glrd_50", "glrd_70"):
+        for row in (f"{base}_fk2", f"{base}_fk2g"):
+            mc, limit = _scaling_maxctx(raw, row, 8)
+            lines.append(f"| {row} | {mc} | {limit} |")
+
+    return lines
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Render docs/results/stage{1,2,2b}.md from the raw JSONs.")
     ap.add_argument("--raw", default=RAW, type=Path)
-    ap.add_argument("--stage", choices=("1", "2", "2b"), default="1")
-    ap.add_argument("--out", default=None, type=Path, help="default: stage1.md / stage2.md / stage2b.md")
+    ap.add_argument("--stage", choices=("1", "2", "2b", "2c"), default="1")
+    ap.add_argument("--out", default=None, type=Path,
+                     help="default: stage1.md / stage2.md / stage2b.md / stage2c.md")
     a = ap.parse_args()
-    _rows = {"1": ROWS, "2": ROWS2, "2b": ROWS2B}[a.stage]
-    _default_out = {"1": OUT, "2": OUT2, "2b": OUT2B}[a.stage]
+    _rows = {"1": ROWS, "2": ROWS2, "2b": ROWS2B, "2c": ROWS2C}[a.stage]
+    _default_out = {"1": OUT, "2": OUT2, "2b": OUT2B, "2c": OUT2C}[a.stage]
     print(main(raw=a.raw, out=a.out or _default_out, rows=_rows))

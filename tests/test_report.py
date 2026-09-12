@@ -376,3 +376,146 @@ def test_paper_reference_matches_the_spec_table():
         got = {k: report.PAPER[method][k] for k in cols}
         assert got == want, (method, got, want)
         assert abs(sum(want[c] for c in cols[:6]) / 6 - want["avg6"]) < 0.01, method
+
+
+def _tasks_json(row, obqa, piqa, arc_e, arc_c, wino):
+    """A ``tasks_<row>.json`` with all five task cols, ``acc`` plus ``acc_norm`` for OBQA/ARC-c."""
+    return {
+        "row": row,
+        "tasks": {
+            "openbookqa": {"acc": obqa[0], "acc_norm": obqa[1], "n": 500},
+            "piqa": {"acc": piqa, "n": 1838},
+            "arc_easy": {"acc": arc_e, "n": 2376},
+            "arc_challenge": {"acc": arc_c[0], "acc_norm": arc_c[1], "n": 1172},
+            "winogrande": {"acc": wino, "n": 1267},
+        },
+    }
+
+
+def test_avg5_paper_matches_the_papers_protocol():
+    """acc_norm for OBQA/ARC-c, plain acc for the other three (spec Sec 0 / stage 2b analysis)."""
+    from palu_tt import report
+    tsk = _tasks_json("glrd_50", (0.320, 0.418), 0.762, 0.747, (0.439, 0.476), 0.706)
+    assert report._avg5_paper(tsk) == "62.18"
+    assert report._avg5_paper(None) == "-"
+    assert report._avg5_paper({"tasks": {"openbookqa": {"acc": 0.3, "acc_norm": 0.4}}}) == "-"
+
+
+def test_stage2c_calibration_table_paper_protocol_and_delta(tmp_path):
+    """Task 3, step 1 (calibration sensitivity): ``acc (acc_norm)`` cells, the paper-protocol
+    average side by side for the 32- and 256-sample rows, and a delta column on the f256 row."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    pd = _palu_recipe_dir(tmp_path / "glrd_0.5", [(64, 192), (288, 512)])
+    pd_f256 = _palu_recipe_dir(tmp_path / "glrd_0.5_f256", [(96, 224), (288, 512)])
+    _write(raw, "ppl_glrd_50", {"ppl": 10.716, "windows": 141, "row": "glrd_50",
+                                "kind": "palu", "palu_dir": str(pd)})
+    _write(raw, "ppl_glrd_50_f256", {"ppl": 10.234, "windows": 141, "row": "glrd_50_f256",
+                                     "kind": "palu", "palu_dir": str(pd_f256)})
+    _write(raw, "tasks_glrd_50", _tasks_json("glrd_50", (0.320, 0.418), 0.762, 0.747, (0.439, 0.476), 0.706))
+    _write(raw, "tasks_glrd_50_f256", _tasks_json("glrd_50_f256", (0.350, 0.450), 0.770, 0.760, (0.460, 0.490), 0.710))
+    out = tmp_path / "stage2c.md"
+
+    md = report.main(raw=raw, out=out, rows=report.ROWS2C)
+
+    assert out.read_text() == md
+    assert md.startswith("# Stage 2c results: 256-sample calibration and the shared-latent decode kernel")
+    assert "## Calibration sensitivity" in md
+    base_line = next(l for l in md.splitlines() if l.startswith("| glrd_50 |"))
+    f256_line = next(l for l in md.splitlines() if l.startswith("| glrd_50_f256 |"))
+    assert "32.0 (41.8)" in base_line and "10.716" in base_line and "62.18" in base_line
+    assert base_line.split("|")[-5].strip() == "-"    # no delta on the 32-sample row
+    assert "35.0 (45.0)" in f256_line and "10.234" in f256_line and "63.60" in f256_line
+    assert "+1.42" in f256_line                        # 63.60 - 62.18
+    # rank means, via the existing rank helpers, from the dump configs
+    assert "64–288 (mean 176)" in base_line
+    assert "96–288 (mean 192)" in f256_line
+    # glrd_70 / glrd_70_f256 have no files at all -> dashes throughout, never invented numbers
+    row70 = next(l for l in md.splitlines() if l.startswith("| glrd_70 |"))
+    assert "| - |" in row70 and "128" not in row70
+
+
+def test_stage2c_kernel_table_decode_batch8_and_attention_slope(tmp_path):
+    """Task 3, step 1 (kernel table): decode ``min_ms`` at 1k/4k/8k for batch 32 and batch 8, the
+    attention slope, and ``vs _fk2`` for the group-shared row; missing files render dashes."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    _write(raw, "bench_decode_baseline", {
+        "row": "baseline", "kind": "stock", "palu_dir": None, "what": "decode",
+        "data": {"1024": {"p50_ms": 38.1, "min_ms": 38.0, "iters": 10},
+                 "4096": {"p50_ms": 55.5, "min_ms": 55.4, "iters": 10},
+                 "8192": {"error": "TT_FATAL ... Out of Memory: Not enough space",
+                          "phase": "build", "exc": "RuntimeError"}},
+    })
+    _write(raw, "bench_decode_baseline_b8", {
+        "row": "baseline", "kind": "stock", "palu_dir": None, "what": "decode", "batch": 8,
+        "data": {"1024": {"p50_ms": 20.1, "min_ms": 20.0, "iters": 10}},
+    })
+    _write(raw, "bench_attention_baseline", {
+        "row": "baseline", "kind": "stock", "palu_dir": None, "what": "attention",
+        "data": {"1024": {"p50_ms": 0.9, "min_ms": 0.8, "iters": 20},
+                 "8192": {"p50_ms": 2.3, "min_ms": 2.1, "iters": 20}},
+    })
+    _write(raw, "bench_decode_glrd_50_fk2", {
+        "row": "glrd_50_fk2", "kind": "palu", "palu_dir": None, "what": "decode",
+        "data": {"4096": {"p50_ms": 160.2, "min_ms": 160.0, "iters": 10}},
+    })
+    _write(raw, "bench_decode_glrd_50_fk2g", {
+        "row": "glrd_50_fk2g", "kind": "palu", "palu_dir": None, "what": "decode",
+        "data": {"4096": {"p50_ms": 80.1, "min_ms": 80.0, "iters": 10}},
+    })
+    out = tmp_path / "stage2c.md"
+
+    md = report.main(raw=raw, out=out, rows=report.ROWS2C)
+
+    assert out.read_text() == md
+    assert "## Shared-latent kernel" in md
+    line = next(l for l in md.splitlines() if l.startswith("| baseline |"))
+    assert "| 38.0 | 55.4 | OOM |" in line          # decode batch 32, 1k/4k/8k
+    assert "| 20.0 | - | - |" in line               # decode batch 8: only 1k measured
+    assert "| 0.8 | 2.1 |" in line                  # attention-only 1k/8k
+    assert "0.186" in line                          # slope: (2.1 - 0.8) / 7
+    assert line.rstrip("|").rsplit("|", 1)[-1].strip() == "-"   # no `_fk2` sibling for baseline
+    fk2g_line = next(l for l in md.splitlines() if l.startswith("| glrd_50_fk2g |"))
+    assert "2.00x" in fk2g_line                     # 105.5 / 80.0, vs its `_fk2` sibling
+    # a row with no files at all: every cell dashes
+    fk2_70_line = next(l for l in md.splitlines() if l.startswith("| glrd_70_fk2 |"))
+    assert "| - | - | - | - | - | - | - | - | - | - |" in fk2_70_line
+
+
+def test_stage2c_decode_fidelity_and_batch8_maxctx(tmp_path):
+    """Task 3, steps 2/3: decode fidelity for the f256/group-shared rows, and batch-8 max context
+    for the group-shared rows next to their stage 2b ``_fk2`` values."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    _write(raw, "decode_check_glrd_50_fk2g", {
+        "row": "glrd_50_fk2g", "palu_dir": None, "steps": 64,
+        "pcc_mean": 0.9999, "pcc_min": 0.9998, "argmax_agree": 0.99,
+    })
+    _write(raw, "decode_check_glrd_50_f256_fk2", {
+        "row": "glrd_50_f256_fk2", "palu_dir": None, "steps": 64,
+        "pcc_mean": 0.9990, "pcc_min": 0.9970, "argmax_agree": 0.98,
+    })
+    _write(raw, "bench_maxctx_glrd_50_fk2_b8", {
+        "row": "glrd_50_fk2", "kind": "palu", "palu_dir": None, "what": "maxctx", "batch": 8,
+        "data": {"max_context": 57344, "batch": 8, "limit": "oom"},
+    })
+    _write(raw, "bench_maxctx_glrd_50_fk2g_b8", {
+        "row": "glrd_50_fk2g", "kind": "palu", "palu_dir": None, "what": "maxctx", "batch": 8,
+        "data": {"max_context": 57344, "batch": 8, "limit": "oom"},
+    })
+    out = tmp_path / "stage2c.md"
+
+    md = report.main(raw=raw, out=out, rows=report.ROWS2C)
+
+    assert out.read_text() == md
+    assert "## Decode fidelity" in md
+    assert "| glrd_50_fk2g | 0.9998 / 0.9999 | 0.990 |" in md
+    assert "| glrd_50_f256_fk2 | 0.9970 / 0.9990 | 0.980 |" in md
+    # not measured in this fixture -> dashes, never invented
+    assert "| glrd_70_fk2g | - | - |" in md
+    assert "## Batch-8 max context" in md
+    assert "| glrd_50_fk2 | 57344 | oom |" in md
+    assert "| glrd_50_fk2g | 57344 | oom |" in md
+    assert "| glrd_70_fk2 | - | - |" in md
+    assert "| glrd_70_fk2g | - | - |" in md
