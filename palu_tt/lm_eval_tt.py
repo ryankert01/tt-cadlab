@@ -72,20 +72,18 @@ class TTLM(TemplateLM):
             # max_length (as lm-eval's HF model does); a continuation longer than max_length on its own
             # is clipped from the left too (lm-eval's HF model asserts instead), so the row slice below
             # can never wrap. None of the five tasks comes near the cap.
-            n_cont = min(len(continuation_enc), self._max_length)
-            whole = (ctx_enc + continuation_enc)[-(self._max_length):]
+            n_cont = min(len(continuation_enc), self._max_length - 1)   # the BOS takes one slot of the window
+            whole = (ctx_enc + continuation_enc)[-(self._max_length - 1):]   # BOS below makes it max_length
             key = (tuple(whole), n_cont)                 # n_cont must be in the key: two requests can
             if key not in self._memo:                    # share `whole` while splitting context/continuation differently
                 ids = torch.tensor([[self.prefix_token_id] + list(whole)])     # BOS + sequence
                 logp = torch.log_softmax(self._score(ids, n_cont).float(), dim=-1)  # [n_cont, vocab]
-                self._memo[key] = logp
-            logp = self._memo[key]
-            # the continuation tokens are the last n_cont of `whole`; score_fn already returns exactly
-            # the n_cont rows that predict them (see TTLM.for_device's `score`)
-            tgt = torch.tensor(whole[-n_cont:])
-            ll = float(logp.gather(1, tgt[:, None]).sum())
-            greedy = bool((logp.argmax(-1) == tgt).all())
-            out.append((ll, greedy))
+                # the continuation tokens are the last n_cont of `whole`; score_fn already returns exactly
+                # the n_cont rows that predict them (see TTLM.for_device's `score`). Memoise the two
+                # scalars, not the [n_cont, vocab] log-probs: a row is ~22k requests.
+                tgt = torch.tensor(whole[-n_cont:])
+                self._memo[key] = (float(logp.gather(1, tgt[:, None]).sum()), bool((logp.argmax(-1) == tgt).all()))
+            out.append(self._memo[key])
         return out
 
     def loglikelihood_rolling(self, requests):

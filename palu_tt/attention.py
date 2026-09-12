@@ -3,7 +3,6 @@ Shapes stay stock everywhere except inside the latent caches and the SDPA call."
 import torch
 import ttnn
 from models.common.lightweightmodule import LightweightModule
-from models.common.utility_functions import nearest_32
 from models.tt_transformers.tt.ccl import tt_all_gather, tt_all_reduce
 from models.tt_transformers.tt.common import Mode
 from models.tt_transformers.tt.model_config import OpGroup, TensorGroup, num_to_corerange

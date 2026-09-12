@@ -203,6 +203,13 @@ the fp32 CPU reference, prefill and decode, cache-level K/V checks, and fused-vs
 `test_ppl_harness.py`, and `test_palu_sdpa_device.py` (the fused op against its reference, both
 phases) — open the n300 and must go through the gate.
 
+## Known issues
+
+- The stock `ttnn.transformer.scaled_dot_product_attention_decode` / `flash_multi_latent_attention_decode`
+  ops, with the stock fp32-accumulate SDPA compute config, return wrong results when the automatic
+  K chunk is 32 rows and a user's chunks are spread over several cores (batch < 32). `PaluAttention`
+  reconstructs the latent caches in multiples of 64 rows to stay clear of it (see `_recon_len`).
+
 ## Results
 
 `docs/results/stage1.md` (naive reconstruction), `docs/results/stage2.md` (the fused kernel) and
