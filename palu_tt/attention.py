@@ -292,6 +292,15 @@ class PaluAttention(LightweightModule):
             strategy=ttnn.ShardStrategy.HEIGHT, orientation=ttnn.ShardOrientation.ROW_MAJOR, use_height_and_width_as_shard_shape=True,
         )
 
+    def _shard_kv_prefill(self, seq_len):
+        """Stock height-shards the K/V cache fill over the 8x8 grid once seq_len >= min_kv_prefill_shard_seqlen
+        (a threshold derived from n_local_kv_heads rows per position). A group latent has n_local_groups rows per
+        position instead, so the shard height (n_local_groups * seq_len / 64) must be re-checked for tile
+        alignment: at one group per chip a 512-token prefill would give 8-row shards. Fall back to the
+        interleaved fill otherwise (correct, just slower)."""
+        rows = self.n_local_groups * seq_len
+        return seq_len >= self.min_kv_prefill_shard_seqlen and rows % (64 * self.tile_size) == 0
+
     def _kv_prefill_shard_cfg(self, seq_len, width):
         return ttnn.create_sharded_memory_config(
             (self.n_local_groups * seq_len // 64, width), ttnn.CoreGrid(y=8, x=8),
@@ -365,7 +374,7 @@ class PaluAttention(LightweightModule):
         for src, r, cache in (((k_slot if self.recon_k else k_rot), self.r_k, keys), (v_slot, self.r_v, values)):
             lat = src[:, :, :, :r] if r < src.shape[-1] else src
             lat = ttnn.typecast(lat, dtype=cache.dtype)
-            if seq_len >= self.min_kv_prefill_shard_seqlen:
+            if self._shard_kv_prefill(seq_len):
                 lat = ttnn.interleaved_to_sharded(lat, self._kv_prefill_shard_cfg(seq_len, r))
             ttnn.fill_cache(cache, lat, user_id % self.batch_size_per_device_group)
             ttnn.deallocate(lat)

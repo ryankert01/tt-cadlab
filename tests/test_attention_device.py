@@ -306,3 +306,26 @@ def test_glrd_fused_decode_matches_naive(mesh_device):
         assert ok, f"step={step} {msg}"
     for i in range(2):
         assert torch.equal(_cache_torch(mesh_device, args, naive, i), _cache_torch(mesh_device, args, fusedm, i)), f"cache {i}"
+
+
+def test_glrd_prefill_at_512_tokens_matches_reference(mesh_device):
+    """Regression: 512 tokens is at the stock K/V-fill sharding threshold, but with one group per chip the
+    sharded fill would have 8-row shards (not tile sized); the grouped path must fall back to the
+    interleaved fill and still match the reference."""
+    args, sd, rope, tt_ccl, ref = _setup(mesh_device, "compressed/glrd_0.5", batch=32, max_seq_len=1024)
+    tt = _tt_attention(PaluAttention, mesh_device, args, sd, rope, tt_ccl)
+    assert tt.n_local_groups == 1 and tt.min_kv_prefill_shard_seqlen <= 512
+    assert not tt._shard_kv_prefill(512) and tt._shard_kv_prefill(2048)
+    P = 512
+    x_pre = torch.randn(1, P, args.dim) * 0.05
+    y_ref = ref.forward(x_pre, start_pos=0)
+    rot = [rope.cos_matrix_prefill[:, :, :P, :], rope.sin_matrix_prefill[:, :, :P, :]]
+    y = tt.forward(args.prepare_residual_tensor_prefill(x_pre, force_replicated=True), None, rot_mats=rot, user_id=0, mode=Mode.PREFILL)
+    y = _to_torch(mesh_device, args, y)[0, 0, :P, : args.dim]
+    ok, msg = comp_pcc(y_ref[0], y, 0.99)
+    logger.info(f"prefill@512 {msg}")
+    assert ok, f"prefill@512 {msg}"
+    for i, ref_cache in ((0, ref.cache_k_lat), (1, ref.cache_v_lat)):
+        c = ttnn.to_torch(tt.layer_past[i], mesh_composer=ttnn.ConcatMesh2dToTensor(mesh_device, dims=(0, 1), mesh_shape=args.cluster_shape))
+        ok, msg = comp_pcc(ref_cache[:, ::tt.gs, :P, :], c[:1, :, :P, :], 0.99)
+        assert ok, f"cache {i} {msg}"
