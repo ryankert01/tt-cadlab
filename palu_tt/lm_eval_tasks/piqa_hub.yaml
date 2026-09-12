@@ -1,4 +1,4 @@
-include: /home/user01/tt-cadlab/.claude/worktrees/bright-elm-xum9/.venv/lib/python3.10/site-packages/lm_eval/tasks/piqa/piqa.yaml
+include: {LM_EVAL_TASKS}/piqa/piqa.yaml
 task: piqa_hub
 dataset_path: ybisk/piqa
 dataset_name: plain_text

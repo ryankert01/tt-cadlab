@@ -3,7 +3,7 @@
 Usage: python -m palu_tt.eval_tasks --row glrd_50 --kind palu --palu-dir compressed/glrd_0.5 [--fused p2] [--limit 20]
 Writes docs/results/raw/tasks_<row>.json. First run needs the datasets downloaded once (README).
 """
-import argparse, json, os, time
+import argparse, importlib.util, json, time
 from pathlib import Path
 
 import lm_eval
@@ -15,11 +15,35 @@ RAW = Path("docs/results/raw")
 TASKS = ("openbookqa", "piqa", "arc_easy", "arc_challenge", "winogrande")
 # lm-eval 0.4.2's configs point at dataset ids the Hub no longer serves; the *_hub tasks override them
 TASK_NAME_MAP = {"openbookqa_hub": "openbookqa", "piqa_hub": "piqa", "winogrande_hub": "winogrande"}
-TASK_DIR = Path(__file__).parent / "lm_eval_tasks"
+# Committed templates: the `include:` path depends on where lm-eval is installed (a venv under a
+# worktree that may not exist elsewhere), so it is never committed literally -- write_task_dir()
+# substitutes it in at runtime, into a cache directory outside the repo tree.
+TEMPLATE_DIR = Path(__file__).parent / "lm_eval_tasks"
+CACHE_DIR = Path.home() / ".cache" / "palu_tt" / "lm_eval_tasks"
+
+
+def _lm_eval_tasks_root():
+    """Directory holding the installed lm-eval package's built-in task configs."""
+    spec = importlib.util.find_spec("lm_eval")
+    return Path(spec.submodule_search_locations[0]) / "tasks"
+
+
+def write_task_dir():
+    """Render the *_hub.yaml templates (their `include:` uses a {LM_EVAL_TASKS} placeholder) with
+    the installed lm-eval location, into a per-user cache dir outside the repo tree. Re-renders only
+    when the content actually changes, so it is safe (and fast) to call on every task_manager()."""
+    tasks_root = _lm_eval_tasks_root()
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    for template in sorted(TEMPLATE_DIR.glob("*.yaml")):
+        rendered = template.read_text().replace("{LM_EVAL_TASKS}", str(tasks_root))
+        out = CACHE_DIR / template.name
+        if not out.exists() or out.read_text() != rendered:
+            out.write_text(rendered)
+    return CACHE_DIR
 
 
 def task_manager():
-    return TaskManager(include_path=str(TASK_DIR))
+    return TaskManager(include_path=str(write_task_dir()))
 
 
 def lm_eval_names(tasks):
@@ -27,15 +51,30 @@ def lm_eval_names(tasks):
     return [inv.get(t, t) for t in tasks]
 
 
+def _effective_n(task, limit):
+    """Fallback doc count when lm-eval's result dict doesn't report a per-task n (0.4.2 has no
+    'n-samples' key): the number of docs actually evaluated, i.e. all eval_docs clipped to --limit."""
+    n_docs = len(list(task.eval_docs))
+    return min(limit, n_docs) if limit is not None else n_docs
+
+
 def run(lm, tasks, limit=None):
     t0 = time.time()
-    res = lm_eval.simple_evaluate(model=lm, tasks=lm_eval_names(tasks), num_fewshot=0, limit=limit,
-                                  task_manager=task_manager(), log_samples=False, bootstrap_iters=0)
+    names = lm_eval_names(tasks)
+    tm = task_manager()
+    res = lm_eval.simple_evaluate(model=lm, tasks=names, num_fewshot=0, limit=limit,
+                                  task_manager=tm, log_samples=False, bootstrap_iters=0)
+    task_dict = None
     per_task = {}
     for name, r in res["results"].items():
         std = TASK_NAME_MAP.get(name, name)
-        per_task[std] = {"acc": r.get("acc,none"), "acc_norm": r.get("acc_norm,none"),
-                         "n": res.get("n-samples", {}).get(name, {}).get("effective")}
+        n = res.get("n-samples", {}).get(name, {}).get("effective")
+        if n is None:
+            if task_dict is None:
+                task_dict = lm_eval.tasks.get_task_dict(names, tm)
+            task = task_dict.get(name)
+            n = _effective_n(task, limit) if task is not None else None
+        per_task[std] = {"acc": r.get("acc,none"), "acc_norm": r.get("acc_norm,none"), "n": n}
     return {"tasks": per_task, "results": res["results"], "versions": res.get("versions"), "configs": res.get("configs"),
             "seconds": time.time() - t0}
 
