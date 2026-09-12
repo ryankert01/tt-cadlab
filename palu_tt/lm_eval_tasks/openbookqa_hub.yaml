@@ -1,0 +1,4 @@
+include: /home/user01/tt-cadlab/.claude/worktrees/bright-elm-xum9/.venv/lib/python3.10/site-packages/lm_eval/tasks/openbookqa/openbookqa.yaml
+task: openbookqa_hub
+dataset_path: allenai/openbookqa
+dataset_name: main

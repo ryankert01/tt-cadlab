@@ -107,6 +107,33 @@ decode only), so they are not re-measured; KV bytes and max context are inherite
 its own probe (a `bench_maxctx_*` JSON), in which case that measurement wins. `report.py` reads the
 base row's JSONs for whatever a row does not measure itself.
 
+### Zero-shot task accuracy
+
+`palu_tt/eval_tasks.py` scores five lm-evaluation-harness (0.4.2) tasks — openbookqa, piqa, arc_easy,
+arc_challenge, winogrande — through device prefill: `palu_tt/lm_eval_tt.py`'s `TTLM` adapter tokenises
+each (context, continuation) request, runs the whole sequence through
+`generate.prefill_hidden_states`, and applies the perplexity harness's host RMSNorm + `lm_head` path
+to get the continuation tokens' summed log-probability.
+
+```bash
+scripts/run_device.sh python -m palu_tt.eval_tasks --row baseline --kind stock              # all five tasks
+scripts/run_device.sh python -m palu_tt.eval_tasks --row svd_r64 --kind palu --palu-dir compressed/svd_r64 --tasks arc_easy --limit 40
+```
+
+lm-eval stays at 0.4.2 (the Palu repo imports it); its built-in `openbookqa`, `piqa` and `winogrande`
+task configs point at dataset ids the Hub no longer serves, so `palu_tt/lm_eval_tasks/*_hub.yaml`
+`include:` the installed configs and override `dataset_path`/`dataset_name` to the ids that are
+mirrored (`allenai/openbookqa`, `ybisk/piqa`, `allenai/winogrande`); `eval_tasks.TASK_NAME_MAP` maps
+the override names back to the paper's task names in the output JSON. The datasets need downloading
+once behind the proxy, with the system CA bundle and offline mode off for that one call only:
+
+```bash
+HF_HUB_OFFLINE=0 HF_DATASETS_OFFLINE=0 SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
+  python -c 'from palu_tt import eval_tasks; import lm_eval; lm_eval.tasks.get_task_dict(eval_tasks.lm_eval_names(eval_tasks.TASKS), eval_tasks.task_manager())'
+```
+
+After that, `HF_HUB_OFFLINE=1` (the default) is enough. Writes `docs/results/raw/tasks_<row>.json`.
+
 Each harness writes one JSON to `docs/results/raw/`; `palu_tt.report` reads only those and refuses to
 render when none are present. The samples (`docs/results/raw/samples.json`) come from
 `palu_tt.generate.greedy` driven by a short ad-hoc runner, not a committed script.
@@ -125,13 +152,15 @@ context, one line per row) from those files.
 ```bash
 nice -n 10 pytest tests/test_compress.py tests/test_convert.py tests/test_reference.py \
                   tests/test_report.py tests/test_bench_utils.py tests/test_attention_tag.py \
-                  tests/test_fused.py -q
+                  tests/test_fused.py tests/test_lm_eval_tt.py -q
 scripts/run_device.sh pytest tests/test_attention_device.py tests/test_model_device.py \
                              tests/test_ppl_harness.py tests/test_palu_sdpa_device.py -q
 ```
 
 The first line is CPU-only (`test_fused.py` covers the stage-2 host-side table builders and the
-fp32 torch reference for the op). The four device files — `test_attention_device.py` (attention vs
+fp32 torch reference for the op; `test_lm_eval_tt.py` drives the `lm_eval_tt.TTLM` adapter with a
+toy tokenizer and a deterministic score function, no lm-eval task or device involved). The four
+device files — `test_attention_device.py` (attention vs
 the fp32 CPU reference, prefill and decode, cache-level K/V checks, and fused-vs-naive decode),
 `test_model_device.py` (whole model, identity-vs-stock logits and greedy tokens),
 `test_ppl_harness.py`, and `test_palu_sdpa_device.py` (the fused op against its reference, both

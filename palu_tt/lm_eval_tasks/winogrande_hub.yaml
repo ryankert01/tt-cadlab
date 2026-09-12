@@ -1,0 +1,4 @@
+include: /home/user01/tt-cadlab/.claude/worktrees/bright-elm-xum9/.venv/lib/python3.10/site-packages/lm_eval/tasks/winogrande/default.yaml
+task: winogrande_hub
+dataset_path: allenai/winogrande
+dataset_name: winogrande_xl
