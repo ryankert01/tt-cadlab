@@ -75,17 +75,18 @@ TASK_COLS = ("openbookqa", "piqa", "arc_easy", "arc_challenge", "winogrande")
 TASK_LABELS = {"openbookqa": "OBQA", "piqa": "PIQA", "arc_easy": "ARC-e",
                "arc_challenge": "ARC-c", "winogrande": "WinoGrande"}
 # The paper's reference table (spec Sec 0): Llama-3-8B-Instruct, 50 % compression, lm-eval
-# zero-shot, acc in %. Transcribed verbatim; ``avg5`` is our own addition -- the mean of the five
+# zero-shot, acc in %. Transcribed from the spec's table (tests/test_report.py checks the two agree);
+# ``avg5`` is our own addition -- the mean of the five
 # task columns we also evaluate (HellaSwag dropped), recomputed here rather than transcribed.
 PAPER = {
-    "baseline": {"openbookqa": 43.2, "hellaswag": 75.8, "piqa": 80.7, "arc_easy": 81.6,
-                 "arc_challenge": 52.9, "winogrande": 73.7, "avg6": 67.99},
-    "J-LRD": {"openbookqa": 43.0, "hellaswag": 73.7, "piqa": 78.1, "arc_easy": 79.5,
-              "arc_challenge": 51.8, "winogrande": 71.0, "avg6": 66.19},
-    "G-LRD": {"openbookqa": 42.6, "hellaswag": 70.4, "piqa": 76.1, "arc_easy": 76.3,
-              "arc_challenge": 49.0, "winogrande": 72.4, "avg6": 64.45},
-    "M-LRD": {"openbookqa": 36.2, "hellaswag": 61.6, "piqa": 71.6, "arc_easy": 70.9,
-              "arc_challenge": 41.0, "winogrande": 69.1, "avg6": 58.40},
+    "baseline": {"openbookqa": 43.20, "hellaswag": 75.80, "piqa": 78.62, "arc_easy": 81.61,
+                 "arc_challenge": 56.83, "winogrande": 71.90, "avg6": 67.99},
+    "J-LRD": {"openbookqa": 43.40, "hellaswag": 73.20, "piqa": 76.50, "arc_easy": 79.63,
+              "arc_challenge": 51.96, "winogrande": 72.45, "avg6": 66.19},
+    "G-LRD": {"openbookqa": 42.60, "hellaswag": 70.36, "piqa": 76.06, "arc_easy": 76.30,
+              "arc_challenge": 48.99, "winogrande": 72.38, "avg6": 64.45},
+    "M-LRD": {"openbookqa": 38.80, "hellaswag": 63.04, "piqa": 73.67, "arc_easy": 69.78,
+              "arc_challenge": 42.58, "winogrande": 62.51, "avg6": 58.40},
 }
 PAPER = {
     method: {**entry, "avg5": round(sum(entry[t] for t in TASK_COLS) / len(TASK_COLS), 2)}

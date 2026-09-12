@@ -7,6 +7,7 @@ contexts whose model does not allocate. The rank column has two producers -- our
 and must never fall back to inventing full rank for a dump it cannot read.
 """
 import json
+from pathlib import Path
 
 import pytest
 import torch
@@ -359,3 +360,19 @@ def test_stage2b_accuracy_table_and_paper_block(tmp_path):
     assert "| glrd_50 |" in text and "41.0" in text and " - |" in text          # missing task cells render as dashes
     assert "Paper (Llama-3-8B-Instruct, 50 %)" in text and "64.45" in text      # the reference block
     assert "10.500" in text
+
+
+def test_paper_reference_matches_the_spec_table():
+    """report.PAPER is a transcription of the stage 2b spec's paper table (arXiv 2407.21118 Table 1);
+    the spec is the single source, so the two must agree cell for cell."""
+    from palu_tt import report
+    spec = Path("docs/superpowers/specs/2026-09-12-palu-tt-stage2b-design.md").read_text()
+    labels = {"baseline": "baseline", "J-LRD": "J-LRD", "G-LRD": "G-LRD (gs 4)", "M-LRD": "M-LRD"}
+    cols = ("openbookqa", "hellaswag", "piqa", "arc_easy", "arc_challenge", "winogrande", "avg6")
+    for method, label in labels.items():
+        row = next(line.strip() for line in spec.splitlines() if line.strip().startswith(f"| {label} |"))
+        cells = [c.strip() for c in row.strip("|").split("|")][1:]
+        want = dict(zip(cols, (float(c) for c in cells[:7])))
+        got = {k: report.PAPER[method][k] for k in cols}
+        assert got == want, (method, got, want)
+        assert abs(sum(want[c] for c in cols[:6]) / 6 - want["avg6"]) < 0.01, method
