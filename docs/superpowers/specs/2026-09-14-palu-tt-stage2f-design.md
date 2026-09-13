@@ -75,9 +75,8 @@ them and the other reuses the JSON.
 the cached scale matrices) at uniform ranks `r_k` in {32, 64, 96} x `r_v` in {32, 64, 96, 128}, unit
 scale, in {bfp8, bfp4}: 12 dumps, 24 cells. This is the clean instrument for the K-versus-V question,
 because the existing Fisher dumps confound rank allocation with per-head variation. The stock and
-Grid A points anchor it: uniform (32, 102) in bfp8 should land near `palu_full_50`, and the
-comparison says how much the Fisher allocation is worth (uniform (32, 96) in bfp8 should land near
-`palu_full_50`, whose Fisher ranks average 33 / 102).
+Grid A points anchor it: uniform (32, 96) in bfp8 should land near `palu_full_50`, whose Fisher
+ranks average 33 / 102, and the comparison says how much the Fisher allocation is worth.
 
 **Trigger for a split-budget Fisher search** (a conditional third grid, not run by default): if
 Grid B shows the K-versus-V asymmetry the premise predicts (perplexity more sensitive to `r_v` than
