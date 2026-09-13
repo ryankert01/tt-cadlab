@@ -4,7 +4,7 @@
  "tokens": 81880,
  "windows": 40,
  "seq_len": 2048,
- "row": "palu_full_50_q40",
+ "row": "palu_full_50_w40",
  "kind": "palu",
  "palu_dir": "compressed/palu_full_0.5",
  "latent_dtype": "bfp8",
