@@ -94,7 +94,10 @@ def attention_ctx_figure(out_png):
                 ys.append(_cat_ms(p, "attention") + _cat_ms(p, "k_recon"))
         if xs:
             ax.plot(xs, ys, marker="o", color=ROW_COLOR[r], label=ROW_LABEL[r], linewidth=2)
-            dy = -14 if r.endswith("70") or r.endswith("70_fk2") else 7   # 0.5 above the line, 0.7 below
+            # within each near-coincident pair the upper line labels above and the lower below, so no two
+            # labels (nor stock's, nor the dotted stock-op point) land on the same spot
+            dy = {"baseline": -15, "palu_full_50": 8, "palu_full_70": -15,
+                  "palu_full_50_fk2": -15, "palu_full_70_fk2": 8}[r]
             for x, y in zip(xs, ys):
                 ax.annotate(f"{y:.1f}", (x, y), textcoords="offset points", xytext=(0, dy), fontsize=8,
                             color=ROW_COLOR[r], ha="center")
@@ -103,7 +106,7 @@ def attention_ctx_figure(out_png):
         st4 = _cat_ms(_load("baseline", 4096), "attention")
         ax.plot([4, 8], [st4, stock_8k], color=ROW_COLOR["baseline"], linewidth=1.5, linestyle=":")
         ax.plot([8], [stock_8k], marker="o", markerfacecolor="white", color=ROW_COLOR["baseline"])
-        ax.annotate(f"{stock_8k:.1f}", (8, stock_8k), textcoords="offset points", xytext=(0, 7), fontsize=8,
+        ax.annotate(f"{stock_8k:.1f}", (8, stock_8k), textcoords="offset points", xytext=(0, -15), fontsize=8,
                     color=ROW_COLOR["baseline"], ha="center")
         ax.plot([], [], color=ROW_COLOR["baseline"], linestyle=":", label="stock op at 8k (measured\ninside the naive rows; stock\nitself does not allocate)")
     ax.set_xticks([c // 1024 for c in CONTEXTS])

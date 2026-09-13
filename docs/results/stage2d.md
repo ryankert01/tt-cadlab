@@ -48,14 +48,16 @@ bound on the step. The untraced wall-clock step from the separate, unprofiled `b
 
 Two things follow. First, **the step is device-bound**: at most 3.3 % of it is dispatch bubbles, so
 optimising the ops is the whole game and the untraced-vs-traced question stage 2 left open is worth
-at most ~1.5 ms at 4k. Second, **the profiler is not visibly perturbing the kernels**: a profiled
+at most ~1.5 ms at 4k — for stock and the fused rows; the naive rows' 2.2 % is 5.7 ms (0.5) and
+6.1 ms (0.7) at 4k, because the same relative dispatch overhead rides a step five times as long. Second, **the profiler is not visibly perturbing the kernels**: a profiled
 kernel that ran slow would push the device sum *up*, and the sum comes in consistently *below* an
 independently measured wall clock by a small, stable margin. That is an argument, not a measurement —
 the same model was not benched with and without the profiler.
 
 **A note on precision.** Three steps is enough because the per-op numbers are extremely repeatable
-(the same op signature at the same shape lands within 0.003 ms of itself across rows — e.g. the MLP
-category is 12.322–12.333 ms in all fourteen runs), but it means there is **no run-to-run error bar**
+(the same op signature at the same shape lands within about 0.02 ms of itself across rows — worst
+case 0.0223 ms on the 64-call reduce-scatter; the MLP category is 12.322–12.333 ms in all fourteen
+runs), but it means there is **no run-to-run error bar**
 in this stage. Differences below ~0.05 ms per step should not be read.
 
 **The roofline used below.** Wormhole n300 is 24 GB of GDDR6 at ~576 GB/s across two chips, i.e.
@@ -111,12 +113,18 @@ What those 30 ms are (ratio 0.5 and 0.7 columns are the fused rows), at 4k:
 | layout | 0.372 | 1.489 | 1.472 | 1.043 | 1.037 | shard/reshard/typecast/slice |
 | **total** | **29.93** | **30.75** | **30.55** | **30.63** | **30.20** | |
 
-The Palu rows pay **+1.10 ms of extra `layout`** (0.372 → 1.47 at ratio 0.5) for slicing and
-resharding the two latent caches, get **0.16 ms back on `heads`** (they do not RoPE K in decode mode
-— the K rotation moves either into the reconstruction or into the fused kernel), and land 0.3–0.8 ms
-above stock in total. `ccl` is the only category with real spread (9.31–10.48 ms across all fourteen
-runs, ±6 %); it is a cross-chip synchronisation and picks up whatever skew the rest of the step has,
-which is why the naive 8k rows — where the step is 480 ms long — show its highest values.
+The Palu rows pay **+1.10 ms of extra `layout`** (0.372 → 1.47 at ratio 0.5), and it is not the
+latent caches: two thirds of it is `Pad` (0.520) plus `FillPad` (0.262) on the *attention output*,
+`[1, 32, 16, r_v] → [1, 32, 32, 128]`, i.e. padding the narrow V-absorbed output back to tile width
+before `wo`. Those ops run only on layers whose `r_v` is below 128 — 14 calls each at ratio 0.5
+(0.446 + 0.224 on the twelve `r_v` 64 layers, the rest on the two `r_v` 96 ones) against 7 at
+ratio 0.7, which is exactly why ratio 0.5 carries more `layout` (1.47) than ratio 0.7 (1.04) despite
+storing less. The Palu rows also get **0.16 ms back on `heads`** (they do not RoPE K in decode mode —
+the K rotation moves either into the reconstruction or into the fused kernel), and land 0.3–0.8 ms
+above stock in total. `ccl` is the only category with real spread (9.05–10.48 ms across all fourteen
+runs, ±7.4 % about the mean; 9.31 is only the minimum of the 4k table above); it is a cross-chip
+synchronisation and picks up whatever skew the rest of the step has, which is why the naive 8k rows —
+where the step is 480 ms long — show its highest values.
 
 **Why this part is identical: decode at batch 32 is weight-streaming, and the weights do not change.**
 Every row runs the same 8B-parameter model in bfp8; per chip per step the four matmul categories move
@@ -129,7 +137,8 @@ Every row runs the same 8B-parameter model in bfp8; per chip per step the four m
 | lm_head | 4096 × 64128 → 0.279 GB | 1.090 | 256 GB/s |
 | **all four** | **3.987 GB** | **16.83** | **237 GB/s** |
 
-At 84 % of the n300's ~288 GB/s datasheet bandwidth, these ops are as memory-bound as a decode step
+At 82 % of the n300's ~288 GB/s datasheet bandwidth (the MLP alone is at 84 %), these ops are as
+memory-bound as a decode step
 gets: the batch of 32 tokens is far too small to make them compute-bound, so they cost exactly one
 pass over the weights regardless of what the attention block does. That is the "30 ms floor", and it
 is why **the only lever any KV-compression scheme has on a batch-32 decode step is the attention
@@ -144,13 +153,13 @@ The 243 GB/s the MLP achieves is used as the in-situ roofline for the rest of th
 
 Attention + reconstruction, ms per step (log axis in the figure). Stock does not allocate at 8192 at
 batch 32, but its op is still measured there: the naive rows run **the stock op on the reconstructed
-full-width K**, and its `out`-128 signature costs 1.461 ms per layer at 8k, i.e. **46.8 ms for 32
+full-width K**, and its `out`-128 signature costs 1.4608 ms per layer at 8k, i.e. **46.7 ms for 32
 layers** — a measurement, not an extrapolation (a linear fit through stock's 1k and 4k points
 predicts 47.0, which is the same number). The figure shows this as the dotted extension.
 
 | row | 1k | 4k | 8k | slope, ms per extra 1024 positions |
 |---|---|---|---|---|
-| stock | 7.13 | 24.24 | (46.8, op only) | 5.70 |
+| stock | 7.13 | 24.24 | (46.7, op only) | 5.70 |
 | naive 0.5 | 56.03 | 228.86 | 448.75 | 56.10 |
 | naive 0.7 | 57.23 | 226.08 | 439.76 | 54.65 |
 | fused 0.5 | 11.03 | 32.90 | 62.01 | 7.28 |
@@ -196,15 +205,18 @@ per-layer, per-chip cache bytes the op must read: `32 batch × 4 heads × S × (
 
 (The 4k figures for `r_k` 32 / `r_v` 128 appear in both fused rows — 1.034 ms on 18 layers of ratio
 0.5 and 1.037 ms on 3 layers of ratio 0.7 — and for `r_k` 64 / `r_v` 96 on one layer of each, 1.112
-and 1.108. Reproducibility across independent runs is 0.3 %.)
+and 1.108. Reproducibility across independent runs is 0.4 % (1.0335 vs 1.0374, 1.1122 vs 1.1082).)
 
 **Read the two halves of that table against each other. The stock op is bandwidth-bound and the fused
-op is not.** Every stock variant sits at 74–80 % of the in-situ roofline at 4k and 8k, and its time
-tracks its bytes: dropping `r_v` from 128 to 64 removes 25 % of the bytes and 22 % of the time
-(0.758 → 0.592). Every fused variant sits at 22–42 %, and its time barely tracks its bytes at all:
-at 4k, dropping `r_v` from 128 to 64 removes **40 % of the bytes and 2 % of the time**
-(1.034 → 1.014), and doubling `r_k` from 32 to 64 — which doubles both the latent bytes and the
-reconstruction matmul's inner dimension — costs **7.7 %** (1.034 → 1.114), not 100 %.
+op is not.** Every stock variant sits at 74–80 % of the in-situ roofline at 4k and 8k (61–66 % at 1k,
+where the op is too short to reach it), and its time tracks its bytes: dropping `r_v` from 128 to 64
+removes 25 % of the bytes and 22 % of the time (0.758 → 0.592). Every fused variant sits at 22–42 %,
+and its time barely tracks its bytes at all: at 4k, dropping `r_v` from 128 to 64 removes **40 % of
+the op's cache bytes and 2 % of its time** (89.1 → 53.5 MB, 1.034 → 1.014 ms), and doubling `r_k`
+from 32 to 64 — which doubles the latent bytes and the reconstruction matmul's inner dimension, and
+raises the op's total cache bytes by 20 % (89.1 → 107.0 MB) — costs **7.7 %** (1.034 → 1.114). Read
+the other way: going from (32, 64) to (64, 128) doubles both ranks and raises the bytes by 100 %
+(53.5 → 107.0 MB) for **10 %** more time.
 
 Stage 2 called the kernel "overhead-bound, not bandwidth-bound" from a layer-0 microbench. This
 confirms it on the whole model, and quantifies it: the fused op reads **0.63x** stock's bytes at
@@ -216,7 +228,7 @@ Aggregated over the 32 layers (per-layer ranks in §5), that is:
 |---|---|---|---|---|---|
 | 1024 | 7.13 | 11.03 | 1.55x | 11.62 | 1.63x |
 | 4096 | 24.24 | 32.90 | 1.36x | 34.59 | 1.43x |
-| 8192 | (46.8) | 62.01 | 1.33x | 65.20 | 1.39x |
+| 8192 | (46.7) | 62.01 | 1.33x | 65.20 | 1.39x |
 
 The naive rows' *attention op* is meanwhile **cheaper than stock** — 22.12 vs 24.24 ms at 4k — because
 absorbing V into `wo` narrows the output to `r_v` and the op is bandwidth-bound, so a narrower V is
@@ -232,6 +244,12 @@ directly cheaper. That saving is worth ~2 ms and is bought at the price of the n
 The waterfall says the whole story in one bar: at 4k the naive ratio-0.5 row is stock **+206.7 ms of
 K/V reconstruction**, −2.1 ms of attention op, +1.1 ms of layout, −0.2 ms of heads and −0.1 of CCL; and the
 fused row is the naive row **−206.7 ms of reconstruction, +10.8 ms of attention op**.
+
+Ratio 0.7 (second figure) is the same shape with smaller numbers everywhere but the reconstruction:
+stock 54.2 **+202.4** (reconstruction) **−0.6** (attention op — 0.7's mix of `r_v` 96/128 gives back
+less than 0.5's `r_v` 64 layers do) **+0.7** (layout, fewer narrow-`r_v` layers to pad than 0.5's
++1.1) **−0.2** (heads) **+0.2** (CCL) = 256.7; then **−202.4** (reconstruction) **+10.9** (attention
+op) **−0.4** (CCL) = 64.8. The two ratios differ by less than 3 ms at every point of the bridge.
 
 Per decode step the naive path runs three op signatures per layer, on the full-width K it has to
 materialise. At ratio 0.5, 4k:
@@ -252,20 +270,23 @@ and the same three at the other contexts (ratio 0.5, ms per step):
 | 4096 | 91.17 | 79.77 | 32.77 | 3.03 | 206.74 | 6.461 ms | 1577 ns |
 | 8192 | 175.36 | 159.38 | 65.89 | 5.71 | 406.34 | 12.698 ms | 1550 ns |
 
-Ratio 0.7 (31 reconstructed layers; layer 31 has `r_k` 128 and needs none): 19.24 + 17.62 + 8.15 +
-5.26 = 50.28 at 1k, 77.27 + 69.75 + 31.83 + 23.54 = 202.40 at 4k, 154.62 + 131.05 + 63.37 + 45.18 =
-394.22 at 8k.
+Ratio 0.7 has 31 reconstructed layers (layer 31 has `r_k` 128 and needs none) and its matmuls split
+between the two ranks, so its terms come in a different order — RoPE + `r_k` 64 matmuls (×23) +
+typecast + `r_k` 32 matmuls (×8): 19.24 + 17.62 + 8.15 + 5.26 = 50.28 at 1k, 77.27 + 69.75 + 31.83 +
+23.54 = 202.40 at 4k, 154.62 + 131.05 + 63.37 + 45.18 = 394.22 at 8k.
 
-**Everything is linear in S**, to 4 %: the per-position-per-layer cost is 1509 / 1577 / 1550 ns at
+**Everything is linear in S**, to 4.5 %: the per-position-per-layer cost is 1509 / 1577 / 1550 ns at
 1k / 4k / 8k, and a straight line through the 1k and 8k step totals has an intercept of −1.5 ms, i.e.
 essentially zero. That is the defining property of the naive path: it re-materialises the **entire**
 `[32, 4, S, 128]` K tensor for **every layer** on **every decode step**, to serve one new query row.
 At 4k that is 128 MiB of bf16 K per layer, written by the matmul, read and rewritten by the RoPE, read
-and rewritten (narrower) by the typecast, and finally read by the attention op — **20.1 GB of DRAM
-traffic per chip per step**, against the 4.0 GB the entire model's weights need. The reconstruction
-moves five times the model.
+and rewritten (narrower) by the typecast — **20.1 GB of DRAM traffic per chip per step** before the
+attention op has read anything, and the attention op then reads a further ~4.1 GB of it. Against the
+4.0 GB the entire model's weights need, the reconstruction alone moves five times the model.
 
-**Is it bandwidth-bound? Only one third of it is.** Against the 243 GB/s in-situ roofline:
+**Is it bandwidth-bound? Only the cheapest third of the bytes are.** The typecast is 33 % of the
+reconstruction's bytes but only 16 % of its time; the other two ops move more and take longer per
+byte. Against the 243 GB/s in-situ roofline:
 
 - the **typecast** is, at 201 GB/s (83 %). It is a pure streaming op and there is nothing to fix
   about it except not needing it.
@@ -277,7 +298,7 @@ moves five times the model.
   1.46 TFLOP/s for 4.29 GFLOP in 2.941 ms. It is a matmul with an inner dimension of **one 32-row
   tile** (`r_k` = 32) producing four output tiles per row block, so almost all of its time is
   per-output-tile unpack/pack and CB synchronisation rather than MACs. The direct evidence is that
-  **doubling `r_k` to 64 costs 3.1 %** (2.941 → 3.033 ms per layer): the inner dimension doubled and
+  **doubling `r_k` to 64 costs 3.0 %** (2.941 → 3.031 ms per layer): the inner dimension doubled and
   nothing happened, exactly as in the fused kernel (§4). Both paths are limited by the same thing —
   the cost of touching each output tile of a 128-wide K — and neither is limited by the rank.
 
@@ -304,23 +325,27 @@ nearly collinear points, so the fit is tight:
 
 | signature | fixed per layer | per chunk per layer | per head-item per chunk |
 |---|---|---|---|
-| stock, `r_v` 128 | 47.9 µs | 88.4 µs | 44.2 µs |
-| fused, `r_k` 32 / `r_v` 64 | 115.5 µs | 112.3 µs | 56.2 µs |
-| fused, `r_k` 32 / `r_v` 128 | 118.0 µs | 114.3 µs | 57.1 µs |
-| fused, `r_k` 64 / `r_v` 128 | 129.7 µs | 123.1 µs | 61.6 µs |
+| stock, `r_v` 128 | 47.7 µs | 88.4 µs | 44.2 µs |
+| fused, `r_k` 32 / `r_v` 64 | 115.9 µs | 112.2 µs | 56.1 µs |
+| fused, `r_k` 32 / `r_v` 128 | 118.1 µs | 114.3 µs | 57.2 µs |
+| fused, `r_k` 64 / `r_v` 128 | 129.5 µs | 123.1 µs | 61.6 µs |
 
-So the fused op's excess over stock decomposes into **~70 µs per layer of fixed cost** and
+Two significant figures is all these deserve: an intercept extrapolated from x = 2 / 8 / 16 carries
+roughly ±3 µs given the ~1 % per-op repeatability, so "70 µs of excess fixed cost" below means
+60–80 µs. So the fused op's excess over stock decomposes into **60–80 µs per layer of fixed cost**
+and
 **~26 µs per layer per chunk** (12.9 µs per head-item per chunk). The excess per chunk is therefore
 *not* constant when you divide the raw totals by chunk count — it falls from 61.5 µs at 1k to 34.5 at
 4k to 30.4 at 8k — precisely because part of it is fixed and part is per-chunk. The per-chunk part is
 what stops the ratio improving further with context, and the fixed part is why 1k is the worst case.
 
 A chunk of 512 positions is **16 K row tiles**, and per row tile the kernel (spec §4) does: one
-`AB = lat @ [u_k | u_k·T]` matmul (inner dim `r_k`/32 tiles, 8 output tiles); then, for each of the 4
-column tiles, a separate `tile_regs_acquire`/`commit`/`wait`/`release` round trip containing two FPU
-`mul_tiles` and one SFPU `add_binary_tile`; plus `matmul_block_init`, `mul_init`,
-`add_binary_tile_init` and two `reconfig_data_format` calls **per row tile**. Charging the marginal
-excess to those row tiles:
+`AB = lat @ [u_k | u_k·T]` matmul (inner dim `r_k`/32 tiles, 8 output tiles), itself two more
+`tile_regs_acquire`/`release` pairs; then, for each of the 4 column tiles, a separate
+`tile_regs_acquire`/`commit`/`wait`/`release` round trip containing two FPU `mul_tiles` and one SFPU
+`add_binary_tile` — **six DST round trips per row tile in total**; plus `matmul_block_init`,
+`mul_init`, `add_binary_tile_init`, two `reconfig_data_format` and two `pack_reconfig_data_format`
+calls **per row tile**. Charging the marginal excess to those row tiles:
 
 | what | per head-item per chunk | per K row tile |
 |---|---|---|
@@ -331,18 +356,20 @@ excess to those row tiles:
 **The matmul is not the problem.** Adding a second inner tile to the `AB` matmul — a 100 % increase in
 its work and in the latent bytes read — costs 275 ns per row tile, about a third of the total 807 ns
 excess. The other two thirds are spent on work that happens once per row tile *regardless of rank*:
-the four DST round trips, the twelve elementwise tile ops, and the re-executed inits. That is exactly
+the six DST round trips, the twelve elementwise tile ops, and the re-executed inits. That is exactly
 the set of things stage 2 §4 listed as untried levers, and this profile is the evidence for them:
 
-- **DST round trips.** Four `tile_regs_acquire`/`release` pairs per row tile where two `j` values fit
-  in one acquisition at `dst_size = 4`, i.e. two round trips would do. Each round trip is a full
-  three-thread sync.
+- **DST round trips.** Six `tile_regs_acquire`/`release` pairs per row tile — two for the `AB`
+  matmul and one per column tile `j` — where two `j` values fit in one acquisition at `dst_size = 4`,
+  i.e. four would do. Each round trip is a full three-thread sync.
 - **Per-row-tile inits.** `matmul_block_init` / `mul_init` / `add_binary_tile_init` are re-run on
-  every one of the 16 row tiles per chunk; only the two `reconfig_data_format` calls genuinely have
-  to be per tile.
+  every one of the 16 row tiles per chunk; only the two `reconfig_data_format` and two
+  `pack_reconfig_data_format` calls genuinely have to be per tile.
 - **Half-tile Q.** `use_half_tile` is forced off in the copied op, so the Q side does full 32-row tile
-  math for 16 query heads per chip. This lands mostly in the **fixed** 70 µs per layer, which is the
-  part that dominates at 1k — and 1k is where the fused op is worst (1.55x).
+  math for 16 query heads per chip. *Inference, not measurement*: Q-side work is per call rather than
+  per chunk, so it should land in the **fixed** 60–80 µs per layer, which is the part that dominates
+  at 1k — and 1k is where the fused op is worst (1.55x). The profile cannot separate it from the
+  other per-call costs.
 - **SFPU add.** One SFPU `add_binary_tile` per (row tile, column tile) — 64 per chunk — where the
   FPU could accumulate the two products.
 
@@ -353,20 +380,30 @@ the set of things stage 2 §4 listed as untried levers, and this profile is the 
 | fused per layer (`r_k` 32 / `r_v` 128) | 0.346 | 1.034 | 1.947 |
 | stock per layer | 0.223 | 0.758 | 1.461 |
 | **fused must lose** | **36 %** | **27 %** | **25 %** |
-| whole-step: fused attention must fall from → to | 11.03 → 6.48 (−41 %) | 32.90 → 23.62 (−28 %) | – |
+| whole-step: fused attention must fall from → to | 11.03 → 6.48 (−41 %) | 32.90 → 23.63 (−28 %) | – |
 
-(The whole-step target is larger than the per-op target because the fused rows also carry ~0.6 ms of
-extra `layout`; a step matching stock's 54.17 ms at 4k needs its attention block at 23.62 ms, not at
+(The whole-step target is larger than the per-op target because the fused rows also carry a net
+0.6 ms of non-attention excess — `layout` +1.10, partly offset by cheaper `heads`, `ccl`, `norm` and
+`cache`; a step matching stock's 54.17 ms at 4k needs its attention block at 23.63 ms, not at
 stock's 24.24.)
 
-Is 26 % reachable from the levers above? The marginal excess is 807 ns per row tile. Halving the DST
-round trips (4 → 2) plausibly removes on the order of 200–400 ns of sync per row tile, and hoisting
+Is 27 % reachable from the levers above? The marginal excess is 807 ns per row tile. Cutting the DST
+round trips a third (6 → 4) plausibly removes on the order of 150–350 ns of sync per row tile, and hoisting
 the three inits out of the row-tile loop removes a smaller fixed block; together those are the right
 order of magnitude for the per-chunk part of the gap, and `use_half_tile` attacks the fixed part that
 dominates at 1k. **That is a plausibility argument from op counts, not a measurement** — none of the
 four levers has been tried, and stage 2 did not try them either. What this profile does settle is
 that they are the *right* things to try: there is no DRAM traffic left to remove, and the rank is
 nearly free.
+
+**One qualification on the byte model.** The MB figures in §2 count only the K and V caches; the fused
+op also reads its own weights and tables, which stock does not have. The largest is the Phase 2
+chunk-relative `[cos | sin]` table, 512 × 256 bf16 per core resident in `c_13` — **about 17 MB per
+call** across 64 cores, ~19 % on top of the 89.1 MB of cache at `r_k` 32 / `r_v` 128 and 4k (`w_rot`
+adds ~2 MB, `trans_mat` 0.13 MB). Counting it moves that point from 35 % to about 42 % of the
+in-situ roofline. It does not change the conclusion — 42 % is still half of stock's 77 %, and the
+table is read once per core per call, so it cannot explain a *per-chunk* cost — but the fused op's
+"% of roofline" figures in §2 are lower bounds by roughly that much.
 
 ---
 
@@ -412,13 +449,24 @@ The naive rows invert the ordering — 259.61 (0.5) vs 256.72 (0.7) at 4k, i.e. 
 one matmul, one RoPE and one typecast (6.46 ms at 4k), which more than covers the 3 % the wider
 latents add to the remaining 31 matmuls.
 
+**An implication for stage 3's calibration.** On the fused path the two ranks are priced very
+differently: at 4k, widening `r_v` from 64 to 128 costs **2 %** of the op (1.014 → 1.034) while
+widening `r_k` from 32 to 64 costs **8 %** (1.034 → 1.114), because `r_k` is the only one that feeds
+the per-row-tile reconstruction. A calibration that spent its bit budget on `r_v` and pinned `r_k` at
+32 would therefore buy back most of ratio 0.7's quality (ppl 9.03 vs 12.93 at ratio 0.5) at close to
+ratio 0.5's speed. The (32, 128) vs (64, 128) pair supports this directly: same output width, same
+V bytes, 1.034 vs 1.114 ms — and ratio 0.7 has 23 layers on the expensive side of it. This is a
+hypothesis the profile motivates, not a result: nothing here measures the quality of an
+`r_k`-pinned recipe.
+
 ---
 
 ## 6. The three questions
 
 **Why is naive Palu 2–5x slower than stock?** Because it rebuilds the entire K cache from its latents
-on every decode step, in three separate full-width passes, and pays 3–13x the cost of the attention
-op it is feeding. At 4k that is a `latent @ U` matmul (91.2 ms), a prefill-mode RoPE over the rebuilt
+on every decode step, in three separate full-width passes, and pays **7.2–9.6x** the cost of the
+attention op it is feeding (7.51 / 9.35 / 9.58 at ratio 0.5 and 7.23 / 8.55 / 8.66 at ratio 0.7, at
+1k / 4k / 8k). At 4k that is a `latent @ U` matmul (91.2 ms), a prefill-mode RoPE over the rebuilt
 K (79.8 ms) and a typecast back to bfp8 (32.8 ms) — **206.7 ms against stock's whole 54.2 ms step** —
 because every one of those ops materialises the full `[32, 4, 4096, 128]` bf16 K for each of 32
 layers, 20.1 GB of DRAM traffic per chip per step against the 4.0 GB the model's weights need. All
@@ -431,18 +479,20 @@ help — ratio 0.5 and ratio 0.7 reconstruct at the same speed.
 the attention op that replaced it is overhead-bound, not bandwidth-bound, and costs 1.33–1.55x the
 stock op per layer even while reading 0.63x the bytes. The whole difference between the fused rows and
 stock is the attention op: 30 ms of weight streaming, CCL and norms is identical in every row, and the
-fused rows sit 30.55 − 29.93 = 0.6 ms above stock outside attention (+1.10 ms of latent-cache
-layout, partly offset by cheaper decode-mode `heads` and CCL). The op's cost is dominated by
-per-K-row-tile work inside the reconstruct-and-rotate pass — four DST round trips, twelve elementwise
-tile ops and three re-executed inits for every 32 positions of every chunk — plus a fixed ~70 µs per
-layer of Q-side full-tile math. The proof that it is overhead and not data movement is that doubling
-`r_v` (40 % more bytes) costs 2 % and doubling `r_k` (which doubles both the latent bytes and the
-reconstruction matmul's inner dimension) costs 8 %; the stock op, by contrast, tracks its bytes almost
-exactly and runs at 74–80 % of the achievable DRAM bandwidth.
+fused rows sit 30.55 − 29.93 = 0.6 ms above stock outside attention (`layout` +1.10 for padding the
+narrow attention output, partly offset by cheaper decode-mode `heads`, CCL, `norm` and `cache`). The
+op's cost is dominated by per-K-row-tile work inside the reconstruct-and-rotate pass — six DST round
+trips, twelve elementwise tile ops and three re-executed inits for every 32 positions of every chunk —
+plus 60–80 µs per layer of fixed cost that includes the Q-side full-tile math. The proof that it is
+overhead and not data movement is that **removing 40 % of the op's cache bytes (`r_v` 128 → 64) saves
+2 % of its time**, and doubling `r_k` — which doubles the latent bytes and the reconstruction
+matmul's inner dimension — costs 8 %; the stock op, by contrast, tracks its bytes almost exactly and
+runs at 74–80 % of the achievable DRAM bandwidth at 4k and 8k (61–66 % at 1k, where it is too short
+to reach it).
 
 **Why does context change the ratio?** Because the fused op's excess over stock has a large fixed
-component, and context dilutes it. Per layer, stock costs 47.9 µs + 88.4 µs per 512-position chunk and
-the fused op costs 118.0 + 114.3; the fixed part is 2.5x stock's and the marginal part only 1.29x. At
+component, and context dilutes it. Per layer, stock costs 47.7 µs + 88.4 µs per 512-position chunk and
+the fused op costs 118.1 + 114.3; the fixed part is 2.5x stock's and the marginal part only 1.29x. At
 1k there are 2 chunks, so the fixed part is a third of the op and the ratio is 1.55x; at 8k there are
 16 chunks, the fixed part is 6 % of the op, and the ratio falls to 1.33x. The whole-step ratio moves
 the other way for a different reason — the constant 30 ms of weight streaming is a shrinking fraction
@@ -462,8 +512,12 @@ so it goes from 2.3x stock at 1k to 4.8x at 4k, and the fused kernel's advantage
   bounds the perturbation loosely, but the same model was never benched with and without the profiler,
   so there is no direct measurement of the profiler's cost.
 - **Three profiled steps, no error bar.** Repeatability across rows for identical op signatures is
-  0.3 % or better and the two chips agree to 0.034 %, but nothing here has a run-to-run spread. Read
-  no difference smaller than ~0.05 ms per step.
+  at most 1 % for the compute ops (worst: 0.9 % on `SdpaDecode`, 0.7 % on the typecast, 0.3 % on the
+  reconstruction matmul), and the two chips agree to 0.034 %. Two ops are much noisier and neither
+  matters to a conclusion here: the 64-call reduce-scatter varies **21 %** per call (0.0223 ms, and
+  it is why the `ccl` category moves ±7.4 %) and the lm_head untilize **9 %** (0.0093 ms). Nothing
+  here has a run-to-run spread from repeated runs of the *same* row. Read no difference smaller than
+  ~0.05 ms per step.
 - **Batch 32 only, and one position.** Every profile is batch 32 decoding at the last position of the
   context. The 30 ms weight-streaming floor is a batch-32 statement: at batch 1 the same weights are
   streamed for one token and the attention block is negligible, which is why stage 2 §5 found the
@@ -476,10 +530,12 @@ so it goes from 2.3x stock at 1k to 4.8x at 4k, and the fused kernel's advantage
   fused 0.7).
 - **Stock has no 8192 row** — it does not allocate at batch 32. Its op cost at 8k is taken from the
   identical `SdpaDecode` `out`-128 signature that the naive rows run there (1.461 ms per layer);
-  a whole stock 8k *step* is not measured and the 46.8 ms figure is 32 × that per-layer cost, not a
+  a whole stock 8k *step* is not measured and the 46.7 ms figure is 32 × that per-layer cost, not a
   step.
 - **The core-assignment arithmetic** (2 head-items per core, 64 cores, no context split) is derived
-  from `sdpa_decode_program_factory.cpp` for `B` = 32, `num_kv_heads` = 4 on a 64-core grid, and from
+  from the core-allocation block of `palu_sdpa_decode_program_factory.cpp` (:210-269; the stock
+  `sdpa_decode_program_factory.cpp` has the identical rule) for `B` = 32, `num_kv_heads` = 4 on a
+  64-core grid with group mode off (`heads_per_group` = 1 for a per-head SVD dump), and from
   the `CORE COUNT` = 64 column in the CSVs; it was not confirmed against a runtime dump of the
   per-core work assignment. The per-chunk and per-row-tile figures in §4 depend on it.
 - **The DRAM roofline is in-situ.** 243 GB/s is what the MLP matmuls achieve in these profiles, and
@@ -488,7 +544,9 @@ so it goes from 2.3x stock at 1k to 4.8x at 4k, and the fused kernel's advantage
 - **Bytes are computed, not counted.** Every MB figure in §2 and §3 is `elements × bytes/element` from
   the op's own input/output shapes and the known dtypes (bfp8_b at 1.0625 B/element, bf16 at 2), not a
   DRAM traffic counter. It ignores L1 reuse and any read amplification, so the achieved-GB/s columns
-  are lower bounds on the true traffic rate.
+  are lower bounds on the true traffic rate. For the **fused** op it also counts only the K and V
+  caches and omits the op's own weight and table reads — chiefly the Phase 2 `[cos | sin]` table,
+  ~17 MB per call, ~19 % on top of the cache bytes at `r_k` 32 / 4k (§4).
 - **`use_qk_fused=False` and the stock HiFi2 / fp32-dest compute config** everywhere, as in stage 2.
 - **Provenance.** All fourteen profiles were taken on 2026-09-13 between 15:47 and 16:01, sequentially,
   one process at a time, on an idle host gated by `scripts/device_free.sh`.
