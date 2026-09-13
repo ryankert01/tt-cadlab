@@ -1166,16 +1166,17 @@ BPE = {"bfp8": 1.0625, "bfp4": 0.5625}  # bytes per tile element (spec sec 2)
 STOCK_BYTES_LAYER_CHIP = 4 * (HEAD_DIM * BPE["bfp8"] + HEAD_DIM * BPE["bfp8"])  # 1088 B, r_k=r_v=128 bfp8
 
 
-def _dump_ranks(raw, dump, ranks):
+def _dump_ranks(dump, ranks):
     """(mean r_k, mean r_v) for a dump: the caller's override, else derived from the dump itself.
 
     ``baseline`` is full rank by construction; a ``uni_rk<K>_rv<V>`` dump's ranks are in its own name;
     every other dump is a Palu/G-LRD recipe whose per-layer ranks are read the same way ``_ranks``
     reads them for stage 1/2/2b/2c -- via ``convert.load_palu_dir`` against its ``config.json``,
     since a calibrated dump's per-head ranks are not uniform and only that reader gives the exact
-    per-layer allocation the device builds caches for. ``raw`` is unused (every dump's rank source is
-    either the caller's override, the row name, or a fixed path under ``compressed/``) but kept in
-    the signature to match ``frontier_rows``' call site and a future per-raw-dir override.
+    per-layer allocation the device builds caches for. Every one of these rank sources is either the
+    caller's override, the row name, or a fixed path under ``compressed/`` -- never anything read
+    from a raw results dir -- so, unlike ``frontier_rows``' other per-row helpers, this one takes no
+    ``raw`` parameter.
     """
     if dump in ranks:
         return ranks[dump]
@@ -1252,7 +1253,7 @@ def frontier_rows(raw, ranks=None):
         k_fmt = "bfp4" if (fmt in ("_lk4", "_l4") or (stock and m.group("kv4"))) else "bfp8"
         v_fmt = "bfp4" if (fmt in ("_lv4", "_l4") or (stock and m.group("kv4"))) else "bfp8"
         scale = "unit" if m.group("u") else "balanced"
-        r_k, r_v = _dump_ranks(raw, dump, ranks)
+        r_k, r_v = _dump_ranks(dump, ranks)
         bytes_lc = 4 * (r_k * BPE[k_fmt] + r_v * BPE[v_fmt])
         d = json.loads(p.read_text())
         _check_row_fields(row, d, stock, k_fmt, v_fmt, scale)

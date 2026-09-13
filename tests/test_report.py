@@ -703,6 +703,13 @@ def test_frontier_rows_warns_when_a_rows_own_fields_disagree_with_its_name(tmp_p
     with pytest.warns(UserWarning):
         report.frontier_rows(raw)
 
+    # latent_scale alone, with the two dtype fields absent entirely -- isolates the latent_scale
+    # check from the k_latent_dtype/v_latent_dtype ones above (a "_u" row whose own JSON says its
+    # latent was "balanced" is exactly the kind of disagreement that must not pass silently).
+    (raw / "ppl_uni_rk64_rv32_u.json").write_text('{"ppl": 8.0, "windows": 141, "latent_scale": "balanced"}')
+    with pytest.warns(UserWarning):
+        report.frontier_rows(raw, ranks={"uni_rk64_rv32": (64, 32)})
+
     # A row whose fields agree with its name must not warn.
     raw2 = tmp_path / "agree"
     raw2.mkdir()
@@ -712,3 +719,85 @@ def test_frontier_rows_warns_when_a_rows_own_fields_disagree_with_its_name(tmp_p
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         report.frontier_rows(raw2, ranks={"palu_full_70": (58, 121)})
+
+
+def test_stage2f_lines_renders_from_a_fixture_raw_dir(tmp_path):
+    """Full render of stage 2f's own table, through ``report.main(..., stage="2f")`` -- not just
+    ``frontier_rows`` (the data layer). ``uni_rk64_rv32`` is used for the compressed-dump rows
+    instead of a real ``palu_full_*``/``glrd_*`` name specifically so this stays a synthetic,
+    tmp_path-only fixture: its ranks parse straight out of the row name (``_dump_ranks``'s
+    ``uni_`` branch), so nothing here reads a real ``compressed/*`` dump."""
+    from palu_tt import report
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    _write(raw, "ppl_baseline", {"ppl": 7.254, "windows": 141})
+    _write(raw, "ppl_baseline_kv4", {"ppl": 7.9, "windows": 141})
+    _write(raw, "ppl_uni_rk64_rv32_w40", {"ppl": 10.5, "windows": 40})   # faithful, bfp8/bfp8
+    _write(raw, "ppl_uni_rk64_rv32_l4", {"ppl": 10.5, "windows": 141, "latent_quant_in_prefill": False,
+                                         "note": "prefill-blind"})       # blind, bfp4/bfp4
+    out = tmp_path / "stage2f.md"
+
+    text = report.main(raw=raw, out=out, rows=report.ROWS2F, stage="2f")
+
+    assert out.read_text() == text
+    assert "# Stage 2f results: the rank/format frontier" in text
+    assert ("| row | dump | r_k | r_v | K fmt | V fmt | scale | B/token/layer/chip | KB/token (model) | "
+            "reduction | ppl (windows) | avg5 | decode 4k ms | max ctx |") in text
+
+    # Byte cells: stock bfp8 (1088 B / 68.00 KB, reduction 1.00x) and bfp4 (576 B / 36.00 KB, 1.89x),
+    # and the uniform-rank row's own bfp8/bfp4 byte pair (408 B / 216 B at r_k=64, r_v=32).
+    assert "| baseline | baseline | 128 | 128 | bfp8 | bfp8 | balanced | 1088.0 | 68.00 | 1.00x | " \
+           "7.254 (141) | - | - | - |" in text
+    assert "| baseline_kv4 | baseline | 128 | 128 | bfp4 | bfp4 | balanced | 576.0 | 36.00 | 1.89x | " \
+           "7.900 (141) | - | - | - |" in text
+    assert "| uni_rk64_rv32_w40 | uni_rk64_rv32 | 64 | 32 | bfp8 | bfp8 | balanced | 408.0 | 25.50 | " \
+           "2.67x | 10.500 (40) | - | - | - |" in text
+
+    # "blind" rendering: the ppl cell is the word "blind", not a number, even though this row's own
+    # JSON carries a perfectly parseable "ppl" field.
+    assert "| uni_rk64_rv32_l4 | uni_rk64_rv32 | 64 | 32 | bfp4 | bfp4 | balanced | 216.0 | 13.50 | " \
+           "5.04x | blind (141) | - | - | - |" in text
+    assert "10.500 (141)" not in text   # the blind row's own ppl value must never surface as a number
+
+    # The footnote appears (only) because a blind row is present.
+    assert "measured before the cache-faithful prefill" in text
+    assert "not evidence about that format" in text
+
+
+def test_stage2f_lines_empty_raw_dir_renders_the_fallback_row(tmp_path):
+    """An almost-empty raw dir (the normal state for most of stage 2f's grid) must render the table
+    skeleton plus an explicit fallback row, never refuse like the fixed-row stages do."""
+    from palu_tt import report
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    out = tmp_path / "stage2f.md"
+
+    text = report.main(raw=raw, out=out, rows=report.ROWS2F, stage="2f")
+
+    assert out.read_text() == text
+    assert "| (no stage 2f rows measured yet) |" in text
+    assert "measured before the cache-faithful prefill" not in text   # no blind row -> no footnote
+
+
+def test_frontier_rows_blind_fallback_when_field_is_absent_reaches_the_table(tmp_path):
+    """The pre-2f fallback rule (no ``latent_quant_in_prefill`` field at all): a suffix-less bfp8 row
+    is trusted as faithful, but a ``_l4``-suffixed row with the field simply missing (not even
+    ``false``) is NOT trusted -- it predates both the cache-faithful-prefill fix and the record of
+    whether it was in effect. Checked at both the data layer (``frontier_rows``' ``blind`` flag) and
+    the render layer (the table renders "blind", not the row's own numeric ``ppl``)."""
+    from palu_tt import report
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    _write(raw, "ppl_uni_rk64_rv32", {"ppl": 8.5, "windows": 141})           # no field, no suffix
+    _write(raw, "ppl_uni_rk64_rv32_l4", {"ppl": 8.5, "windows": 141})        # no field, "_l4" suffix
+
+    rows = {r["row"]: r for r in report.frontier_rows(raw, ranks={"uni_rk64_rv32": (64, 32)})}
+    assert rows["uni_rk64_rv32"]["blind"] is False
+    assert rows["uni_rk64_rv32_l4"]["blind"] is True
+
+    out = tmp_path / "stage2f.md"
+    text = report.main(raw=raw, out=out, rows=report.ROWS2F, stage="2f")
+    assert "| uni_rk64_rv32 | uni_rk64_rv32 | 64 | 32 | bfp8 | bfp8 | balanced | 408.0 | 25.50 | " \
+           "2.67x | 8.500 (141) | - | - | - |" in text
+    assert "| uni_rk64_rv32_l4 | uni_rk64_rv32 | 64 | 32 | bfp4 | bfp4 | balanced | 216.0 | 13.50 | " \
+           "5.04x | blind (141) | - | - | - |" in text

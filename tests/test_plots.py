@@ -149,3 +149,29 @@ def test_frontier_figure_skips_prefill_blind_rows(tmp_path, monkeypatch):
     rows = {r["row"]: r for r in report.frontier_rows(tmp_path, ranks={"palu_full_50": (33, 102)})}
     assert round(rows["palu_full_50"]["kb_token"], 3) in plotted_x
     assert round(rows["palu_full_50_l4"]["kb_token"], 3) not in plotted_x
+
+
+def test_frontier_figure_skips_a_blind_row_with_no_field_at_all(tmp_path, monkeypatch):
+    """The pre-2f fallback (no ``latent_quant_in_prefill`` field at all): a suffix-less bfp8 row is
+    plotted as faithful, but a ``_l4``-suffixed row with the field simply missing is excluded from
+    the figure exactly like one explicitly marked ``false`` -- ``uni_rk64_rv32`` needs no rank
+    override lookup against a real dump, so this stays a synthetic fixture."""
+    from palu_tt import plots, report
+
+    (tmp_path / "ppl_uni_rk64_rv32.json").write_text('{"ppl": 8.5, "windows": 141}')
+    (tmp_path / "ppl_uni_rk64_rv32_l4.json").write_text('{"ppl": 8.5, "windows": 141}')
+    out = tmp_path / "frontier.png"
+
+    captured = {}
+    real_close = plots.plt.close
+    monkeypatch.setattr(plots.plt, "close", lambda fig: (captured.setdefault("fig", fig), real_close(fig)))
+
+    plots.frontier_figure(tmp_path, out, ranks={"uni_rk64_rv32": (64, 32)})
+
+    assert out.exists()
+    ax = captured["fig"].axes[0]
+    plotted_x = {round(pt[0], 3) for coll in ax.collections for pt in coll.get_offsets()}
+    rows = {r["row"]: r for r in report.frontier_rows(tmp_path, ranks={"uni_rk64_rv32": (64, 32)})}
+    assert rows["uni_rk64_rv32"]["blind"] is False and rows["uni_rk64_rv32_l4"]["blind"] is True
+    assert round(rows["uni_rk64_rv32"]["kb_token"], 3) in plotted_x
+    assert round(rows["uni_rk64_rv32_l4"]["kb_token"], 3) not in plotted_x
