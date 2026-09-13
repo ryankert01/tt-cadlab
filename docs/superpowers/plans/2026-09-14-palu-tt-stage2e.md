@@ -267,13 +267,13 @@ ROT_MODES = ["legacy", "pack", "dst"]
 @pytest.mark.parametrize("r_k", [32, 64, 96])
 @pytest.mark.parametrize("batch", [1, 32])
 def test_phase2_matches_reference_default_chunk(mesh_device, r_k, batch, rot_mode):
-    _check(mesh_device, batch, 1024, r_k, 128, k_chunk=0, phase2=True, rot_mode=rot_mode)
+    _check(mesh_device, batch, 1024, r_k, 64, k_chunk=0, phase2=True, rot_mode=rot_mode)
 
 
 @pytest.mark.parametrize("rot_mode", ROT_MODES)
 @pytest.mark.parametrize("S", [4096, 8192])
 def test_phase2_long_context(mesh_device, S, rot_mode):
-    _check(mesh_device, 1, S, 64, 128, k_chunk=0, phase2=True, rot_mode=rot_mode)
+    _check(mesh_device, 1, S, 64, 64, k_chunk=0, phase2=True, rot_mode=rot_mode)
 
 
 @pytest.mark.parametrize("rot_mode", ["pack", "dst"])
@@ -288,7 +288,7 @@ def test_rot_mode_tracks_legacy_closely(mesh_device, rot_mode):
         assert ok, f"r_k={r_k} {rot_mode} vs legacy: {msg}"
 ```
 
-(keep the original bodies of the two replaced tests: `_check(..., k_chunk=0, phase2=True)` for the default-chunk test at `r_v` 128 and `S` 1024, and `_check(mesh_device, 1, S, 64, 128, ...)` for long context; only the parametrisation is new.) The `dst` cases fail until Task 3; run with `-k "pack"` for now.
+(keep the original bodies of the two replaced tests, which use `r_v` 64: `r_v` 128 at the op's default chunk does not fit L1 at batch 1 and `r_k` >= 64; only the parametrisation is new.) The `dst` cases fail until Task 3; run with `-k "pack"` for now.
 
 Run: `scripts/run_device.sh python -m pytest tests/test_palu_sdpa_device.py -q -k "pack and (default_chunk or tracks_legacy)"`
 Expected: FAIL (mode 1 not implemented: the kernel ignores the define, so `tracks_legacy` passes trivially but the reference test with `rot_mode="pack"` must fail once the `#if` branch exists; write the branch, then confirm the tests pass).
