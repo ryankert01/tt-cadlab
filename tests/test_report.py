@@ -721,6 +721,96 @@ def test_frontier_rows_warns_when_a_rows_own_fields_disagree_with_its_name(tmp_p
         report.frontier_rows(raw2, ranks={"palu_full_70": (58, 121)})
 
 
+def test_config_groups_per_layer_reads_the_group_count_not_the_head_count(tmp_path):
+    """``_config_groups_per_layer`` must read the length of ``head_wise_ranks``'s own per-layer
+    lists -- one entry per *group* -- not ``num_key_value_heads`` (the real per-head count, which a
+    group-shared dump's config still carries in full)."""
+    from palu_tt import report
+
+    # A per-head dump (M-LRD, group size 1): one rank per KV head, 8 heads.
+    per_head_cfg = {"num_key_value_heads": 8, "head_wise_ranks": {
+        "model.layers.0.self_attn.k_proj": [64] * 8, "model.layers.0.self_attn.v_proj": [64] * 8}}
+    assert report._config_groups_per_layer(per_head_cfg) == 8
+
+    # A group-shared dump (G-LRD, group size 4): one rank per *group* (2), even though
+    # num_key_value_heads still says 8 -- this is exactly the field frontier_rows must not use here.
+    glrd_like_cfg = {"num_key_value_heads": 8, "head_wise_ranks": {
+        "model.layers.0.self_attn.k_proj": [113, 113], "model.layers.0.self_attn.v_proj": [400, 400]}}
+    assert report._config_groups_per_layer(glrd_like_cfg) == 2
+
+
+def test_frontier_rows_bytes_use_the_dumps_own_groups_per_chip(tmp_path):
+    """The defect this fixes: ``frontier_rows`` hard-coded 4 groups per chip for every dump, which is
+    right for a per-head dump (M-LRD, 8 KV heads / 2 chips) but wrong for a group-shared (G-LRD,
+    group size 4) dump -- 2 groups / 2 chips = 1, not 4. A glrd-like row at r_k=113, r_v=400, bfp8,
+    1 group/chip must come out to 545.0625 B (roughly 2x stock's 1088 B), not the old 2180.25 B
+    (roughly 0.5x) four-groups math would have produced.
+    """
+    from palu_tt import report
+    raw = tmp_path
+    (raw / "ppl_glrd_50_f256.json").write_text('{"ppl": 10.561, "windows": 141}')
+
+    rows = {r["row"]: r for r in report.frontier_rows(raw, ranks={"glrd_50_f256": (113, 400, 1)})}
+
+    r = rows["glrd_50_f256"]
+    expected = 1 * (113 * report.BPE["bfp8"] + 400 * report.BPE["bfp8"])
+    assert expected == pytest.approx(545.0625)
+    assert r["bytes_layer_chip"] == pytest.approx(expected)
+    assert r["reduction"] > 1.0   # a real reduction, not the old (wrong) < 1x "expansion"
+
+    # The 2-tuple override form (no explicit group count) must keep defaulting to 4 groups/chip, so
+    # every pre-existing test that overrides ranks as ``(r_k, r_v)`` keeps passing unchanged.
+    rows2 = {r["row"]: r for r in report.frontier_rows(raw, ranks={"glrd_50_f256": (113, 400)})}
+    assert rows2["glrd_50_f256"]["bytes_layer_chip"] == pytest.approx(4 * (113 + 400) * report.BPE["bfp8"])
+
+
+def test_frontier_decode_4k_and_maxctx_prefer_the_fused_bench_rows(tmp_path):
+    """decode_4k/maxctx must read the fused Phase 2 kernel's own bench file (``_fk2dm`` preferred
+    over plain ``_fk2``), never the row's own naive (reconstruct-then-attend) bench file -- even
+    though the naive file exists and is loadable."""
+    from palu_tt import report
+    raw = tmp_path
+    _write(raw, "ppl_palu_full_50", {"ppl": 12.931, "windows": 141})
+    # the naive row's own bench files -- must never surface in decode_4k/maxctx
+    _write(raw, "bench_decode_palu_full_50", {
+        "data": {"4096": {"p50_ms": 265.3, "min_ms": 265.3, "iters": 10}}})
+    _write(raw, "bench_maxctx_palu_full_50", {"data": {"max_context_batch32": 8192}})
+    # the shipped-default fused variant -- this is what must be shown
+    _write(raw, "bench_decode_palu_full_50_fk2dm", {
+        "data": {"4096": {"p50_ms": 55.6, "min_ms": 55.5, "iters": 10}}})
+    # a plain _fk2 maxctx file (no _fk2dm maxctx exists) -- the fallback tier must still be read
+    _write(raw, "bench_maxctx_palu_full_50_fk2", {"data": {"max_context_batch32": 16384}})
+
+    rows = {r["row"]: r for r in report.frontier_rows(raw, ranks={"palu_full_50": (33, 102)})}
+    r = rows["palu_full_50"]
+    assert r["decode_4k"] == "55.5"
+    assert r["decode_4k"] != "265.3"
+    assert r["maxctx"] == 16384
+    assert r["decode_4k_suffix"] == "_fk2dm"
+    assert r["maxctx_suffix"] == "_fk2"
+
+    out = tmp_path / "stage2f.md"
+    text = report.main(raw=raw, out=out, rows=report.ROWS2F, stage="2f")
+    line = next(l for l in text.splitlines() if l.startswith("| palu_full_50 |"))
+    assert "55.5" in line and "16384" in line
+    assert "265.3" not in line
+
+
+def test_frontier_decode_4k_and_maxctx_are_a_dash_with_no_fused_bench_row(tmp_path):
+    """A row with only the naive bench file (no ``_fk2``/``_fk2dm`` at all) must render a dash in
+    both columns rather than falling back to the naive row's number."""
+    from palu_tt import report
+    raw = tmp_path
+    _write(raw, "ppl_palu_full_70", {"ppl": 9.028, "windows": 141})
+    _write(raw, "bench_decode_palu_full_70", {"data": {"4096": {"min_ms": 262.8}}})
+    _write(raw, "bench_maxctx_palu_full_70", {"data": {"max_context_batch32": 8192}})
+
+    rows = {r["row"]: r for r in report.frontier_rows(raw, ranks={"palu_full_70": (58, 121)})}
+    r = rows["palu_full_70"]
+    assert r["decode_4k"] is None
+    assert r["maxctx"] is None
+
+
 def test_stage2f_lines_renders_from_a_fixture_raw_dir(tmp_path):
     """Full render of stage 2f's own table, through ``report.main(..., stage="2f")`` -- not just
     ``frontier_rows`` (the data layer). ``uni_rk64_rv32`` is used for the compressed-dump rows
@@ -742,7 +832,7 @@ def test_stage2f_lines_renders_from_a_fixture_raw_dir(tmp_path):
     assert out.read_text() == text
     assert "# Stage 2f results: the rank/format frontier" in text
     assert ("| row | dump | r_k | r_v | K fmt | V fmt | scale | B/token/layer/chip | KB/token (model) | "
-            "reduction | ppl (windows) | avg5 | decode 4k ms | max ctx |") in text
+            "reduction | ppl (windows) | avg5 | decode 4k ms (fused) | max ctx (fused) |") in text
 
     # Byte cells: stock bfp8 (1088 B / 68.00 KB, reduction 1.00x) and bfp4 (576 B / 36.00 KB, 1.89x),
     # and the uniform-rank row's own bfp8/bfp4 byte pair (408 B / 216 B at r_k=64, r_v=32).

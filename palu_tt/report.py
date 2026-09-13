@@ -1163,33 +1163,62 @@ def _stage2e_lines(raw, rows, loaded, steps):
 FRONTIER_RE = _re.compile(r"^(?P<dump>baseline|palu_full_50|palu_full_70|glrd_50_f256|glrd_70_f256|uni_rk\d+_rv\d+)"
                           r"(?P<kv4>_kv4)?(?P<u>_u)?(?P<fmt>_lk4|_lv4|_l4)?(?P<w40>_w40)?$")
 BPE = {"bfp8": 1.0625, "bfp4": 0.5625}  # bytes per tile element (spec sec 2)
-STOCK_BYTES_LAYER_CHIP = 4 * (HEAD_DIM * BPE["bfp8"] + HEAD_DIM * BPE["bfp8"])  # 1088 B, r_k=r_v=128 bfp8
+# Stock is 4 KV heads per chip (8 heads / 2 chips), group size 1 -- one latent group per head, so
+# this is unchanged by the groups-per-chip fix below (see ``_dump_ranks``).
+STOCK_GROUPS_PER_CHIP = 4
+STOCK_BYTES_LAYER_CHIP = STOCK_GROUPS_PER_CHIP * (HEAD_DIM * BPE["bfp8"] + HEAD_DIM * BPE["bfp8"])  # 1088 B bfp8
+
+
+def _config_groups_per_layer(cfg):
+    """Latent groups per layer for a Palu-recipe dump, from the length of one of ``head_wise_ranks``'s
+    own per-layer rank lists.
+
+    ``head_wise_ranks`` carries no explicit group-size field, so this length is the only place the
+    group count is recoverable: a per-head dump (group size 1, e.g. the M-LRD ``palu_full_*``
+    recipes) has one entry per KV head (8, for this model), while a group-shared dump (G-LRD, group
+    size 4) has one entry per *group* (2) -- ``convert.load_palu_dir``/``_per_layer_ranks`` already
+    zero-pad/broadcast these back out to per-head ranks for the device allocation, but the raw list
+    length here is the group count before that broadcast.
+    """
+    ranks = cfg["head_wise_ranks"]
+    return len(next(iter(ranks.values())))
 
 
 def _dump_ranks(dump, ranks):
-    """(mean r_k, mean r_v) for a dump: the caller's override, else derived from the dump itself.
+    """(mean r_k, mean r_v, groups per chip) for a dump: the caller's override, else derived from
+    the dump itself.
 
-    ``baseline`` is full rank by construction; a ``uni_rk<K>_rv<V>`` dump's ranks are in its own name;
-    every other dump is a Palu/G-LRD recipe whose per-layer ranks are read the same way ``_ranks``
-    reads them for stage 1/2/2b/2c -- via ``convert.load_palu_dir`` against its ``config.json``,
-    since a calibrated dump's per-head ranks are not uniform and only that reader gives the exact
-    per-layer allocation the device builds caches for. Every one of these rank sources is either the
-    caller's override, the row name, or a fixed path under ``compressed/`` -- never anything read
-    from a raw results dir -- so, unlike ``frontier_rows``' other per-row helpers, this one takes no
-    ``raw`` parameter.
+    ``baseline`` is full rank by construction, 4 KV heads per chip; a ``uni_rk<K>_rv<V>`` dump's
+    ranks are in its own name, also 4 (per-head, group size 1) heads per chip; every other dump is a
+    Palu/G-LRD recipe whose per-layer ranks are read the same way ``_ranks`` reads them for stage
+    1/2/2b/2c -- via ``convert.load_palu_dir`` against its ``config.json``, since a calibrated dump's
+    per-head ranks are not uniform and only that reader gives the exact per-layer allocation the
+    device builds caches for. Its groups-per-chip is derived from that same ``config.json`` (see
+    ``_config_groups_per_layer``): 4 for a per-head (M-LRD) dump, 1 for a group-shared (G-LRD, group
+    size 4) one, since the 8 KV heads are split evenly across the n300's two chips either way. Every
+    one of these rank sources is either the caller's override, the row name, or a fixed path under
+    ``compressed/`` -- never anything read from a raw results dir -- so, unlike ``frontier_rows``'
+    other per-row helpers, this one takes no ``raw`` parameter.
+
+    ``ranks``' override values may be a 2-tuple ``(r_k, r_v)``, which defaults groups-per-chip to 4
+    (a per-head dump, the common case in existing tests), or a 3-tuple ``(r_k, r_v, groups_per_chip)``
+    to also override the group count -- needed to exercise a group-shared (G-LRD-like) dump without
+    building a real ``compressed/`` recipe directory.
     """
     if dump in ranks:
-        return ranks[dump]
+        v = ranks[dump]
+        return (v[0], v[1], v[2]) if len(v) > 2 else (v[0], v[1], 4)
     if dump == "baseline":
-        return HEAD_DIM, HEAD_DIM
+        return HEAD_DIM, HEAD_DIM, STOCK_GROUPS_PER_CHIP
     if dump.startswith("uni_"):
         m = _re.match(r"uni_rk(\d+)_rv(\d+)", dump)
-        return int(m.group(1)), int(m.group(2))
+        return int(m.group(1)), int(m.group(2)), 4
     palu_dir = {"palu_full_50": "compressed/palu_full_0.5", "palu_full_70": "compressed/palu_full_0.7",
                 "glrd_50_f256": "compressed/glrd_0.5_f256", "glrd_70_f256": "compressed/glrd_0.7_f256"}[dump]
     cfg = json.loads((Path(palu_dir) / "config.json").read_text())
     rk, rv = _per_layer_ranks(Path(palu_dir), cfg)
-    return sum(rk) / len(rk), sum(rv) / len(rv)
+    groups_per_chip = _config_groups_per_layer(cfg) // CHIPS
+    return sum(rk) / len(rk), sum(rv) / len(rv), groups_per_chip
 
 
 def _row_is_blind(d, has_bfp4_latent_suffix):
@@ -1232,6 +1261,28 @@ def _check_row_fields(row, d, stock, k_fmt, v_fmt, scale):
                       + "; ".join(mismatches) + " -- trusting the name.")
 
 
+# A frontier row's decode_4k/maxctx columns must only ever show the fused Phase 2 decode kernel's
+# own numbers, never the naive (reconstruct-then-attend) row's -- see ``_frontier_fused_bench``.
+# Preference order: the shipped-default multicast variant (stage 2e) first, then plain fused Phase 2.
+FRONTIER_FUSED_SUFFIXES = ("_fk2dm", "_fk2")
+
+
+def _frontier_fused_bench(raw, what, row):
+    """``(data, suffix)`` for ``row``'s fused Phase 2 decode-kernel bench file, preferring
+    ``_fk2dm`` (the shipped-default rotation-kernel variant, stage 2e) over plain ``_fk2``; ``(None,
+    None)`` when neither exists.
+
+    ``bench_<what>_<row>.json`` (no suffix) is the naive, reconstruct-then-attend kernel for a
+    ``palu_full_*``/``glrd_*`` dump -- multiple times slower than the fused kernel it stands in for
+    on a decode-latency frontier -- and is never read here, on purpose, even as a fallback.
+    """
+    for suffix in FRONTIER_FUSED_SUFFIXES:
+        data = _load(raw, f"bench_{what}_{row}{suffix}")
+        if data is not None:
+            return data, suffix
+    return None, None
+
+
 def frontier_rows(raw, ranks=None):
     """One dict per stage 2f row found in ``raw`` (see module docstring and ``FRONTIER_RE``).
 
@@ -1253,20 +1304,21 @@ def frontier_rows(raw, ranks=None):
         k_fmt = "bfp4" if (fmt in ("_lk4", "_l4") or (stock and m.group("kv4"))) else "bfp8"
         v_fmt = "bfp4" if (fmt in ("_lv4", "_l4") or (stock and m.group("kv4"))) else "bfp8"
         scale = "unit" if m.group("u") else "balanced"
-        r_k, r_v = _dump_ranks(dump, ranks)
-        bytes_lc = 4 * (r_k * BPE[k_fmt] + r_v * BPE[v_fmt])
+        r_k, r_v, groups_per_chip = _dump_ranks(dump, ranks)
+        bytes_lc = groups_per_chip * (r_k * BPE[k_fmt] + r_v * BPE[v_fmt])
         d = json.loads(p.read_text())
         _check_row_fields(row, d, stock, k_fmt, v_fmt, scale)
         tsk = _load(raw, f"tasks_{row}")
-        dec = _load(raw, f"bench_decode_{row}")
-        mx = _load(raw, f"bench_maxctx_{row}")
+        dec, dec_sfx = _frontier_fused_bench(raw, "decode", row)
+        mx, mx_sfx = _frontier_fused_bench(raw, "maxctx", row)
         out.append({"row": row, "dump": dump, "r_k_mean": r_k, "r_v_mean": r_v, "k_fmt": k_fmt, "v_fmt": v_fmt,
                     "scale": scale, "bytes_layer_chip": bytes_lc,
                     "kb_token": bytes_lc * LAYERS * CHIPS / 1024, "reduction": STOCK_BYTES_LAYER_CHIP / bytes_lc,
                     "ppl": d["ppl"], "windows": d["windows"], "blind": _row_is_blind(d, fmt != ""),
                     "avg5": _avg5(tsk) if tsk else None,
-                    "decode_4k": _min_only(_cell(dec, "4096")) if dec else None,
-                    "maxctx": (mx.get("data") or {}).get("max_context_batch32") if mx else None})
+                    "decode_4k": _min_only(_cell(dec, "4096")) if dec else None, "decode_4k_suffix": dec_sfx,
+                    "maxctx": (mx.get("data") or {}).get("max_context_batch32") if mx else None,
+                    "maxctx_suffix": mx_sfx})
     return sorted(out, key=lambda r: (r["kb_token"], r["ppl"]))
 
 
@@ -1290,16 +1342,26 @@ def _stage2f_lines(raw):
         f"Generated by `python -m palu_tt.report --stage 2f` from `docs/results/raw/*.json` at "
         f"commit `{_commit()}`; tt-metal v0.78.0 plus the `palu-sdpa` submodule branch, TP=2 (one "
         "n300, two chips), non-paged, untraced decode. Bytes are per token, per layer, per chip: "
-        "`4 x (r_k x bpe_k + r_v x bpe_v)`, `bpe` 1.0625 for bfp8 and 0.5625 for bfp4 (stock is "
-        f"{STOCK_BYTES_LAYER_CHIP:.0f} B bfp8 / {STOCK_BYTES_LAYER_CHIP * BPE['bfp4'] / BPE['bfp8']:.0f} B "
-        "bfp4); `reduction` is stock bfp8 bytes / this row's bytes. `scale` is the latent scale "
-        "(`balanced`, Palu's default split, or `unit`, stage 2f's rescaled latents). `avg5` is the "
-        "same five-task zero-shot average as the earlier stages; `decode 4k`/`max ctx` are the fused "
-        "Phase 2 kernel's decode-step `min_ms` at 4096 and `bench --what maxctx` at batch 32. All "
-        "three are rendered only where measured -- most rows have none of them yet.",
+        "`groups_per_chip x (r_k x bpe_k + r_v x bpe_v)`, `bpe` 1.0625 for bfp8 and 0.5625 for bfp4. "
+        "`groups_per_chip` is the dump's own latent-group count per chip -- 4 for a per-head dump "
+        "(group size 1: `baseline`, `uni_*`, `palu_full_*`/M-LRD, the 8 KV heads split across the "
+        "n300's two chips) or 1 for a group-shared dump (G-LRD, group size 4: `glrd_*`, 2 groups per "
+        "layer split across the two chips), read from the dump's own `head_wise_ranks` (see "
+        f"`_config_groups_per_layer`); stock is {STOCK_BYTES_LAYER_CHIP:.0f} B bfp8 / "
+        f"{STOCK_BYTES_LAYER_CHIP * BPE['bfp4'] / BPE['bfp8']:.0f} B bfp4 either way, at "
+        f"{STOCK_GROUPS_PER_CHIP} groups/chip. `reduction` is stock bfp8 bytes / this row's bytes. "
+        "`scale` is the latent scale (`balanced`, Palu's default split, or `unit`, stage 2f's "
+        "rescaled latents). `avg5` is the same five-task zero-shot average as the earlier stages; "
+        "`decode 4k (fused)`/`max ctx (fused)` are the fused Phase 2 decode kernel's own decode-step "
+        "`min_ms` at 4096 and `bench --what maxctx` at batch 32 -- read from the row's "
+        "`bench_<what>_<row>_fk2dm.json` (the shipped-default rotation-kernel variant, stage 2e) when "
+        "present, else `bench_<what>_<row>_fk2.json`, and a dash otherwise; the row's own (naive, "
+        "reconstruct-then-attend) `bench_<what>_<row>.json` is never shown in these two columns, since "
+        "it is multiple times slower than the fused kernel it stands in for on a decode-latency "
+        "frontier. All three are rendered only where measured -- most rows have none of them yet.",
         "",
         "| row | dump | r_k | r_v | K fmt | V fmt | scale | B/token/layer/chip | KB/token (model) | "
-        "reduction | ppl (windows) | avg5 | decode 4k ms | max ctx |",
+        "reduction | ppl (windows) | avg5 | decode 4k ms (fused) | max ctx (fused) |",
         "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     if not rows:
