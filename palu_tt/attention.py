@@ -159,11 +159,14 @@ class PaluAttention(LightweightModule):
         # latent caches may be kept wider than the stock KV cache dtype (spec 5, "Latent dtype"), and
         # stage 2f gives each side its own format: the frontier sweeps bfp8 against bfp4 on K and V
         # separately, so a row can hold (bfp4 K, bfp8 V). k_/v_latent_dtype override the shared
-        # latent_dtype, which in turn overrides the model's KV_CACHE precision.
-        base = self.palu.latent_dtype if self.palu.latent_dtype is not None else self.kv_cache_dtype
-        self.k_latent_dtype = self.palu.k_latent_dtype or base
-        self.v_latent_dtype = self.palu.v_latent_dtype or base
-        self.latent_dtype = self.k_latent_dtype      # kept for callers that only know one format
+        # latent_dtype. The fallback when latent_dtype is also unset is bfp8, not self.kv_cache_dtype:
+        # every CLI always resolves an explicit latent_dtype (LATENT_DTYPES[...] is never None), so
+        # this path only matters for a programmatic build_model(kind="palu", latent_dtype=None,
+        # kv_cache_dtype=bfp4) call, and falling back to --kv-dtype there would silently hand it bfp4
+        # latents through a flag whose own help says it is the *stock*/reconstruction-temporary format.
+        base = self.palu.latent_dtype if self.palu.latent_dtype is not None else ttnn.bfloat8_b
+        self.k_latent_dtype = self.palu.k_latent_dtype if self.palu.k_latent_dtype is not None else base
+        self.v_latent_dtype = self.palu.v_latent_dtype if self.palu.v_latent_dtype is not None else base
         fid = lambda op: opt.get_math_fidelity(decoder_id=layer_num, op=op, configuration=configuration)
         self.li_qkv_decode_compute_kernel_cfg = fid(OpGroup.LI_QKV_DECODE)
         self.sdpa_decode_compute_kernel_cfg = fid(OpGroup.SDPA_DECODE)

@@ -23,7 +23,6 @@ import torch
 from models.common.utility_functions import comp_pcc
 
 from palu_tt import device as dev, eval_ppl, fused, generate, model as pm
-from palu_tt.bench import LATENT_DTYPES, resolve_latent_dtypes
 
 RAW = Path("docs/results/raw")
 PROMPT = 512
@@ -99,11 +98,11 @@ def main():
     try:
         args_tok = pm.ModelArgs(md, instruct=True, max_batch_size=1, max_seq_len=2048, cache_hf=False)
         ids = eval_ppl.wikitext2_ids(args_tok.tokenizer)
-        k_latent_dtype, v_latent_dtype = resolve_latent_dtypes(a.latent_dtype, a.k_latent_dtype, a.v_latent_dtype)
+        k_latent_dtype, v_latent_dtype = pm.resolve_latent_dtypes(a.latent_dtype, a.k_latent_dtype, a.v_latent_dtype)
         # both models must hold the caches in the same formats, or the PCC below measures the formats
         # rather than the kernel
-        formats = dict(latent_dtype=LATENT_DTYPES[a.latent_dtype], k_latent_dtype=k_latent_dtype,
-                       v_latent_dtype=v_latent_dtype, kv_cache_dtype=LATENT_DTYPES[a.kv_dtype],
+        formats = dict(latent_dtype=pm.LATENT_DTYPES[a.latent_dtype], k_latent_dtype=k_latent_dtype,
+                       v_latent_dtype=v_latent_dtype, kv_cache_dtype=pm.LATENT_DTYPES[a.kv_dtype],
                        latent_scale=a.latent_scale)
         naive = _logits(md, a.palu_dir, ids, a.steps, **formats)
         fused_logits = _logits(md, a.palu_dir, ids, a.steps, use_fused_k=True, cs_recurrence=a.fused == "p2",
@@ -116,12 +115,12 @@ def main():
     # fused kernel only replaces decode) -- drop it so the comparison is over decode steps only.
     naive_decode, fused_decode = naive[1:], fused_logits[1:]
     pccs = [_pcc(naive_decode[i], fused_decode[i]) for i in range(naive_decode.shape[0])]
+    # the *resolved* per-cache formats, so a row says what each cache held
+    k_name, v_name = pm.resolve_latent_dtype_names(a.latent_dtype, a.k_latent_dtype, a.v_latent_dtype)
     r = {"row": a.row, "palu_dir": a.palu_dir, "fused": a.fused, "fused_k_chunk": a.fused_k_chunk,
          "group_heads": a.group_heads, "group_heads_per_layer": list(GROUP_HEADS),
          "rot_mode": a.rot_mode, "table_mcast": a.table_mcast, "latent_dtype": a.latent_dtype,
-         # the *resolved* per-cache formats, so a row says what each cache held
-         "k_latent_dtype": a.k_latent_dtype or a.latent_dtype,
-         "v_latent_dtype": a.v_latent_dtype or a.latent_dtype, "kv_dtype": a.kv_dtype,
+         "k_latent_dtype": k_name, "v_latent_dtype": v_name, "kv_dtype": a.kv_dtype,
          "latent_scale": a.latent_scale,
          "steps": naive_decode.shape[0],
          "pcc_mean": sum(pccs) / len(pccs), "pcc_min": min(pccs),

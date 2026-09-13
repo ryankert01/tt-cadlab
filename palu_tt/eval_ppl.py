@@ -88,7 +88,8 @@ def main():
                    help="stage 2f: the model's KV_CACHE precision. On --kind stock this is the whole KV "
                         "cache -- the format-only competitor the rank/format frontier is measured against "
                         "-- and on --kind palu it is what the naive decode's reconstructed K/V temporaries "
-                        "are cast to, not the latent caches themselves.")
+                        "are cast to (and the prefill SDPA's precision on reconstructed sides), not the "
+                        "latent caches themselves.")
     p.add_argument("--latent-scale", choices=["balanced", "unit"], default="balanced",
                    help="stage 2f: 'unit' moves the singular values into the up-projection so every latent "
                         "component has unit variance (what bfp4 caches want); 'balanced' is Palu's split.")
@@ -109,14 +110,13 @@ def main():
         out = RAW / f"ppl_cpu_{a.row}.json"
     else:
         from palu_tt import device as dev, model as pm
-        from palu_tt.bench import LATENT_DTYPES, resolve_latent_dtypes
-        k_latent_dtype, v_latent_dtype = resolve_latent_dtypes(a.latent_dtype, a.k_latent_dtype, a.v_latent_dtype)
+        k_latent_dtype, v_latent_dtype = pm.resolve_latent_dtypes(a.latent_dtype, a.k_latent_dtype, a.v_latent_dtype)
         md = dev.open_n300()
         try:
             args, model, _ = pm.build_model(md, a.kind, a.palu_dir, max_batch_size=1, max_seq_len=a.seq_len,
-                                            latent_dtype=LATENT_DTYPES[a.latent_dtype],
+                                            latent_dtype=pm.LATENT_DTYPES[a.latent_dtype],
                                             k_latent_dtype=k_latent_dtype, v_latent_dtype=v_latent_dtype,
-                                            kv_cache_dtype=LATENT_DTYPES[a.kv_dtype], latent_scale=a.latent_scale,
+                                            kv_cache_dtype=pm.LATENT_DTYPES[a.kv_dtype], latent_scale=a.latent_scale,
                                             latent_quant_in_prefill=a.latent_quant_in_prefill)
             r = device_ppl(args, model, hf.snapshot_dir(), wikitext2_ids(args.tokenizer), a.seq_len, a.windows)
         finally:
@@ -126,14 +126,18 @@ def main():
     # scores the HF/low-rank reference, which has no KV cache at all, so recording the flags there would
     # claim a measurement that never happened; they are null on a CPU row instead, which a reader can
     # still tell apart from a pre-2f run that has no such key. --latent-scale is not device-only: the CPU
-    # reference is built with it too, so it is recorded on both.
+    # reference is built with it too, so it is recorded on both. A --kind stock row has no latent cache
+    # either (only kv_dtype -- the whole KV cache -- applies to it), so the two latent fields are null
+    # there too even on a device row.
     formats = {"latent_dtype": None, "k_latent_dtype": None, "v_latent_dtype": None, "kv_dtype": None,
                "latent_quant_in_prefill": None}
     if not a.cpu:
-        formats = {"latent_dtype": a.latent_dtype,
+        from palu_tt import model as pm
+        k_name, v_name = (None, None) if a.kind == "stock" else \
+            pm.resolve_latent_dtype_names(a.latent_dtype, a.k_latent_dtype, a.v_latent_dtype)
+        formats = {"latent_dtype": None if a.kind == "stock" else a.latent_dtype,
                    # the *resolved* per-cache formats, so a row says what each cache held
-                   "k_latent_dtype": a.k_latent_dtype or a.latent_dtype,
-                   "v_latent_dtype": a.v_latent_dtype or a.latent_dtype, "kv_dtype": a.kv_dtype,
+                   "k_latent_dtype": k_name, "v_latent_dtype": v_name, "kv_dtype": a.kv_dtype,
                    "latent_quant_in_prefill": bool(a.latent_quant_in_prefill)}
     r.update({"row": a.row, "kind": a.kind, "palu_dir": a.palu_dir,
               "latent_scale": a.latent_scale, **formats})

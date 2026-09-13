@@ -105,7 +105,8 @@ def main():
     p.add_argument("--kv-dtype", choices=["bfp8", "bfp4"], default="bfp8",
                    help="stage 2f: the model's KV_CACHE precision. On --kind stock this is the whole KV "
                         "cache (the format-only competitor); on --kind palu it is what the naive decode's "
-                        "reconstructed K/V temporaries are cast to, not the latent caches themselves.")
+                        "reconstructed K/V temporaries are cast to (and the prefill SDPA's precision on "
+                        "reconstructed sides), not the latent caches themselves.")
     p.add_argument("--latent-scale", choices=["balanced", "unit"], default="balanced",
                    help="stage 2f: 'unit' moves the singular values into the up-projection so every latent "
                         "component has unit variance (what bfp4 caches want); 'balanced' is Palu's split.")
@@ -115,29 +116,32 @@ def main():
                         "is what makes a blind/faithful pair reproducible from the repo.")
     a = p.parse_args()
     from palu_tt import device as dev, model as pm
-    from palu_tt.bench import LATENT_DTYPES, resolve_latent_dtypes
-    k_latent_dtype, v_latent_dtype = resolve_latent_dtypes(a.latent_dtype, a.k_latent_dtype, a.v_latent_dtype)
+    k_latent_dtype, v_latent_dtype = pm.resolve_latent_dtypes(a.latent_dtype, a.k_latent_dtype, a.v_latent_dtype)
     RAW.mkdir(parents=True, exist_ok=True)
     md = dev.open_n300()
     try:
         args, model, _ = pm.build_model(md, a.kind, a.palu_dir, max_batch_size=1, max_seq_len=2048,
                                         use_fused_k=a.fused != "off", cs_recurrence=a.fused == "p2",
                                         group_heads=None if a.group_heads == "auto" else int(a.group_heads),
-                                        latent_dtype=LATENT_DTYPES[a.latent_dtype],
+                                        latent_dtype=pm.LATENT_DTYPES[a.latent_dtype],
                                         k_latent_dtype=k_latent_dtype, v_latent_dtype=v_latent_dtype,
-                                        kv_cache_dtype=LATENT_DTYPES[a.kv_dtype], latent_scale=a.latent_scale,
+                                        kv_cache_dtype=pm.LATENT_DTYPES[a.kv_dtype], latent_scale=a.latent_scale,
                                         latent_quant_in_prefill=a.latent_quant_in_prefill)
         lm = lm_eval_tt.TTLM.for_device(args, model, hf.snapshot_dir())
         r = run(lm, [t for t in a.tasks.split(",") if t], a.limit)
     finally:
         dev.close(md)
     import importlib.metadata as m
+    # --kind stock has no latent cache (Minor 5): null the two per-cache fields there, same "null, not
+    # absent" rule R1 already applies to eval_ppl's --cpu rows. kv_dtype (the whole KV cache) still
+    # applies and is kept either way.
+    k_name, v_name = (None, None) if a.kind == "stock" else \
+        pm.resolve_latent_dtype_names(a.latent_dtype, a.k_latent_dtype, a.v_latent_dtype)
     r.update({"row": a.row, "kind": a.kind, "palu_dir": a.palu_dir, "fused": a.fused,
               "group_heads": a.group_heads, "limit": a.limit, "latent_scale": a.latent_scale,
-              "latent_dtype": a.latent_dtype,
+              "latent_dtype": None if a.kind == "stock" else a.latent_dtype,
               # the *resolved* per-cache formats, so a row says what each cache held
-              "k_latent_dtype": a.k_latent_dtype or a.latent_dtype,
-              "v_latent_dtype": a.v_latent_dtype or a.latent_dtype, "kv_dtype": a.kv_dtype,
+              "k_latent_dtype": k_name, "v_latent_dtype": v_name, "kv_dtype": a.kv_dtype,
               "latent_quant_in_prefill": bool(a.latent_quant_in_prefill),
               "lm_eval_version": m.version("lm_eval")})
     (RAW / f"tasks_{a.row}.json").write_text(json.dumps(r, indent=1, default=str))

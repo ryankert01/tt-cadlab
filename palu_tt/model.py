@@ -9,6 +9,26 @@ from models.tt_transformers.tt.model_config import ModelArgs
 from palu_tt import convert, hf
 from palu_tt.attention import PaluAttention
 
+# stage 2e/2f: tile format of the Palu latent K/V caches, selected by --latent-dtype (and, per cache,
+# by --k-latent-dtype / --v-latent-dtype); also the stock KV cache format, selected by --kv-dtype.
+# Lives here (not palu_tt.bench) because all four CLIs import this module already, and bench itself
+# pulls in ttnn, Attention, TT_CCL, RotarySetup and a module-level PALU_BENCH_CONTEXTS parse that a
+# two-line dict has no business dragging in; bench re-exports both names for its own tests.
+LATENT_DTYPES = {"bfp8": ttnn.bfloat8_b, "bfp4": ttnn.bfloat4_b}
+
+
+def resolve_latent_dtype_names(latent, k_latent, v_latent):
+    """(K, V) cache format *names* ("bfp8"/"bfp4") from the three flags: the per-cache flags override
+    the shared one. Used both by resolve_latent_dtypes below and by every CLI's result-JSON block, so
+    the flag -> name rule is written once."""
+    return k_latent or latent, v_latent or latent
+
+
+def resolve_latent_dtypes(latent, k_latent, v_latent):
+    """(K, V) cache formats from the three flags: the per-cache flags override the shared one."""
+    k, v = resolve_latent_dtype_names(latent, k_latent, v_latent)
+    return LATENT_DTYPES[k], LATENT_DTYPES[v]
+
 
 def build_model(mesh_device, kind: str, palu_dir: Optional[str] = None, max_batch_size: int = 1, max_seq_len: int = 2048,
                 n_layers: Optional[int] = None, dtype=ttnn.bfloat8_b, latent_dtype=None,
@@ -78,9 +98,19 @@ def set_kv_cache_dtype(args, kv_cache_dtype) -> None:
         return
     setting = {ttnn.bfloat8_b: PrecisionSetting.BFP8, ttnn.bfloat4_b: PrecisionSetting.BFP4,
                ttnn.bfloat16: PrecisionSetting.BF16}[kv_cache_dtype]
-    conf = ModelOptimizations.accuracy(args.model_name)
-    conf.tensor_dtype_settings[TensorGroup.KV_CACHE] = setting
+    # Build the settings dict *before* constructing ModelOptimizations: __init__ computes _full_name /
+    # __name__ from the dict it is handed, so mutating tensor_dtype_settings after construction (the
+    # old approach) left _full_name claiming the pre-override dtype for every decoder. ACTIVATION's
+    # setting is None ("use the original dtype"), which ModelOptimizations._validate_settings rejects
+    # as a TensorPrecision value, so it is dropped here -- __init__'s own defaults already leave it
+    # None, so omitting it changes nothing.
+    base = ModelOptimizations.accuracy(args.model_name)
+    settings = {"TensorPrecision": {**{t: v for t, v in base.tensor_dtype_settings.items() if v is not None},
+                                    TensorGroup.KV_CACHE: setting},
+               "OpFidelity": dict(base.op_fidelity_settings)}
+    conf = ModelOptimizations(settings)
     args.optimizations = DecodersPrecision(args.n_layers, args.model_name, conf)
+    args.optimizations.__name__ = f"accuracy(kv_cache={setting.value})"
     args.model_config["DECODERS_OPTIMIZATIONS"] = args.optimizations
 
 

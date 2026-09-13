@@ -167,3 +167,99 @@ def test_latent_dtype_flags_resolve_to_ttnn_formats():
     assert resolve_latent_dtypes("bfp8", None, None) == (ttnn.bfloat8_b, ttnn.bfloat8_b)
     assert resolve_latent_dtypes("bfp8", "bfp4", None) == (ttnn.bfloat4_b, ttnn.bfloat8_b)
     assert resolve_latent_dtypes("bfp4", None, "bfp8") == (ttnn.bfloat4_b, ttnn.bfloat8_b)
+
+
+def test_kv_dtype_default_is_a_no_op_and_bfp4_only_moves_the_kv_cache():
+    """Review finding (Important 1): the no-op guard in ``set_kv_cache_dtype`` is the single thing
+    keeping every stage 2/2c/2d/2e row byte-identical under the new ``--kv-dtype`` default (bfp8) --
+    it never rebuilds tt-transformers' own precision object when every decoder already reports that
+    format. Delete the guard, or let a tt-metal bump ship
+    ``model_params/Llama-3.1-8B-Instruct/accuracy_decoder_config.json``, and every committed row's
+    precision object would silently change with nothing failing. Host-only: a ``SimpleNamespace``
+    stands in for ``ModelArgs``, and ``DecodersPrecision.accuracy`` needs no device."""
+    import ttnn
+    from types import SimpleNamespace
+    from models.tt_transformers.tt.model_config import DecodersPrecision, OpGroup, TensorGroup
+    from palu_tt import model as pm
+
+    def mk(n=32):
+        opt = DecodersPrecision.accuracy(num_decoders=n, model_name="Llama-3.1-8B-Instruct")
+        return SimpleNamespace(n_layers=n, model_name="Llama-3.1-8B-Instruct", optimizations=opt,
+                               model_config={"DECODERS_OPTIMIZATIONS": opt})
+
+    a, before = mk(), None
+    before = a.optimizations
+    pm.set_kv_cache_dtype(a, None)
+    pm.set_kv_cache_dtype(a, ttnn.bfloat8_b)
+    assert a.optimizations is before                      # the default never rebuilds
+    pm.set_kv_cache_dtype(a, ttnn.bfloat4_b)
+    assert a.optimizations is not before
+    assert a.model_config["DECODERS_OPTIMIZATIONS"] is a.optimizations
+    assert len(a.optimizations.decoder_optimizations) == 32
+    for g in TensorGroup:                                 # only KV_CACHE moves
+        want = ttnn.bfloat4_b if g is TensorGroup.KV_CACHE else \
+            before.get_tensor_dtype(decoder_id=0, tensor=g)
+        assert a.optimizations.get_tensor_dtype(decoder_id=0, tensor=g) == want
+    for o in OpGroup:                                     # fidelity untouched
+        assert (a.optimizations.decoder_optimizations[0].op_fidelity_settings[o]
+                == before.decoder_optimizations[0].op_fidelity_settings[o])
+
+
+def test_set_kv_cache_dtype_names_itself_correctly_after_a_rebuild():
+    """Review finding (Minor 2): the rebuilt ``DecodersPrecision`` must not misreport itself. The old
+    code mutated ``tensor_dtype_settings`` *after* ``ModelOptimizations.__init__`` had already computed
+    ``_full_name`` from the pre-override dict, so a bfp4 rebuild's ``_full_name`` still claimed bfp8 for
+    every decoder; and ``DecodersPrecision`` itself carries no ``__name__`` unless something sets one,
+    even though the demo flows' docstring says they print it."""
+    import ttnn
+    from types import SimpleNamespace
+    from models.tt_transformers.tt.model_config import DecodersPrecision
+    from palu_tt import model as pm
+
+    args = SimpleNamespace(n_layers=32, model_name="Llama-3.1-8B-Instruct",
+                           optimizations=DecodersPrecision.accuracy(num_decoders=32, model_name="Llama-3.1-8B-Instruct"),
+                           model_config={})
+    args.model_config["DECODERS_OPTIMIZATIONS"] = args.optimizations
+    pm.set_kv_cache_dtype(args, ttnn.bfloat4_b)
+
+    conf = args.optimizations.decoder_optimizations[0]
+    assert "kv_cache: bfp4" in conf._full_name
+    assert args.optimizations.__name__ == "accuracy(kv_cache=bfp4)"
+
+
+def test_apply_palu_flags_writes_every_paluruntime_switch_and_the_three_format_fields():
+    """Review finding (Important 1, second test): R4 made ``apply_palu_flags`` the single place a
+    run's switches become ``PaluConfig`` state, so ``bench.FUSED`` -- the dict every ``build_model`` /
+    ``_attention_one`` caller splats -- must set every ``PaluRuntime`` switch, or a switch added to the
+    dataclass without a matching ``apply_palu_flags`` parameter would silently keep its class default
+    (exactly the bug R4 found: ``_attention_one``'s hand-copied block never set ``cfg.latent_dtype``).
+    The switch set is enumerated from the dataclass rather than hand-listed, so a future field cannot
+    be missed here."""
+    import dataclasses
+
+    from palu_tt import bench, model as pm
+    from palu_tt.convert import PaluConfig, PaluRuntime
+
+    # PaluRuntime fields apply_palu_flags does not own: recon_len is written per decode step by
+    # set_recon_len, and check is a manual debug switch with no CLI flag.
+    not_a_switch = {"recon_len", "check"}
+    switch_fields = {f.name for f in dataclasses.fields(PaluRuntime)} - not_a_switch
+
+    want = {"use_fused_k": True, "cs_recurrence": True, "fused_k_chunk": 256,
+            "group_heads_per_core": 2, "rot_mode": "dst", "table_mcast": True,
+            "latent_quant_in_prefill": False}
+    assert switch_fields == set(want), \
+        "a PaluRuntime field was added or renamed without updating this test (and, most likely, apply_palu_flags)"
+
+    flags = dict(bench.FUSED, use_fused_k=True, cs_recurrence=True, fused_k_chunk=256, group_heads=2,
+                rot_mode="dst", table_mcast=True, latent_quant_in_prefill=False,
+                latent_dtype="bfp4", k_latent_dtype="bfp8", v_latent_dtype="bfp8")
+    cfg = PaluConfig(rank_k=[64], rank_v=[64], cache_id="t")
+    pm.apply_palu_flags(cfg, **flags)
+
+    rt = cfg.runtime
+    for name, expected in want.items():
+        assert getattr(rt, name) == expected, name
+    # the three format fields live on PaluConfig, not PaluRuntime, but are the other half of the
+    # contract apply_palu_flags exists to guarantee
+    assert (cfg.latent_dtype, cfg.k_latent_dtype, cfg.v_latent_dtype) == ("bfp4", "bfp8", "bfp8")

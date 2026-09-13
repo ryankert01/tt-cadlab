@@ -30,6 +30,9 @@ from models.tt_transformers.tt.rope import RotarySetup
 
 from palu_tt import convert, device as dev, fused, hf, model as pm
 from palu_tt.attention import PaluAttention
+# LATENT_DTYPES / resolve_latent_dtypes(_names) live in palu_tt.model (imported by all four CLIs
+# already); re-exported here so this module's own tests keep working.
+from palu_tt.model import LATENT_DTYPES, resolve_latent_dtype_names, resolve_latent_dtypes
 
 RAW = Path("docs/results/raw")
 
@@ -58,15 +61,6 @@ BATCH = 32
 FUSED = {"use_fused_k": False, "cs_recurrence": False, "fused_k_chunk": None, "group_heads": None,
          "rot_mode": "legacy", "table_mcast": False, "latent_dtype": None, "k_latent_dtype": None,
          "v_latent_dtype": None, "kv_cache_dtype": None, "latent_scale": "balanced"}
-
-# stage 2e/2f: tile format of the Palu latent K/V caches, selected by --latent-dtype (and, per cache,
-# by --k-latent-dtype / --v-latent-dtype); also the stock KV cache format, selected by --kv-dtype.
-LATENT_DTYPES = {"bfp8": ttnn.bfloat8_b, "bfp4": ttnn.bfloat4_b}
-
-
-def resolve_latent_dtypes(latent, k_latent, v_latent):
-    """(K, V) cache formats from the three flags: the per-cache flags override the shared one."""
-    return LATENT_DTYPES[k_latent or latent], LATENT_DTYPES[v_latent or latent]
 
 
 # stage 2c: per-layer heads_per_core the last model/layer built actually ran with (after any allocator
@@ -402,7 +396,8 @@ def main():
     p.add_argument("--kv-dtype", choices=["bfp8", "bfp4"], default="bfp8",
                    help="stage 2f: the model's KV_CACHE precision. On --kind stock this is the whole KV "
                         "cache (the format-only competitor); on --kind palu it is what the naive decode's "
-                        "reconstructed K/V temporaries are cast to, not the latent caches themselves.")
+                        "reconstructed K/V temporaries are cast to (and the prefill SDPA's precision on "
+                        "reconstructed sides), not the latent caches themselves.")
     p.add_argument("--latent-scale", choices=["balanced", "unit"], default="balanced",
                    help="stage 2f: 'unit' moves the singular values into the up-projection so every latent "
                         "component has unit variance (what bfp4 caches want); 'balanced' is Palu's split.")
@@ -417,6 +412,9 @@ def main():
     a = p.parse_args()
     if a.kind == "stock" and a.fused != "off":
         p.error("--fused is a Palu-path flag; --kind stock has no K reconstruction to fuse")
+    if a.kind == "stock" and (a.latent_dtype != "bfp8" or a.k_latent_dtype is not None or a.v_latent_dtype is not None):
+        p.error("--latent-dtype/--k-latent-dtype/--v-latent-dtype are Palu-path flags; --kind stock has "
+                "no latent cache (use --kv-dtype for the stock KV cache format)")
     if not 1 <= a.batch <= 32:
         p.error("--batch must be between 1 and 32 (tt_transformers's cap)")
     k_latent_dtype, v_latent_dtype = resolve_latent_dtypes(a.latent_dtype, a.k_latent_dtype, a.v_latent_dtype)
@@ -436,14 +434,20 @@ def main():
                     "maxctx": bench_maxctx}[a.what](mesh, a.kind, a.palu_dir)
     finally:
         mesh.close()
+    # stage 2f (Minor 5): --kind stock has no latent cache, so the three Palu-only format fields are
+    # null on a stock row rather than echoing flags that (by the check above) can only be at their
+    # defaults -- the same "null, not absent" rule R1 already applies to eval_ppl's --cpu rows.
+    if a.kind == "stock":
+        latent_fields = {"latent_dtype": None, "k_latent_dtype": None, "v_latent_dtype": None}
+    else:
+        # the *resolved* per-cache formats (--k/--v-latent-dtype falling back to --latent-dtype), so a
+        # row says what each cache actually held rather than which flags were typed
+        k_name, v_name = resolve_latent_dtype_names(a.latent_dtype, a.k_latent_dtype, a.v_latent_dtype)
+        latent_fields = {"latent_dtype": a.latent_dtype, "k_latent_dtype": k_name, "v_latent_dtype": v_name}
     r = {"row": a.row, "kind": a.kind, "palu_dir": a.palu_dir, "what": a.what,
          "fused": a.fused, "fused_k_chunk": a.fused_k_chunk, "group_heads": a.group_heads,
          "group_heads_per_layer": list(GROUP_HEADS), "batch": a.batch,
-         "rot_mode": a.rot_mode, "table_mcast": a.table_mcast, "latent_dtype": a.latent_dtype,
-         # the *resolved* per-cache formats (--k/--v-latent-dtype falling back to --latent-dtype), so a
-         # row says what each cache actually held rather than which flags were typed
-         "k_latent_dtype": a.k_latent_dtype or a.latent_dtype,
-         "v_latent_dtype": a.v_latent_dtype or a.latent_dtype, "kv_dtype": a.kv_dtype,
+         "rot_mode": a.rot_mode, "table_mcast": a.table_mcast, **latent_fields, "kv_dtype": a.kv_dtype,
          "latent_scale": a.latent_scale}
     if a.what in ("decode", "attention"):  # prefill/maxctx use their own fixed lengths, not CONTEXTS
         r["contexts"] = list(CONTEXTS)
