@@ -509,7 +509,10 @@ def test_table_mcast_is_bit_identical(mesh_device, batch, S, grid):
             _dev(mesh_device, fused.cs_table(cos, sin, S)[None, None]), _dev(mesh_device, v), head_dim_v=128,
             cur_pos_tensor=_pos(mesh_device, pos), scale=HD ** -0.5, table_mcast=mcast, **extra, **_cfg(0, grid))
         return _host(out)
-    assert torch.equal(run(False), run(True))
+    # Multicast run FIRST: the per-core read would otherwise leave the correct table in every core's c_13 /
+    # c_14 at the same L1 address, and a multicast that silently did nothing would still read as correct.
+    with_mcast = run(True)
+    assert torch.equal(with_mcast, run(False))
 
 
 def test_bfp4_latents_are_accepted_and_close(mesh_device):
