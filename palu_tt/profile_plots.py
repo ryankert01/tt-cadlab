@@ -66,11 +66,21 @@ def breakdown_figure(out_png):
         ax.grid(axis="y", color="#e7eaef", linewidth=0.8)
         ax.set_axisbelow(True)
     axes[0].set_ylabel("ms per decode step (device kernel time, chip 0)")
-    fig.legend(loc="upper center", ncol=4, fontsize=8, frameon=False, bbox_to_anchor=(0.5, 1.0))
-    fig.suptitle("What a decode step is made of, batch 32", y=1.12, fontsize=12)
-    fig.tight_layout()
+    fig.suptitle("What a decode step is made of, batch 32", fontsize=12)
+    fig.tight_layout(rect=(0, 0.14, 1, 0.96))
+    fig.legend(loc="lower center", ncol=5, fontsize=8, frameon=False, bbox_to_anchor=(0.5, -0.01))
     fig.savefig(out_png, dpi=150, bbox_inches="tight")
     plt.close(fig)
+
+
+def _stock_op_at(ctx, layers=32):
+    """32 x the per-call cost of the full-width (out 128) stock SdpaDecode signature, which the naive
+    Palu rows still run at 8192 even though the stock row itself cannot allocate there."""
+    p = _load("palu_full_50", ctx)
+    for o in p["ops"] if p else []:
+        if o["op"] == "SdpaDecodeDeviceOperation" and o["out"][-1] == 128:
+            return layers * o["ms"] / o["count"]
+    return None
 
 
 def attention_ctx_figure(out_png):
@@ -84,17 +94,30 @@ def attention_ctx_figure(out_png):
                 ys.append(_cat_ms(p, "attention") + _cat_ms(p, "k_recon"))
         if xs:
             ax.plot(xs, ys, marker="o", color=ROW_COLOR[r], label=ROW_LABEL[r], linewidth=2)
-            ax.annotate(f"{ys[-1]:.1f}", (xs[-1], ys[-1]), textcoords="offset points", xytext=(6, 0), fontsize=8,
-                        color=ROW_COLOR[r], va="center")
+            dy = -14 if r.endswith("70") or r.endswith("70_fk2") else 7   # 0.5 above the line, 0.7 below
+            for x, y in zip(xs, ys):
+                ax.annotate(f"{y:.1f}", (x, y), textcoords="offset points", xytext=(0, dy), fontsize=8,
+                            color=ROW_COLOR[r], ha="center")
+    stock_8k = _stock_op_at(8192)
+    if stock_8k:
+        st4 = _cat_ms(_load("baseline", 4096), "attention")
+        ax.plot([4, 8], [st4, stock_8k], color=ROW_COLOR["baseline"], linewidth=1.5, linestyle=":")
+        ax.plot([8], [stock_8k], marker="o", markerfacecolor="white", color=ROW_COLOR["baseline"])
+        ax.annotate(f"{stock_8k:.1f}", (8, stock_8k), textcoords="offset points", xytext=(0, 7), fontsize=8,
+                    color=ROW_COLOR["baseline"], ha="center")
+        ax.plot([], [], color=ROW_COLOR["baseline"], linestyle=":", label="stock op at 8k (measured\ninside the naive rows; stock\nitself does not allocate)")
     ax.set_xticks([c // 1024 for c in CONTEXTS])
     ax.set_xticklabels([f"{c // 1024}k" for c in CONTEXTS])
+    ax.set_yscale("log")
+    ax.set_yticks([5, 10, 20, 50, 100, 200, 500])
+    ax.get_yaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
     ax.set_xlabel("context")
-    ax.set_ylabel("attention + K/V reconstruction, ms per step")
+    ax.set_ylabel("attention + K/V reconstruction, ms per step (log)")
     ax.set_title("The part of the step that depends on context", fontsize=11)
     ax.spines[["top", "right"]].set_visible(False)
     ax.grid(color="#e7eaef", linewidth=0.8)
     ax.set_axisbelow(True)
-    ax.legend(frameon=False, fontsize=9)
+    ax.legend(frameon=False, fontsize=8, loc="lower right")
     fig.tight_layout()
     fig.savefig(out_png, dpi=150)
     plt.close(fig)
@@ -137,13 +160,22 @@ def bridge_figure(out_png, ctx=4096, ratio="50"):
     ax.set_xticks(range(len(steps)))
     ax.set_xticklabels([s[0] for s in steps], rotation=30, ha="right", fontsize=8)
     ax.set_ylabel("ms per decode step")
-    ax.set_title(f"From stock to naive to fused, ratio 0.{ratio}, {ctx // 1024}k context, batch 32", fontsize=11)
+    ax.set_ylim(0, max(v if b is None else b + max(v, 0) for _, v, b in steps) * 1.14)
+    ax.set_title(f"From stock to naive to fused, ratio 0.{ratio}, {ctx // 1024}k context, batch 32", fontsize=11, pad=12)
     ax.spines[["top", "right"]].set_visible(False)
     ax.grid(axis="y", color="#e7eaef", linewidth=0.8)
     ax.set_axisbelow(True)
     fig.tight_layout()
     fig.savefig(out_png, dpi=150)
     plt.close(fig)
+
+
+def _op_note(o):
+    """Second label line: category, plus the ranks for an attention op (that is what varies between layers)."""
+    if o["category"] != "attention":
+        return o["category"]
+    r_k = o["in1"][-1] if o["op"].startswith("Palu") else 128
+    return f"r_k {r_k} / r_v {o['out'][-1]}"
 
 
 def top_ops_figure(out_png, ctx=4096, rows=("baseline", "palu_full_50_fk2", "palu_full_70_fk2"), n=10):
@@ -155,10 +187,14 @@ def top_ops_figure(out_png, ctx=4096, rows=("baseline", "palu_full_50_fk2", "pal
     if len(profs) == 1:
         axes = [axes]
     for ax, (r, p) in zip(axes, profs):
+        ax.set_xlim(0, max(o["ms"] for _, q in profs for o in q["ops"][:n]) * 1.30)
         ops = p["ops"][:n]
-        labels = [f"{o['op'].replace('DeviceOperation', '')} x{o['count']:.0f}\n{o['category']}" for o in ops]
+        labels = [f"{o['op'].replace('DeviceOperation', '')} x{o['count']:.0f}\n{_op_note(o)}" for o in ops]
         ax.barh(range(len(ops))[::-1], [o["ms"] for o in ops], color=[CAT_COLOR.get(o["category"], "#999") for o in ops],
                 edgecolor="#d8dce3", linewidth=0.5)
+        for y, o in zip(range(len(ops))[::-1], ops):
+            ax.text(o["ms"] + 0.3, y, f"{o['ms'] / max(o['count'], 1e-9):.2f} ms/call", va="center", fontsize=6.5,
+                    color="#55606e")
         ax.set_yticks(range(len(ops))[::-1])
         ax.set_yticklabels(labels, fontsize=7)
         ax.set_title(f"{ROW_LABEL[r]}: {p['device_ms_per_step']:.1f} ms/step", fontsize=10)
