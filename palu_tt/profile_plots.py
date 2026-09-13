@@ -7,7 +7,7 @@ Figures:
                              op category, one bar per row
   profile_attention_ctx.png  attention + K-reconstruction device time per step against context, per row
   profile_bridge_4k.png      how the ratio-0.5 rows differ from stock at 4k: stock -> naive (what the
-                             host-side reconstruction adds) -> fused (what the kernel removes)
+                             reconstruction adds as separate device ops) -> fused (what the kernel removes)
   profile_top_ops_4k.png     the largest op signatures at 4k for stock and the two fused rows
 """
 import json
@@ -31,7 +31,7 @@ CATS = ("attention", "k_recon", "mlp", "ccl", "qkv", "wo", "lm_head", "norm", "h
 CAT_COLOR = {"attention": "#5347c9", "k_recon": "#eb6834", "mlp": "#8f99a7", "ccl": "#b8bfca", "qkv": "#6b7684",
              "wo": "#7f8896", "lm_head": "#a1a9b5", "norm": "#c9cfd8", "heads": "#d3d8df", "cache": "#dde1e7",
              "elementwise": "#e6e9ee", "layout": "#eef0f3", "other": "#f4f5f8"}
-CAT_LABEL = {"attention": "attention op", "k_recon": "K/V reconstruction (host-side ops)", "mlp": "MLP matmuls",
+CAT_LABEL = {"attention": "attention op", "k_recon": "K/V reconstruction (separate device ops)", "mlp": "MLP matmuls",
              "ccl": "cross-chip CCL", "qkv": "QKV matmul", "wo": "wo matmul", "lm_head": "lm_head", "norm": "RMSNorm",
              "heads": "heads / RoPE", "cache": "KV cache update", "elementwise": "elementwise", "layout": "layout", "other": "other"}
 

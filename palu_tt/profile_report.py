@@ -15,7 +15,8 @@ into a category, and writes ``docs/results/raw/profile_<name>.json``:
 Categories (what a decode step is made of):
   attention      the decode attention op itself: stock SDPA decode, the MLA op used by the naive Palu path,
                  or the fused palu_sdpa_decode
-  k_recon        the naive Palu path's host-side K/V reconstruction: latent @ U matmuls, the prefill-mode
+  k_recon        the naive Palu path's K/V reconstruction, issued as separate device ops from Python
+                 (nothing runs on the CPU): latent @ U matmuls, the prefill-mode
                  RoPE over the rebuilt K, typecasts and slices of the reconstructed tensors
   qkv            the fused QKV projection matmul
   wo             the output projection matmul

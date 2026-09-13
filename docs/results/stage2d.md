@@ -70,7 +70,8 @@ in these same profiles (§1). Percentages quoted as "% of roofline" are against 
 ![What a decode step is made of](profile_breakdown.png)
 
 Device ms per step, split into the attention block (the attention op plus, for the naive rows, the
-host-side K/V reconstruction) and everything else:
+K/V reconstruction, which runs as separate device ops issued from Python -- nothing in it runs on the
+CPU; "outside the kernel" is the distinction, not "on the host") and everything else:
 
 | row | ctx | total | attention op | k_recon | everything else |
 |---|---|---|---|---|---|
