@@ -92,7 +92,7 @@ def test_window_counts_come_from_the_json(tmp_path):
     _write(raw, "ppl_baseline", {"ppl": 7.25, "windows": 7, "row": "baseline", "palu_dir": None})
     md = report.main(raw=raw, out=None)
     assert "ppl (device, 7 windows)" in md
-    assert "141" not in md
+    assert "141 windows" not in md   # the commit hash in the header may contain any digits
     # no perplexity JSON at all for the CPU column -> no number is asserted
     assert "ppl (CPU fp32, ? windows)" in md
 
