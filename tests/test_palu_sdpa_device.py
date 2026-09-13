@@ -79,10 +79,10 @@ def _fused(md, q, k_lat, u_k, v, pos, cos, sin, r_v, k_chunk, phase2, rot_mode="
     return _host(out)
 
 
-def _check(md, batch, S, r_k, r_v, k_chunk, phase2, pcc_ref=0.99, pcc_stock=0.995):
+def _check(md, batch, S, r_k, r_v, k_chunk, phase2, rot_mode="legacy", pcc_ref=0.99, pcc_stock=0.995):
     q, k_lat, u_k, v, pos, cos, sin = _inputs(batch, S, r_k, r_v)
     ref = fused.reference_decode(q, k_lat, u_k, v, pos, cos, sin, HD ** -0.5)
-    out = _fused(md, q, k_lat, u_k, v, pos, cos, sin, r_v, k_chunk, phase2)
+    out = _fused(md, q, k_lat, u_k, v, pos, cos, sin, r_v, k_chunk, phase2, rot_mode=rot_mode)
     assert out.shape == (1, batch, NH, r_v)
     ok, msg = comp_pcc(ref, out, pcc_ref)
     assert ok, f"vs fp32 reference: {msg}"
@@ -126,10 +126,14 @@ def test_envelope_is_enforced(mesh_device):
                                           _dev(mesh_device, v), **bad)
 
 
+ROT_MODES = ["legacy", "pack", "dst"]
+
+
+@pytest.mark.parametrize("rot_mode", ROT_MODES)
 @pytest.mark.parametrize("r_k", [32, 64, 96])
 @pytest.mark.parametrize("batch", [1, 32])
-def test_phase2_matches_reference_default_chunk(mesh_device, r_k, batch):
-    _check(mesh_device, batch, 1024, r_k, 64, k_chunk=0, phase2=True)      # the op picks 512
+def test_phase2_matches_reference_default_chunk(mesh_device, r_k, batch, rot_mode):
+    _check(mesh_device, batch, 1024, r_k, 64, k_chunk=0, phase2=True, rot_mode=rot_mode)      # the op picks 512
 
 
 def test_rot_mode_legacy_is_the_default_and_bogus_is_rejected(mesh_device):
@@ -141,15 +145,28 @@ def test_rot_mode_legacy_is_the_default_and_bogus_is_rejected(mesh_device):
         _fused(mesh_device, q, k_lat, u_k, v, pos, cos, sin, 128, 0, True, rot_mode="bogus")
 
 
+@pytest.mark.parametrize("rot_mode", ["pack", "dst"])
+def test_rot_mode_tracks_legacy_closely(mesh_device, rot_mode):
+    """The new modes round K_rot twice (bf16 pack, then the accumulating pack); against legacy's single
+    rounding the outputs must still agree to PCC 0.999 at every calibrated rank."""
+    for r_k in (32, 64, 96):
+        q, k_lat, u_k, v, pos, cos, sin = _inputs(32, 2048, r_k, 128)
+        a = _fused(mesh_device, q, k_lat, u_k, v, pos, cos, sin, 128, 0, True, rot_mode="legacy")
+        b = _fused(mesh_device, q, k_lat, u_k, v, pos, cos, sin, 128, 0, True, rot_mode=rot_mode)
+        ok, msg = comp_pcc(a, b, 0.999)
+        assert ok, f"r_k={r_k} {rot_mode} vs legacy: {msg}"
+
+
 @pytest.mark.parametrize("k_chunk", [128, 512])
 def test_phase2_chunk_override(mesh_device, k_chunk):
     _check(mesh_device, 32, 1024, 64, 64, k_chunk=k_chunk, phase2=True)
 
 
+@pytest.mark.parametrize("rot_mode", ROT_MODES)
 @pytest.mark.parametrize("S", [4096, 8192])
-def test_phase2_long_context(mesh_device, S):
+def test_phase2_long_context(mesh_device, S, rot_mode):
     # batch 1 -> 16 cores per KV head -> every core starts at a different chunk (k_chunk_start steps)
-    _check(mesh_device, 1, S, 64, 64, k_chunk=0, phase2=True)
+    _check(mesh_device, 1, S, 64, 64, k_chunk=0, phase2=True, rot_mode=rot_mode)
 
 
 def test_phase2_long_context_full_batch(mesh_device):
@@ -375,29 +392,31 @@ def test_group_shared_with_sequence_split_matches_per_head(mesh_device, batch, H
     assert ok, f"vs fp32 reference: {msg}"
 
 
+@pytest.mark.parametrize("rot_mode", ["legacy", "pack"])
 @pytest.mark.parametrize("r_k,r_v", [(64, 512), (128, 256), (288, 512)], ids=["rk64_rv512", "rk128_rv256", "rk288_rv512"])
 @pytest.mark.parametrize("phase2", [False, True], ids=["p1", "p2"])
-def test_group_shared_batch32_matches_stock_split(mesh_device, r_k, r_v, phase2):
+def test_group_shared_batch32_matches_stock_split(mesh_device, r_k, r_v, phase2, rot_mode):
     """``heads_per_core=None`` at batch 32 is the stock split -- two heads per core, one core per head,
     per-head kernel. ``heads_per_core=2`` is the group kernel on exactly that layout -- two heads per
     core, one core per head, no sequence split -- so this isolates the shared latent read from any
     change of work assignment. No core has a child here, so the branch that differs in precision (the
     softmax correction) never runs and the bit-identity bar applies."""
     args = _inputs_group(32, 2048, r_k, r_v, 4)
-    stock = _fused_group(mesh_device, *args, 128, phase2, heads_per_core=None)
-    shared = _fused_group(mesh_device, *args, 128, phase2, heads_per_core=2)
+    stock = _fused_group(mesh_device, *args, 128, phase2, heads_per_core=None, rot_mode=rot_mode)
+    shared = _fused_group(mesh_device, *args, 128, phase2, heads_per_core=2, rot_mode=rot_mode)
     _assert_matches(stock, shared, "group-shared vs the stock split", bitwise=True)
     ok, msg = _group_ref_pcc(*args, shared)
     assert ok, f"vs fp32 reference: {msg}"
 
 
-def test_heads_per_core_1_is_the_stock_split(mesh_device):
+@pytest.mark.parametrize("rot_mode", ["legacy", "pack"])
+def test_heads_per_core_1_is_the_stock_split(mesh_device, rot_mode):
     """heads_per_core=1 must mean 'per-head kernel, stock work split' -- not 'pin one head per core'.
     At batch 32 the stock split is two heads per core, so pinning 1 would ask for 128 items on the
     64-core grid; the op must instead build the same program as heads_per_core=None."""
     args = _inputs_group(32, 1024, 128, 256, 4)
-    unset = _fused_group(mesh_device, *args, 128, True, heads_per_core=None)
-    one = _fused_group(mesh_device, *args, 128, True, heads_per_core=1)
+    unset = _fused_group(mesh_device, *args, 128, True, heads_per_core=None, rot_mode=rot_mode)
+    one = _fused_group(mesh_device, *args, 128, True, heads_per_core=1, rot_mode=rot_mode)
     assert torch.equal(unset, one)
 
 
