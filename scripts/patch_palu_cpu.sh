@@ -137,6 +137,29 @@ p.write_text(s)
 PY
 
 grep -n "cuda()" palu/*.py palu/model/modules/*.py utils.py compress.py 2>/dev/null || echo "no .cuda() left"
+
+# compress.py: --ranks_json replaces the rank search with a supplied per-module rank list
+# (stage 2f uniform-rank dumps). Keys are module names, values the per-group rank lists.
+python3 - <<'PY'
+import pathlib
+p = pathlib.Path("compress.py"); s = p.read_text()
+old = "    search_results, rank_sum, total_rank = rank_search(model, tokenizer, args)\n"
+new = ("    if getattr(args, 'ranks_json', None):\n"
+       "        import json\n"
+       "        search_results = json.load(open(args.ranks_json))\n"
+       "        rank_sum = sum(sum(v) for v in search_results.values())\n"
+       "        total_rank = 0\n"
+       "    else:\n"
+       "        search_results, rank_sum, total_rank = rank_search(model, tokenizer, args)\n")
+if old in s and "getattr(args, 'ranks_json'" not in s:
+    s = s.replace(old, new)
+if '"--ranks_json"' not in s:
+    s = s.replace('    parser.add_argument(\n        "--model_id",',
+                  '    parser.add_argument("--ranks_json", type=str, default=None, help="per-module rank lists; skips the rank search")\n    parser.add_argument(\n        "--model_id",', 1)
+p.write_text(s)
+PY
+grep -n "ranks_json" compress.py >/dev/null || { echo "ranks_json patch missing"; exit 1; }
+
 echo "patch_palu_cpu.sh: applied cleanly"
 
 # svd_linear.py: whitening decomposition in float64. The whitening matrices of Llama-3.1-8B layers 0-1
