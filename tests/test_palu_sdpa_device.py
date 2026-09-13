@@ -484,3 +484,29 @@ def test_per_head_reduction_is_accurate_under_fp32_dest_acc(mesh_device):
     out = _fused_group(mesh_device, *args, 128, True, heads_per_core=None)
     ok, msg = _group_ref_pcc(*args, out, pcc=0.9999)
     assert ok, f"per-head tree reduction under fp32 dest accumulate: {msg}"
+
+
+@pytest.mark.parametrize("batch,S,grid", [(32, 2048, (8, 8)), (8, 2048, (8, 8)), (1, 2048, (8, 8)),
+                                          (32, 2048, (8, 6)), (5, 512, (8, 8))],
+                         ids=["b32_full", "b8_split", "b1_split16", "b32_partial_columns", "b5_idle_leader"])
+def test_table_mcast_is_bit_identical(mesh_device, batch, S, grid):
+    """One leader per grid column reads the Phase 2 table and multicasts it; every layout (full columns,
+    sequence splits, and an 8x6 grid at batch 32 where 32 of 48 cores are active so columns are partial)
+    must produce exactly the output of the per-core read.
+
+    b5_idle_leader is the layout that pins where the multicast has to sit in the reader: batch 5 is 3
+    cores per (batch, KV head), a 512-row cache is one chunk, so only the first core of each triple has
+    work and the other two return early -- and 3 does not divide the row stride, so in five of the eight
+    columns the leader is one of the cores with no chunk. It must still read and multicast the table, or
+    the receivers below it wait on the semaphore forever."""
+    q, k_lat, u_k, v, pos, cos, sin = _inputs(batch, S, 32, 128)
+    c = fused.chunk_size(S)
+    extra = dict(rot_step=_dev(mesh_device, fused.rot_step_table(cos, sin, c)[None, None], ttnn.float32),
+                 trans_mat=_dev(mesh_device, fused.trans_mat_tile()))
+    def run(mcast):
+        out = ttnn.transformer.palu_sdpa_decode(
+            _dev(mesh_device, q), _dev(mesh_device, k_lat), _dev(mesh_device, fused.w_rot_from_u_k(u_k)[None]),
+            _dev(mesh_device, fused.cs_table(cos, sin, S)[None, None]), _dev(mesh_device, v), head_dim_v=128,
+            cur_pos_tensor=_pos(mesh_device, pos), scale=HD ** -0.5, table_mcast=mcast, **extra, **_cfg(0, grid))
+        return _host(out)
+    assert torch.equal(run(False), run(True))
