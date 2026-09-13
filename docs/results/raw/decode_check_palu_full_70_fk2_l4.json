@@ -1,0 +1,16 @@
+{
+ "row": "palu_full_70_fk2_l4",
+ "palu_dir": "compressed/palu_full_0.7",
+ "fused": "p2",
+ "fused_k_chunk": null,
+ "group_heads": "1",
+ "group_heads_per_layer": [],
+ "rot_mode": "legacy",
+ "table_mcast": "off",
+ "latent_dtype": "bfp4",
+ "latent_scale": "balanced",
+ "steps": 63,
+ "pcc_mean": 0.998297945062792,
+ "pcc_min": 0.9959094041029204,
+ "argmax_agree": 0.9047619104385376
+}
