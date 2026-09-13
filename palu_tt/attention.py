@@ -309,6 +309,7 @@ class PaluAttention(LightweightModule):
                     h = fused.group_heads_per_core(
                         self.r_k, self.r_v, chunk, self.phase2, self.gs,
                         batch=self.max_batch_size, num_kv_heads=self.n_local_kv_heads,
+                        rot_mode=self.rot_mode,
                         latent_tile_bytes=LATENT_TILE_BYTES.get(self.latent_dtype, 2048))
                 self.group_heads = max(1, min(int(h), self.gs))
                 if self.gs % self.group_heads != 0:

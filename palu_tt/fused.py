@@ -141,13 +141,16 @@ L1_CB_BUDGET_BYTES = L1_MODEL_CEILING_BYTES - L1_RUNTIME_BASE_BYTES - L1_SAFETY_
 
 def palu_l1_cb_bytes(r_k: int, r_v: int, chunk: int, phase2: bool, heads_per_core: int,
                      cores_per_head: int = 4, tree_rounds: int = 2, head_dim: int = 128,
-                     q_head_tiles: int = 1, latent_tile_bytes: int = 1088, batch: int = 32) -> int:
+                     q_head_tiles: int = 1, latent_tile_bytes: int = 1088, batch: int = 32,
+                     rot_mode: str = "legacy") -> int:
     """Bytes of circular buffer the program factory allocates per core, for one fused-decode program.
 
     ``cores_per_head`` / ``tree_rounds`` describe the sequence split; the default is the widest one
     group-shared mode allows (the program factory caps it at 4 cores per item, i.e. two tree rounds),
     because the receive slots for the tree reduction are sized per head in group-shared mode.
     ``latent_tile_bytes`` is 1088 for a bfp8 latent cache (the default), 2048 for bf16.
+    ``rot_mode`` is the stage 2e K-rebuild mode: "dst" never stages the AB block through c_10, so the
+    factory shrinks that slot to the group-mode peel scratch (PNHt tiles); "legacy" and "pack" keep it.
     """
     t, f = 2048, 4096                       # bf16 / fp32 32x32 tile
     dht = head_dim // 32                    # head dim in tiles
@@ -167,7 +170,7 @@ def palu_l1_cb_bytes(r_k: int, r_v: int, chunk: int, phase2: bool, heads_per_cor
     n += 2 * cur_pos_stick                                        # c_8 / c_15 cur_pos
     n += sk * rt * 2 * latent_tile_bytes                          # c_9  K latent
     n += h * (rt * wt + rvt * dht + p2) * t                       # c_4  H resident weight blocks
-    n += 2 * wt * t                                               # c_10 AB
+    n += (q_head_tiles if rot_mode == "dst" else 2 * wt) * t      # c_10 AB block (dst mode: peel scratch only)
     n += (sk * wt if phase2 else 2 * sk * wt) * t                 # c_13 [cos | sin]
     if phase2:
         n += 4 * q_head_tiles * dht * f                           # c_12 rotated-query state
@@ -213,7 +216,7 @@ def _split_for(h: int, batch: int, num_kv_heads: int, grid_cores: int, max_cores
 def group_heads_per_core(r_k: int, r_v: int, chunk: int, phase2: bool, heads_per_group: int,
                          l1_budget_bytes: int = L1_CB_BUDGET_BYTES, batch: int = 32,
                          num_kv_heads: int = 0, grid_cores: int = 64, max_cores_per_head: int = 16,
-                         **kwargs) -> int:
+                         rot_mode: str = "legacy", **kwargs) -> int:
     """Largest H dividing ``heads_per_group`` whose program fits L1 (spec §3.3).
 
     ``batch`` (and the grid) matter because the sequence split follows from them, and in group mode the
@@ -249,7 +252,8 @@ def group_heads_per_core(r_k: int, r_v: int, chunk: int, phase2: bool, heads_per
             continue
         cores, rounds, active = _split_for(h, batch, n_kv, grid_cores, max_cores_per_head)
         if h == 1 or palu_l1_cb_bytes(r_k, r_v, chunk, phase2, h, cores_per_head=cores,
-                                      tree_rounds=rounds, batch=batch, **kwargs) <= l1_budget_bytes:
+                                      tree_rounds=rounds, batch=batch, rot_mode=rot_mode,
+                                      **kwargs) <= l1_budget_bytes:
             fits.append((h, active, rounds))
     best_active = max(a for _, a, _ in fits)
     full = [(h, r) for h, a, r in fits if a == best_active]

@@ -187,6 +187,14 @@ def test_l1_cb_model_matches_the_factory_allocator_report():
     assert fused.L1_CB_BUDGET_BYTES + fused.L1_RUNTIME_BASE_BYTES < fused.L1_MAX_BYTES
 
 
+def test_l1_model_drops_the_ab_block_in_dst_mode():
+    legacy = fused.palu_l1_cb_bytes(32, 128, 512, True, 1, cores_per_head=1)
+    dst = fused.palu_l1_cb_bytes(32, 128, 512, True, 1, cores_per_head=1, rot_mode="dst")
+    # c_10 goes from 2 * Wt = 16 bf16 tiles to PNHt = 1 tile
+    assert legacy - dst == (16 - 1) * 2048
+    assert fused.palu_l1_cb_bytes(32, 128, 512, True, 1, cores_per_head=1, rot_mode="pack") == legacy
+
+
 def test_group_heads_per_core_falls_back_to_the_per_head_kernel_below_batch_8():
     """The occupancy gate turns group mode off at batch 4 and below, which is what a batch-1 harness
     (decode_check) would get from ``auto``: a four-head group is 4 items over 4 cores there (16 of 64),

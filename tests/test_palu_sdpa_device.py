@@ -392,7 +392,7 @@ def test_group_shared_with_sequence_split_matches_per_head(mesh_device, batch, H
     assert ok, f"vs fp32 reference: {msg}"
 
 
-@pytest.mark.parametrize("rot_mode", ["legacy", "pack"])
+@pytest.mark.parametrize("rot_mode", ROT_MODES)
 @pytest.mark.parametrize("r_k,r_v", [(64, 512), (128, 256), (288, 512)], ids=["rk64_rv512", "rk128_rv256", "rk288_rv512"])
 @pytest.mark.parametrize("phase2", [False, True], ids=["p1", "p2"])
 def test_group_shared_batch32_matches_stock_split(mesh_device, r_k, r_v, phase2, rot_mode):
@@ -409,7 +409,7 @@ def test_group_shared_batch32_matches_stock_split(mesh_device, r_k, r_v, phase2,
     assert ok, f"vs fp32 reference: {msg}"
 
 
-@pytest.mark.parametrize("rot_mode", ["legacy", "pack"])
+@pytest.mark.parametrize("rot_mode", ROT_MODES)
 def test_heads_per_core_1_is_the_stock_split(mesh_device, rot_mode):
     """heads_per_core=1 must mean 'per-head kernel, stock work split' -- not 'pin one head per core'.
     At batch 32 the stock split is two heads per core, so pinning 1 would ask for 128 items on the
@@ -418,6 +418,17 @@ def test_heads_per_core_1_is_the_stock_split(mesh_device, rot_mode):
     unset = _fused_group(mesh_device, *args, 128, True, heads_per_core=None, rot_mode=rot_mode)
     one = _fused_group(mesh_device, *args, 128, True, heads_per_core=1, rot_mode=rot_mode)
     assert torch.equal(unset, one)
+
+
+def test_dst_mode_three_inner_tiles_group(mesh_device):
+    """r_k 96 (three latent tiles) in group-shared mode: the two matmul_block loops per trip run three
+    accumulating steps each, with the per-head weight-block base applied to both halves."""
+    args = _inputs_group(32, 2048, 96, 256, 4)
+    per_head = _fused_group(mesh_device, *args, 128, True, heads_per_core=None, rot_mode="dst")
+    shared = _fused_group(mesh_device, *args, 128, True, heads_per_core=2, rot_mode="dst")
+    _assert_matches(per_head, shared, "dst: group-shared vs the stock split", bitwise=True)
+    ok, msg = _group_ref_pcc(*args, shared)
+    assert ok, f"vs fp32 reference: {msg}"
 
 
 def test_group_shared_phase_b_envelope_is_enforced(mesh_device):
