@@ -534,27 +534,110 @@ def test_stage2c_tables_have_matching_header_and_separator_widths(tmp_path):
             assert line.count("|") == lines[i + 1].count("|"), (line, lines[i + 1])
 
 
-def test_stage2e_tables_render_from_the_raw_dir(tmp_path):
-    """Against the real ``docs/results/raw`` dir, as it stands while the stage 2e measurement matrix
-    is still running: only some of ``ROWS2E``'s rows have JSONs yet. The renderer must still produce
-    all four tables, with a row's or variant's absence rendered as a one-line note (never a crash),
-    and must still pass once every row shows up."""
-    from palu_tt import report
+def _prof(entries):
+    """A minimal ``profile_<row>_<ctx>.json`` -- ``profile_fit.fit_signatures`` only reads ``ops``.
+    ``entries`` is ``(op, in1_last, out_last, ms, count)``."""
+    return {"ops": [{"op": op, "category": "attention", "ms": ms, "count": count,
+                     "in1": [0, 0, 0, in1_last], "out": [0, 0, 0, out_last]}
+                    for op, in1_last, out_last, ms, count in entries]}
+
+
+def _decode_check(pcc_min, pcc_mean, argmax, steps=63):
+    return {"steps": steps, "pcc_mean": pcc_mean, "pcc_min": pcc_min, "argmax_agree": argmax}
+
+
+def test_stage2e_tables_render_from_a_fixture_raw_dir(tmp_path):
+    """A synthetic fixture raw dir, not the live ``docs/results/raw`` -- a measurement queue writes
+    there concurrently with this test suite running, and a half-written JSON must never be able to
+    fail (or flake) this test. The fixture models the same "matrix partially complete" shape the
+    generator has to tolerate: full data for one variant ("" / legacy), a single measured context for
+    another ("p" / pack, not yet fittable), and none at all for a third ("d" / dst)."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+
+    # Reference rows (baseline, the naive Palu row) -- the ablation table's stock-signature fit must
+    # come from these two alone.
+    for ctx, ms in ((1024, 7.0), (4096, 15.0), (8192, 28.0)):
+        _write(raw, f"profile_baseline_{ctx}", _prof([("SdpaDecodeDeviceOperation", 128, 128, ms, 32.0)]))
+        _write(raw, f"profile_palu_full_50_{ctx}", _prof([("SdpaDecodeDeviceOperation", 128, 128, ms + 1, 32.0)]))
+    # The "" (legacy) variant's own two rows: fully measured at all three contexts.
+    for ctx, ms in ((1024, 6.0), (4096, 11.0), (8192, 20.0)):
+        _write(raw, f"profile_palu_full_50_fk2_{ctx}", _prof([("PaluSdpaDecodeDeviceOperation", 32, 128, ms, 18.0)]))
+        _write(raw, f"profile_palu_full_70_fk2_{ctx}", _prof([("PaluSdpaDecodeDeviceOperation", 64, 128, ms + 2, 18.0)]))
+    # The "p" (pack) variant: exactly one context measured for one of its two rows -- not enough for a
+    # fit (needs two distinct contexts), but not "no data" either.
+    _write(raw, "profile_palu_full_50_fk2p_8192", _prof([("PaluSdpaDecodeDeviceOperation", 32, 128, 19.0, 18.0)]))
+    # The "d" (dst) variant: no profile JSON at all.
+
+    _write(raw, "bench_decode_baseline", {
+        "row": "baseline", "kind": "stock", "palu_dir": None, "what": "decode",
+        "data": {"1024": {"p50_ms": 38.0, "min_ms": 38.0}, "4096": {"p50_ms": 55.4, "min_ms": 55.4},
+                 "8192": {"error": "TT_FATAL ... Out of Memory", "phase": "build", "exc": "RuntimeError"}},
+    })
+    _write(raw, "bench_decode_palu_full_50_fk2", {
+        "row": "palu_full_50_fk2", "kind": "palu", "palu_dir": "/x", "what": "decode",
+        "data": {"1024": {"p50_ms": 42.9, "min_ms": 42.9, "kv_bytes_per_token_per_layer_per_chip": 680.0},
+                 "4096": {"p50_ms": 65.0, "min_ms": 65.0}, "8192": {"p50_ms": 94.5, "min_ms": 94.5}},
+    })
+    _write(raw, "bench_decode_palu_full_50_fk2_l4", {
+        "row": "palu_full_50_fk2_l4", "kind": "palu", "palu_dir": "/x", "what": "decode",
+        "data": {"1024": {"p50_ms": 42.7, "min_ms": 42.7, "kv_bytes_per_token_per_layer_per_chip": 360.0},
+                 "4096": {"p50_ms": 64.7, "min_ms": 64.7}},
+    })
+    _write(raw, "bench_decode_palu_full_70_fk2", {
+        "row": "palu_full_70_fk2", "kind": "palu", "palu_dir": "/y", "what": "decode",
+        "data": {"1024": {"p50_ms": 43.1, "min_ms": 43.1}, "4096": {"p50_ms": 66.4, "min_ms": 66.4},
+                 "8192": {"p50_ms": 97.7, "min_ms": 97.7}},
+    })
+
+    _write(raw, "decode_check_palu_full_50_fk2", _decode_check(0.9980, 0.9994, 0.921))
+    _write(raw, "decode_check_palu_full_70_fk2", _decode_check(0.9988, 0.9993, 0.984))
+    _write(raw, "decode_check_palu_full_50_fk2_l4", _decode_check(0.9935, 0.9987, 0.905))
+
+    _write(raw, "ppl_palu_full_50", {"ppl": 12.930530567327075, "windows": 141, "row": "palu_full_50",
+                                     "kind": "palu", "palu_dir": "compressed/palu_full_0.5"})
+    _write(raw, "ppl_palu_full_50_l4", {"ppl": 12.930530567327075, "windows": 141, "row": "palu_full_50_l4",
+                                        "kind": "palu", "palu_dir": "compressed/palu_full_0.5"})
+
     out = tmp_path / "stage2e.md"
 
-    text = report.main(raw=report.RAW, out=out, rows=report.ROWS2E, stage="2e")
+    text = report.main(raw=raw, out=out, rows=report.ROWS2E, stage="2e")
 
     assert out.read_text() == text
-    assert "| variant |" in text and "fixed us" in text          # the ablation table
-    assert "palu_full_50_fk2" in text and "baseline" in text     # whole-step table
-    assert "bfp4" in text                                        # the L4 table
-    # rows already measured at the time this test was written must render as real numbers, not dashes
-    # or "(not measured)" -- this is the tripwire that catches a wiring mistake even while most of the
-    # matrix is still absent.
-    baseline_line = next(l for l in text.splitlines() if l.startswith("| baseline | "))
-    assert "(not measured)" not in baseline_line and baseline_line.count("|") == 7
-    assert "| palu_full_50_fk2 | " in text
-    assert "palu_full_50_fk2 |" in text.split("## Decode fidelity", 1)[1].split("## bfp4", 1)[0]
-    assert "12.931" in text   # ppl_palu_full_50 / ppl_palu_full_50_l4 (12.930530...), identical to 3 dp
+    ablation = text.split("## Kernel variants", 1)[1].split("## Decode step", 1)[0]
+    assert "| variant | signature | rows |" in ablation and "fixed us" in ablation
+
+    # Important 1: "no data" ("d") vs "not fittable" ("p") are distinguished, not both "(not measured)".
+    dst_label = dict(report.VARIANTS2E)["d"]
+    pack_label = dict(report.VARIANTS2E)["p"]
+    assert f"| {dst_label} | (not measured) |" in ablation
+    assert (f"| {pack_label} | (1 context(s) measured: palu_full_50_fk2p @ 8192 -- a fit needs two) |"
+            in ablation)
+
+    # Minor 5: the stock signature's "rows" column is fed by baseline/palu_full_50 only -- restricting
+    # the reference fit means no "_fk2" row can appear in it (that was the fixture pollution finding 5
+    # described: the stock fit picking up a variant row's own leftover noise).
+    stock_line = next(l for l in ablation.splitlines() if "SdpaDecodeDeviceOperation r_k=128 out=128" in l)
+    assert "| baseline, palu_full_50 |" in stock_line
+    assert "fk2" not in stock_line.split("|")[3]   # the "rows" cell specifically, not the whole line
+
+    # whole-step table: both real rows render as numbers, not "(not measured)".
+    assert "| palu_full_50_fk2 | 42.9 | 65.0 | 94.5 |" in text
+    assert "| baseline | " in text and "(not measured)" not in next(
+        l for l in text.splitlines() if l.startswith("| baseline | "))
+
+    # Important 2: the bfp4-latent (L4) row reaches the fidelity table (main() loads it on top of
+    # ROWS2E specifically for this table). Minor 6: the step count is back in the header.
+    assert "decode_check`, 63 teacher-forced steps)" in text
+    fidelity = text.split("## Decode fidelity", 1)[1].split("## bfp4", 1)[0]
+    assert "| palu_full_50_fk2 | 0.9980 / 0.9994 | 0.921 |" in fidelity
+    assert "| palu_full_50_fk2_l4 | 0.9935 / 0.9987 | 0.905 |" in fidelity
+
+    # Minor 9: the bfp8/bfp4 perplexity cells are checked for equality, not against a hard-coded number.
+    bfp4 = text.split("## bfp4 latents", 1)[1]
+    ppl_row = next(l for l in bfp4.splitlines() if l.startswith("| palu_full_50 | "))
+    cells = [c.strip() for c in ppl_row.split("|")]
+    ppl8, ppl4 = cells[2], cells[3]
+    assert ppl8 == ppl4 and ppl8 != "-"
     assert "ppl (prefill-blind, see stage 2f)" in text
-    assert "stage 2f" in text.split("## bfp4", 1)[1]              # the caveat sentence under the table
+    assert "stage 2f" in bfp4   # the caveat sentence under the table

@@ -25,6 +25,17 @@ sensitivity for G-LRD at 256 Fisher samples (against the stage 2b 32-sample rows
 shared-latent ("group-shared") fused kernel's decode/attention timings against the stage 2b
 per-head ``_fk2`` rows, plus decode fidelity and batch-8 max context for the new rows.
 
+Stage 2e (``--stage 2e``) renders ``docs/results/stage2e.md``: a per-variant ablation fit
+(``profile_fit.fit_signatures``) for each of the ``VARIANTS2E`` rotation-kernel modes, the whole
+decode step for every ``ROWS2E`` row, decode fidelity (including the bfp4-latent ``_l4`` rows,
+loaded on top of ``rows`` specifically for this table), and the bfp4-latent (``L4``) perplexity/KV/
+fidelity comparison. The measurement matrix can still be running when this renders, so a variant or
+row with no JSON yet renders as an explicit note rather than a crash or an invented number; the
+ablation table distinguishes a variant with *no* profile JSON at all (``(not measured)``) from one
+with fewer than the two distinct contexts a fit needs (``(N context(s) measured: ...)``), since the
+two mean different things and collapsing them would silently misreport a partially-measured variant
+as unmeasured.
+
 Usage: ``python -m palu_tt.report [--stage 2]`` (writes the file and prints it).
 ``main(raw=..., out=..., rows=...)`` takes the paths and the row set as parameters so either stage
 can be rendered from a fixture directory in tests.
@@ -125,6 +136,11 @@ for _sfx, _label in VARIANTS2E:
 # ``bench_decode`` are each variant's own files, bfp8 vs bfp4.
 L4_ROWS2E = (("palu_full_50", "palu_full_50_l4", "palu_full_50_fk2", "palu_full_50_fk2_l4"),
              ("palu_full_70", "palu_full_70_l4", "palu_full_70_fk2", "palu_full_70_fk2_l4"))
+# The ablation table's stock-signature reference fit (Task 8 fix): baseline and the naive Palu row
+# only, never a variant's own ``_fk2*`` row -- a variant row can carry a leftover count=1 stock-kernel
+# op (an uncompressed layer), and mixing that in shifts the published stock fit away from stage 2d's
+# own 47.7/88.4 fixed/per-chunk us.
+REF_ROWS2E = ("baseline", "palu_full_50")
 TASK_COLS = ("openbookqa", "piqa", "arc_easy", "arc_challenge", "winogrande")
 TASK_LABELS = {"openbookqa": "OBQA", "piqa": "PIQA", "arc_easy": "ARC-e",
                "arc_challenge": "ARC-c", "winogrande": "WinoGrande"}
@@ -506,19 +522,24 @@ def _latency_rows(rows, loaded, stock_dec, vs_stock):
 
 def main(raw=RAW, out=OUT, rows=ROWS, stage=None):
     """Render one stage's tables. ``rows`` is ``ROWS`` (stage 1), ``ROWS2`` (stage 2), ``ROWS2B``,
-    ``ROWS2C`` or ``ROWS2E``. ``stage`` is normally inferred from ``rows`` by identity, matching the
-    older stages' own convention; pass it explicitly (``stage="2e"``) when calling with a ``rows``
-    dict that is not literally ``ROWS2E`` itself (e.g. a subset built for a test).
+    ``ROWS2C`` or ``ROWS2E``. ``stage`` resolves to one explicit id up front: an explicit
+    ``stage=...`` always wins (so ``stage="2e"`` renders 2e even for a ``rows`` dict that is not
+    literally ``ROWS2E`` itself, e.g. a subset built for a test); omitted, it falls back to the
+    older stages' own convention of inferring from ``rows`` by identity. Resolving one id rather
+    than checking ``rows is ROWS2X`` and an explicit ``stage`` string independently means the two
+    can never disagree (``main(rows=ROWS2C, stage="2e")`` used to silently render 2c).
 
     Stage 2 adds the two decode-fidelity columns to the quality table and a ``vs stock`` column to
     the latency table; everything else -- the loaders, the KV arithmetic, the error cells and the
     hand-written tail -- is shared, so the two documents cannot drift apart.
     """
     raw = Path(raw)
-    stage2 = rows is ROWS2
-    stage2b = rows is ROWS2B
-    stage2c = rows is ROWS2C
-    stage2e = stage == "2e" or rows is ROWS2E
+    stage = stage or ("2" if rows is ROWS2 else "2b" if rows is ROWS2B else "2c" if rows is ROWS2C
+                       else "2e" if rows is ROWS2E else "1")
+    stage2 = stage == "2"
+    stage2b = stage == "2b"
+    stage2c = stage == "2c"
+    stage2e = stage == "2e"
     loaded = {row: _row_data(raw, row) for row in rows}
     # A raw directory with nothing in it renders every row as dashes -- and would then overwrite the
     # committed tables with that. That is exactly what a fresh clone or a mistyped --raw looks like,
@@ -544,7 +565,12 @@ def main(raw=RAW, out=OUT, rows=ROWS, stage=None):
         return _finish(_stage2c_lines(raw, rows, loaded), out)
 
     if stage2e:
-        return _finish(_stage2e_lines(raw, rows, loaded), out)
+        # The fidelity table also reports the bfp4-latent (L4) rows, which are not part of ROWS2E
+        # itself (perplexity/KV/decode-fidelity for those is read directly in _stage2e_lines) -- load
+        # them here so they reach the generic "any row with 'fk2' in its name and a decode_check"
+        # fidelity loop without duplicating that loop's logic.
+        loaded = {**loaded, **{r: _row_data(raw, r) for t in L4_ROWS2E for r in (t[2], t[3])}}
+        return _finish(_stage2e_lines(raw, rows, loaded, steps), out)
 
     if stage2:
         lines = [
@@ -941,7 +967,7 @@ def _stage2c_lines(raw, rows, loaded):
     return lines
 
 
-def _stage2e_lines(raw, rows, loaded):
+def _stage2e_lines(raw, rows, loaded, steps):
     """Stage 2e (Task 6/7): the three rotation-kernel modes (legacy/pack/dst), each with and without
     angle-table multicast, plus bfp4 latent caches (L4) -- all on top of the stage 2d fused Phase 2
     M-LRD kernel.
@@ -970,29 +996,44 @@ def _stage2e_lines(raw, rows, loaded):
     ]
 
     # 1. ablation: fixed + per-chunk cost per layer, per kernel variant (the fit from stage 2d
-    # section 4, repeated for each variant). ``sfx == ""`` (legacy) also shows the stock and
-    # naive-Palu reference signatures alongside its own fused one; every other variant shows only its
-    # own fused (``PaluSdpaDecode*``) signature, so the six later blocks do not just repeat the same
-    # two reference rows six times over.
+    # section 4, repeated for each variant). ``sfx == ""`` (legacy) also shows the stock reference
+    # signature(s) -- fit *only* from REF_ROWS2E (baseline, palu_full_50), never from a variant row,
+    # so a count=1 noise op left over in e.g. palu_full_70_fk2's own JSON (an uncompressed layer that
+    # still runs the stock kernel) cannot shift the published stock fit away from stage 2d's own
+    # 47.7/88.4 -- alongside its own fused one; every other variant shows only its own fused
+    # (``PaluSdpaDecode*``) signature, fit from its own two rows only, so the six later blocks do not
+    # just repeat the same two reference rows six times over.
     lines += [
         "## Kernel variants: fixed and per-chunk cost per layer (batch 32)",
         "",
-        "| variant | signature | fixed us | per chunk us | per item per chunk us | points (chunks: us/layer) |",
-        "|---|---|---|---|---|---|",
+        "| variant | signature | rows | fixed us | per chunk us | per item per chunk us | "
+        "points (chunks: us/layer) |",
+        "|---|---|---|---|---|---|---|",
     ]
     for sfx, label in VARIANTS2E:
-        fits = profile_fit.fit_signatures(
-            raw, ["baseline", "palu_full_50", f"palu_full_50_fk2{sfx}", f"palu_full_70_fk2{sfx}"],
-            [1024, 4096, 8192],
-        )
-        shown = [s for s in fits if sfx == "" or s["signature"].startswith("PaluSdpaDecode")]
+        variant_rows = [f"palu_full_50_fk2{sfx}", f"palu_full_70_fk2{sfx}"]
+        shown = [s for s in profile_fit.fit_signatures(raw, variant_rows, [1024, 4096, 8192])
+                 if s["signature"].startswith("PaluSdpaDecode")]
+        if sfx == "":
+            shown = profile_fit.fit_signatures(raw, list(REF_ROWS2E), [1024, 4096, 8192]) + shown
         if not shown:
-            lines.append(f"| {label} | (not measured) |")
+            # No fitted signature: either no profile JSON exists for this variant's rows at all
+            # ("not measured"), or some exist but fewer than the two distinct contexts a fit needs
+            # (fit_signatures silently drops those) -- these mean different things and collapsing
+            # them would misreport a partially-measured variant as untouched.
+            existing = [(row, ctx) for row in variant_rows for ctx in (1024, 4096, 8192)
+                        if (Path(raw) / f"profile_{row}_{ctx}.json").exists()]
+            if existing:
+                desc = ", ".join(f"{row} @ {ctx}" for row, ctx in existing)
+                lines.append(f"| {label} | ({len(existing)} context(s) measured: {desc} -- "
+                             "a fit needs two) |")
+            else:
+                lines.append(f"| {label} | (not measured) |")
             continue
         for s in shown:
             pts = ", ".join(f"{x}: {y:.0f}" for x, y in s["points"])
-            lines.append(f"| {label} | {s['signature']} | {s['fixed_us']:.1f} | {s['per_chunk_us']:.1f} | "
-                         f"{s['per_item_per_chunk_us']:.1f} | {pts} |")
+            lines.append(f"| {label} | {s['signature']} | {', '.join(s['rows'])} | {s['fixed_us']:.1f} | "
+                         f"{s['per_chunk_us']:.1f} | {s['per_item_per_chunk_us']:.1f} | {pts} |")
     lines.append("")
 
     # 2. whole step: decode min_ms at each context, vs stock, for every row in ROWS2E (in order).
@@ -1013,9 +1054,10 @@ def _stage2e_lines(raw, rows, loaded):
         lines.append(f"| {row} | {cells} | {vs} |")
     lines.append("")
 
-    # 3. fidelity of every measured fk2* row (naive vs fused, teacher-forced decode_check).
+    # 3. fidelity of every measured fk2* row (naive vs fused, teacher-forced decode_check), including
+    # the bfp4-latent (_l4) rows main() loads on top of ROWS2E for this table.
     lines += [
-        "## Decode fidelity (`decode_check`, teacher-forced)",
+        f"## Decode fidelity (`decode_check`, {steps} teacher-forced steps)",
         "",
         "| row | PCC min / mean | argmax agree |",
         "|---|---|---|",

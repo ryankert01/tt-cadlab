@@ -6,12 +6,18 @@ Figures:
   profile_breakdown.png      one panel per context (1k / 4k / 8k): device time per decode step, stacked by
                              op category, one bar per row
   profile_attention_ctx.png  attention + K-reconstruction device time per step against context, per row
-  profile_attention_ctx_2e.png  attention device time per step against context, six stage 2e rotation-kernel
-                             variants (legacy/pack/dst x table multicast) of palu_full_50_fk2, vs stock
+  profile_attention_ctx_2e.png  attention device time per step against context, the stage 2e rotation-kernel
+                             variants (``palu_tt.report.VARIANTS2E``: legacy/pack/dst x table multicast,
+                             plus the same-day noise reference "r") of palu_full_50_fk2, vs stock
   profile_bridge_4k.png      how the ratio-0.5 rows differ from stock at 4k: stock -> naive (what the
                              reconstruction adds as separate device ops) -> fused (what the kernel removes)
   profile_top_ops_4k.png     the largest op signatures at 4k for stock and the two fused rows
+
+Run a single figure with ``--only <name>`` (see ``FIGURES`` for the names) instead of regenerating
+all six -- useful since the raw dir can be a live, partially-written measurement matrix and
+re-rendering every figure needlessly touches PNGs no one asked to update.
 """
+import argparse
 import json
 from pathlib import Path
 
@@ -19,6 +25,8 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
+from palu_tt.report import VARIANTS2E
 
 RAW = Path("docs/results/raw")
 OUT_DIR = Path("docs/results")
@@ -129,32 +137,33 @@ def attention_ctx_figure(out_png):
 
 
 def attention_ctx_variants_figure(out_png, dump="palu_full_50"):
-    """Attention block per step against context for the six stage 2e rotation-kernel variants of one
-    dump (legacy/pack/dst, each with and without angle-table multicast), plus stock.
+    """Attention block per step against context for the ``palu_tt.report.VARIANTS2E`` rotation-kernel
+    variants of one dump (legacy/pack/dst, each with and without angle-table multicast, plus the
+    same-day noise reference "r"), plus stock.
 
-    A variant whose profile JSONs are not there yet (the stage 2e measurement matrix can still be
-    running) is simply not plotted -- ``xs``/``ys`` come out empty and the ``if xs:`` guard skips it,
-    so a partial matrix renders a partial figure instead of crashing.
+    The variant list is imported from ``palu_tt.report`` rather than duplicated here, so the figure
+    and the stage 2e ablation table cannot drift apart (they used to: a hardcoded local list here was
+    missing "r"). A variant whose profile JSONs are not there yet (the stage 2e measurement matrix
+    can still be running) is simply not plotted -- ``xs``/``ys`` come out empty and the ``if xs:``
+    guard skips it, so a partial matrix renders a partial figure instead of crashing.
     """
-    variants = [("", "legacy"), ("p", "pack"), ("d", "dst"), ("m", "legacy+mcast"), ("pm", "pack+mcast"),
-                ("dm", "dst+mcast")]
     fig, ax = plt.subplots(figsize=(7.5, 4.6))
     xs = [ctx // 1024 for ctx in CONTEXTS if _load("baseline", ctx)]
     ys = [_cat_ms(_load("baseline", ctx), "attention") for ctx in CONTEXTS if _load("baseline", ctx)]
     if xs:
         ax.plot(xs, ys, marker="o", color=ROW_COLOR["baseline"], label="stock", linewidth=2)
-    for i, (sfx, label) in enumerate(variants):
+    for i, (sfx, label) in enumerate(VARIANTS2E):
         row = f"{dump}_fk2{sfx}"
         xs = [ctx // 1024 for ctx in CONTEXTS if _load(row, ctx)]
         ys = [_cat_ms(_load(row, ctx), "attention") for ctx in CONTEXTS if _load(row, ctx)]
         if xs:
             ax.plot(xs, ys, marker="o", label=label, linewidth=1.6, linestyle="-" if "m" not in sfx else "--",
-                    color=plt.cm.viridis(i / 6))
+                    color=plt.cm.viridis(i / len(VARIANTS2E)))
     ax.set_xticks([c // 1024 for c in CONTEXTS])
     ax.set_xticklabels([f"{c // 1024}k" for c in CONTEXTS])
     ax.set_ylabel("attention ms per decode step (device)")
     ax.set_xlabel("context")
-    ax.set_title(f"{dump}: attention per step, six kernel variants vs stock")
+    ax.set_title(f"{dump}: attention per step, kernel variants vs stock")
     ax.spines[["top", "right"]].set_visible(False)
     ax.grid(color="#e7eaef", linewidth=0.8)
     ax.set_axisbelow(True)
@@ -249,16 +258,31 @@ def top_ops_figure(out_png, ctx=4096, rows=("baseline", "palu_full_50_fk2", "pal
     plt.close(fig)
 
 
-def main():
+# name -> (function, output path). Shared by main() and its ``--only`` flag so "render one figure"
+# and "render all of them" can never silently disagree about what a name means.
+FIGURES = {
+    "breakdown": (breakdown_figure, OUT_DIR / "profile_breakdown.png"),
+    "attention_ctx": (attention_ctx_figure, OUT_DIR / "profile_attention_ctx.png"),
+    "attention_ctx_2e": (attention_ctx_variants_figure, OUT_DIR / "profile_attention_ctx_2e.png"),
+    "bridge_4k": (bridge_figure, OUT_DIR / "profile_bridge_4k.png"),
+    "bridge_4k_70": (lambda p: bridge_figure(p, ratio="70"), OUT_DIR / "profile_bridge_4k_70.png"),
+    "top_ops_4k": (top_ops_figure, OUT_DIR / "profile_top_ops_4k.png"),
+}
+
+
+def main(only=None):
+    """Render every figure in ``FIGURES``, or just ``only`` one of them (its dict key)."""
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    breakdown_figure(OUT_DIR / "profile_breakdown.png")
-    attention_ctx_figure(OUT_DIR / "profile_attention_ctx.png")
-    attention_ctx_variants_figure(OUT_DIR / "profile_attention_ctx_2e.png")
-    bridge_figure(OUT_DIR / "profile_bridge_4k.png")
-    bridge_figure(OUT_DIR / "profile_bridge_4k_70.png", ratio="70")
-    top_ops_figure(OUT_DIR / "profile_top_ops_4k.png")
-    print("wrote", sorted(str(p.name) for p in OUT_DIR.glob("profile_*.png")))
+    names = [only] if only else list(FIGURES)
+    for name in names:
+        fn, out_png = FIGURES[name]
+        fn(out_png)
+    print("wrote", [FIGURES[name][1].name for name in names])
 
 
 if __name__ == "__main__":
-    main()
+    ap = argparse.ArgumentParser(description="Render docs/results/profile_*.png from the raw JSONs.")
+    ap.add_argument("--only", choices=sorted(FIGURES), default=None,
+                     help="render only this one figure instead of all six")
+    a = ap.parse_args()
+    main(only=a.only)

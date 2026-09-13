@@ -61,15 +61,41 @@ def test_ctx_scaling_figure_skips_a_row_with_no_decode_json(tmp_path):
     assert out.exists() and out.stat().st_size > 0
 
 
-def test_attention_ctx_variants_figure_renders_a_nonempty_png(tmp_path):
-    """Stage 2e's six rotation-kernel-variant figure, against the real docs/results/raw (like
-    palu_tt.profile_plots's other figures, it has no ``raw`` parameter of its own). Some variants
-    have no profile JSON yet while the stage 2e matrix is still running; the figure must still
-    render rather than crash."""
-    from palu_tt import profile_plots
+def _profile(ms):
+    """Minimal profile JSON: only the ``attention`` category and ``device_ms_per_step`` are read by
+    ``attention_ctx_variants_figure``/``_cat_ms``; ``ops`` is unused there but present so the schema
+    matches the real ``profile_report`` output."""
+    return {"categories": {"attention": {"ms": ms, "count": 32.0}}, "ops": [], "device_ms_per_step": ms + 20.0}
 
+
+def test_attention_ctx_variants_figure_plots_exactly_the_measured_variants(tmp_path, monkeypatch):
+    """Stage 2e's rotation-kernel-variant figure, against a synthetic fixture raw dir rather than the
+    live ``docs/results/raw`` -- a measurement queue can be writing there concurrently, and reading a
+    half-written JSON must never be able to fail this test (module docstring's own stated intent:
+    render "from a fixture raw dir"). Only two rows exist here (stock, and the "d"/dst variant); the
+    figure must plot exactly those two lines, under exactly their ``report.VARIANTS2E`` labels, and
+    silently skip every other variant rather than inventing a point or crashing on the missing file.
+    """
+    from palu_tt import profile_plots
+    from palu_tt.report import VARIANTS2E
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    _write(raw, "profile_baseline_1024", _profile(7.1))
+    _write(raw, "profile_baseline_4096", _profile(15.0))
+    _write(raw, "profile_palu_full_50_fk2d_4096", _profile(9.5))
+    _write(raw, "profile_palu_full_50_fk2d_8192", _profile(17.0))
+    monkeypatch.setattr(profile_plots, "RAW", raw)
+
+    captured = {}
+    real_close = profile_plots.plt.close
+    monkeypatch.setattr(profile_plots.plt, "close",
+                         lambda fig: (captured.setdefault("fig", fig), real_close(fig)))
     out = tmp_path / "profile_attention_ctx_2e.png"
 
     profile_plots.attention_ctx_variants_figure(out)
 
     assert out.exists() and out.stat().st_size > 0
+    ax = captured["fig"].axes[0]
+    expected = ["stock"] + [label for sfx, label in VARIANTS2E if sfx == "d"]
+    assert [line.get_label() for line in ax.lines] == expected
