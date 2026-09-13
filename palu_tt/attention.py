@@ -393,6 +393,38 @@ class PaluAttention(LightweightModule):
             ttnn.deallocate(k_lat_pad)                      # consumed by the concat (gs > 1 => recon_k/recon_v)
             ttnn.deallocate(v_lat_pad)
 
+        keys, values = self.layer_past
+
+        def _roundtrip(t, dtype):
+            """t quantised to the cache format and back to bf16 (a new tensor; caller frees the old one)."""
+            if dtype == ttnn.bfloat16:
+                return t
+            q = ttnn.typecast(t, dtype=dtype)
+            out = ttnn.typecast(q, dtype=ttnn.bfloat16, memory_config=ttnn.DRAM_MEMORY_CONFIG)
+            ttnn.deallocate(q)
+            return out
+
+        if self.palu.runtime.latent_quant_in_prefill:
+            # stage 2f (spec 0b): attend over what decode will read back, so the prefill-only instruments
+            # score the cache format. The zero padding of the slots stays zero and the ranks are multiples
+            # of 32, so a block-float group never straddles the r-slice; the cache write below re-quantises
+            # to the same values (block floating point is idempotent on aligned tiles) and prefill and
+            # decode see one latent. Not the fast-path K (recon_k False: the cache holds rotated full K and
+            # the SDPA already runs on k8, typecast to the cache dtype) nor a full-width V.
+            # The old slot is freed here and *both* names rebound, so the deallocations after the cache
+            # loop still free exactly one live tensor: at gs == 1 k_slot *is* k_lat_pad, and at gs > 1
+            # k_lat_pad was consumed by the concat above and only k_slot is freed.
+            if self.recon_k:
+                k_q = _roundtrip(k_slot, keys.dtype)
+                if k_q is not k_slot:
+                    ttnn.deallocate(k_slot)
+                    k_slot = k_lat_pad = k_q
+            if self.recon_v:
+                v_q = _roundtrip(v_slot, values.dtype)
+                if v_q is not v_slot:
+                    ttnn.deallocate(v_slot)
+                    v_slot = v_lat_pad = v_q
+
         # reconstruct V (and K, unless the V-only fast path applies) from the padded latents ---------
         # ([1, nkv, S, w] @ [1, nkv, w, 128], w = gs*128 the slot width, matching u_*_prefill's zero
         # padding); at gs == 1 and r_k == head_dim k_lat_pad is already full K.
@@ -414,7 +446,6 @@ class PaluAttention(LightweightModule):
         ttnn.deallocate(k_pre)          # the fast path's k_pre *is* k_lat_pad; the RoPE has consumed it
 
         # caches: latents, except the fast path's K cache which holds rotated full K like stock --------
-        keys, values = self.layer_past
         for src, r, cache in (((k_slot if self.recon_k else k_rot), self.r_k, keys), (v_slot, self.r_v, values)):
             lat = src[:, :, :, :r] if r < src.shape[-1] else src
             lat = ttnn.typecast(lat, dtype=cache.dtype)

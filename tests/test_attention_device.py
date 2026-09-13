@@ -379,3 +379,42 @@ def test_glrd_group_shared_decode_matches_per_head(mesh_device, batch, group_hea
     for i in range(2):
         assert torch.equal(_cache_torch(mesh_device, args, per_head, i),
                            _cache_torch(mesh_device, args, shared, i)), f"cache {i}"
+
+
+def test_prefill_sees_the_latent_cache_format(mesh_device):
+    """Stage 2f (spec 0b): with `latent_quant_in_prefill` on, the latent cache format is visible to a
+    prefill-only score -- the window attends over the quantised latent, so bfp4 and bfp8 give different
+    outputs; with it off (the stage 1..2e behaviour) the format never enters prefill at all and the two
+    are bit-identical. Both faithful rows stay close to the CPU reference. Layer 0, one 2048-token
+    window, batch 1, svd_r64 (r_k = r_v = 64, so both K and V are reconstructed)."""
+    S = 2048
+    args, sd, rope, tt_ccl, ref = _setup(mesh_device, "compressed/svd_r64", batch=1, max_seq_len=S)
+    torch.manual_seed(0)
+    x = torch.randn(1, S, args.dim) * 0.05
+    y_ref = ref.forward(x, start_pos=0)
+    rot = [rope.cos_matrix_prefill[:, :, :S, :], rope.sin_matrix_prefill[:, :, :S, :]]
+    outs = {}
+    for name, dtype, quant in (("bfp8", ttnn.bfloat8_b, True), ("bfp4", ttnn.bfloat4_b, True),
+                               ("bfp8_blind", ttnn.bfloat8_b, False), ("bfp4_blind", ttnn.bfloat4_b, False)):
+        args.palu.latent_dtype = dtype
+        args.palu.runtime.latent_quant_in_prefill = quant
+        tt = _tt_attention(PaluAttention, mesh_device, args, sd, rope, tt_ccl)
+        assert tt.recon_k and tt.recon_v and tt.layer_past[0].dtype == dtype
+        y = tt.forward(args.prepare_residual_tensor_prefill(x, force_replicated=True), None, rot_mats=rot,
+                       user_id=0, mode=Mode.PREFILL)
+        outs[name] = _to_torch(mesh_device, args, y)[:, 0:1, :S, : args.dim].view(1, S, args.dim)
+    assert not torch.equal(outs["bfp8"], outs["bfp4"]), "the cache format is invisible to prefill"
+    assert not torch.equal(outs["bfp8"], outs["bfp8_blind"]), "the round trip changed nothing"
+    assert torch.equal(outs["bfp4_blind"], outs["bfp8_blind"]), "the switch is off: prefill must not see the format"
+    # Both faithful rows still track the CPU reference, but not equally well, and that gap is the point of
+    # the stage: a bfp8 latent is nearly free (measured PCC 0.99958) while a *balanced-scale* bfp4 latent at
+    # rank 64 costs real accuracy (0.98414) -- the singular values sit on the latent side, so a 16-element
+    # block-float group spans a wide magnitude range and bfp4's 3-bit mantissa drops the small components
+    # (spec 0, "Palu's default split leaves them far from unit scale"). The bars are per format, not a
+    # single 0.99: raising bfp4 to 0.99 is the unit-scale work, not this task.
+    for name, bar in (("bfp8", 0.99), ("bfp4", 0.98)):
+        ok, msg = comp_pcc(y_ref, outs[name], bar)
+        logger.info(f"{name} {msg}")
+        assert ok, f"{name}: {msg}"
+    logger.info(f"max |bfp8 - bfp4| = {(outs['bfp8'] - outs['bfp4']).abs().max():.4g}, "
+                f"max |bfp8 - blind| = {(outs['bfp8'] - outs['bfp8_blind']).abs().max():.4g}")

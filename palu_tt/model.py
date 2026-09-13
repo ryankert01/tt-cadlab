@@ -14,14 +14,16 @@ def build_model(mesh_device, kind: str, palu_dir: Optional[str] = None, max_batc
                 n_layers: Optional[int] = None, dtype=ttnn.bfloat8_b, latent_dtype=None,
                 use_fused_k: bool = False, cs_recurrence: bool = False, fused_k_chunk: Optional[int] = None,
                 group_heads: Optional[int] = None, rot_mode: str = "legacy", table_mcast: bool = False,
-                latent_scale: str = "balanced"):
+                latent_scale: str = "balanced", latent_quant_in_prefill: bool = True):
     """latent_dtype: optional ttnn dtype for the Palu latent K/V caches (None = the model's KV cache
     dtype, i.e. bfp8). use_fused_k / cs_recurrence / fused_k_chunk: stage-2 fused decode kernel
     (Phase 1, Phase 2, chunk override). group_heads: stage-2c KV heads per core in the fused op's
     group-shared mode (None = pick the largest that fits L1 per layer, 1 = the stage 2b per-head
     kernel). latent_scale: stage 2f, "balanced" (Palu's split, default) or "unit" (every latent
-    component rescaled to unit variance -- see convert.unit_scale_lowrank). Only meaningful for
-    kind="palu"."""
+    component rescaled to unit variance -- see convert.unit_scale_lowrank). latent_quant_in_prefill:
+    stage 2f, round-trip the prefill latents through the cache format before reconstructing K and V, so
+    the prefill-only instruments (eval_ppl, eval_tasks) score what decode reads back; False restores the
+    stage 1..2e behaviour. Only meaningful for kind="palu"."""
     assert kind in ("stock", "palu")
     args = ModelArgs(mesh_device, instruct=True, max_batch_size=max_batch_size, max_seq_len=max_seq_len, cache_hf=False)
     args.use_qk_fused = False          # same RoPE path for both kinds
@@ -36,6 +38,7 @@ def build_model(mesh_device, kind: str, palu_dir: Optional[str] = None, max_batc
         cfg.runtime.use_fused_k, cfg.runtime.cs_recurrence, cfg.runtime.fused_k_chunk = use_fused_k, cs_recurrence, fused_k_chunk
         cfg.runtime.group_heads_per_core = group_heads
         cfg.runtime.rot_mode, cfg.runtime.table_mcast = rot_mode, bool(table_mcast)
+        cfg.runtime.latent_quant_in_prefill = bool(latent_quant_in_prefill)
         args.palu = cfg
     model = Transformer(args=args, mesh_device=mesh_device, dtype=dtype, state_dict=state_dict,
                         weight_cache_path=args.weight_cache_path(dtype),

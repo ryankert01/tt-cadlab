@@ -49,6 +49,10 @@ class PaluRuntime:
     rot_mode: str = "legacy"
     # stage 2e: read the Phase 2 angle table once per grid column and multicast it to the column.
     table_mcast: bool = False
+    # stage 2f: round-trip the prefill latents through the cache format before reconstructing K and V, so
+    # perplexity and task scores (prefill-only) see what decode will read back. Off = the stage 1..2e
+    # behaviour, where the cache format never entered a prefill score.
+    latent_quant_in_prefill: bool = True
 
 
 @dataclass
