@@ -425,6 +425,12 @@ def test_runtime_has_stage2e_switches_off_by_default():
     assert rt.table_mcast is False
 
 
+def test_runtime_quantises_the_latent_in_prefill_by_default():
+    """Stage 2f: on by default, so eval_ppl/eval_tasks score what decode reads back. Unlike every other
+    runtime switch this one defaults *on*, which is the whole behavioural change of the stage."""
+    assert convert.PaluRuntime().latent_quant_in_prefill is True
+
+
 def _balanced_factors(n_kv=2, hd=128, dim=256, r=64, seed=0):
     """Palu's split on synthetic weights: L = U sqrt(S), R = sqrt(S) V, with decaying singular values."""
     g = torch.Generator().manual_seed(seed)

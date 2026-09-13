@@ -243,7 +243,12 @@ def bench_prefill(mesh, kind, palu_dir):
     """Time to first token: a single-user prefill of L tokens (batch 1)."""
     md = mesh.md
     try:
-        args, model, _ = pm.build_model(md, kind, palu_dir, max_batch_size=1, max_seq_len=8192, **FUSED)
+        # stage 2f: time-to-first-token stays the stage 1..2e measurement. The prefill round trip is
+        # instrumentation for the *scores* (it makes perplexity see the cache format), not something a
+        # deployment has to run, and leaving it on would silently break comparability with every
+        # committed bench_prefill_*.json.
+        args, model, _ = pm.build_model(md, kind, palu_dir, max_batch_size=1, max_seq_len=8192,
+                                        latent_quant_in_prefill=False, **FUSED)
     except Exception as e:  # allocation failure -> report both lengths and stop, like the other modes
         traceback.print_exc()
         return {L: {"error": str(e)[:200], "phase": "build", "exc": type(e).__name__} for L in (2048, 8192)}

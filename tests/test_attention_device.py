@@ -381,40 +381,94 @@ def test_glrd_group_shared_decode_matches_per_head(mesh_device, batch, group_hea
                            _cache_torch(mesh_device, args, shared, i)), f"cache {i}"
 
 
-def test_prefill_sees_the_latent_cache_format(mesh_device):
+def _recast_cache(mesh_device, tt, i, dtype):
+    """Re-allocate cache `i` (0 = K, 1 = V) at `dtype`, so one side's cache format can be varied alone.
+
+    `PaluConfig.latent_dtype` sets both caches at once, but the contract under test is per side: a layer
+    whose K takes the fast path (recon_k False, the cache holds rotated full K) still stores V as a
+    latent, and only the fast-path side goes through the SDPA cast rather than the round trip. Prefill
+    only -- the fused decode op's L1 sizing is derived from `latent_dtype` in __init__ and is not
+    revisited here."""
+    old = tt.layer_past[i]
+    shape = tuple(old.shape)
+    ttnn.deallocate(old)
+    tt.layer_past[i] = ttnn.from_torch(torch.zeros(shape), dtype=dtype, layout=ttnn.TILE_LAYOUT,
+                                       device=mesh_device, memory_config=ttnn.DRAM_MEMORY_CONFIG,
+                                       mesh_mapper=ttnn.ReplicateTensorToMesh(mesh_device))
+
+
+# (dump, (recon_k, recon_v), bfp8 bar, bfp4 bar). Measured: bfp8 0.99958 / 0.99961 / 0.99958 / 0.99956,
+# bfp4 0.98414 / 0.98210 / 0.98414 / 0.98179 -- the bfp8 bar is the file's usual 0.99, the bfp4 bar is set
+# just under the measurement for each shape (device prefill is deterministic and x is seeded).
+@pytest.mark.parametrize("palu_dir,recon,pcc8,pcc4", [
+    ("compressed/svd_r64", (True, True), 0.99, 0.98),
+    ("compressed/svd_rk32_rv128", (True, False), 0.99, 0.98),
+    ("compressed/svd_rk128_rv64", (False, True), 0.99, 0.98),
+    ("compressed/glrd_0.5", (True, True), 0.99, 0.975),
+], ids=["r64", "rk32_rv128", "rk128_rv64", "glrd"])
+def test_prefill_sees_the_latent_cache_format(mesh_device, palu_dir, recon, pcc8, pcc4):
     """Stage 2f (spec 0b): with `latent_quant_in_prefill` on, the latent cache format is visible to a
-    prefill-only score -- the window attends over the quantised latent, so bfp4 and bfp8 give different
-    outputs; with it off (the stage 1..2e behaviour) the format never enters prefill at all and the two
-    are bit-identical. Both faithful rows stay close to the CPU reference. Layer 0, one 2048-token
-    window, batch 1, svd_r64 (r_k = r_v = 64, so both K and V are reconstructed)."""
+    prefill-only score -- the window attends over what decode will read back -- and with it off (the
+    stage 1..2e behaviour) the format never enters prefill at all.
+
+    Parametrized over all four latent shapes, because the two sides reach the SDPA by different routes:
+    a reconstructed side (recon_* True) is round-tripped through the cache dtype before the
+    up-projection, a fast-path side (recon_* False, the cache holds rotated full K / full V) is the very
+    tensor the SDPA is handed and is made faithful by the k8/v8 cast. Varying `latent_dtype` alone cannot
+    tell the two apart on a mixed row, so each side's cache format is varied on its own: `k4` is the
+    baseline with the K cache alone at bfp4, `v4` with the V cache alone at bfp4. Layer 0, one
+    2048-token window, batch 1."""
     S = 2048
-    args, sd, rope, tt_ccl, ref = _setup(mesh_device, "compressed/svd_r64", batch=1, max_seq_len=S)
+    args, sd, rope, tt_ccl, ref = _setup(mesh_device, palu_dir, batch=1, max_seq_len=S)
     torch.manual_seed(0)
     x = torch.randn(1, S, args.dim) * 0.05
     y_ref = ref.forward(x, start_pos=0)
     rot = [rope.cos_matrix_prefill[:, :, :S, :], rope.sin_matrix_prefill[:, :, :S, :]]
-    outs = {}
-    for name, dtype, quant in (("bfp8", ttnn.bfloat8_b, True), ("bfp4", ttnn.bfloat4_b, True),
-                               ("bfp8_blind", ttnn.bfloat8_b, False), ("bfp4_blind", ttnn.bfloat4_b, False)):
+    B8, B4 = ttnn.bfloat8_b, ttnn.bfloat4_b
+    # name -> (latent_dtype, V-cache override or None, latent_quant_in_prefill), and the cache formats
+    # that combination leaves behind as (K, V).
+    rows = (("bfp8", B8, None, True, (B8, B8)), ("bfp4", B4, None, True, (B4, B4)),
+            ("k4", B4, B8, True, (B4, B8)), ("v4", B8, B4, True, (B8, B4)),
+            ("bfp8_blind", B8, None, False, (B8, B8)), ("bfp4_blind", B4, None, False, (B4, B4)))
+    outs, caches = {}, {}
+    for name, dtype, v_override, quant, want_dtypes in rows:
         args.palu.latent_dtype = dtype
         args.palu.runtime.latent_quant_in_prefill = quant
         tt = _tt_attention(PaluAttention, mesh_device, args, sd, rope, tt_ccl)
-        assert tt.recon_k and tt.recon_v and tt.layer_past[0].dtype == dtype
+        if v_override is not None:
+            _recast_cache(mesh_device, tt, 1, v_override)
+        assert (tt.recon_k, tt.recon_v) == recon, f"{palu_dir}: r_k={tt.r_k} r_v={tt.r_v} gs={tt.gs}"
+        assert tuple(c.dtype for c in tt.layer_past) == want_dtypes, name
         y = tt.forward(args.prepare_residual_tensor_prefill(x, force_replicated=True), None, rot_mats=rot,
                        user_id=0, mode=Mode.PREFILL)
         outs[name] = _to_torch(mesh_device, args, y)[:, 0:1, :S, : args.dim].view(1, S, args.dim)
+        caches[name] = [_cache_torch(mesh_device, args, tt, i) for i in (0, 1)]
+    # Every cache the prefill writes is also what the prefill attends over -- one assert per side, so a
+    # side that is blind is named. (Before stage 2f's C1 fix the two fast-path shapes failed here: the
+    # SDPA cast went to the model's KV precision, so the cache's own format never reached the scores.)
+    assert not torch.equal(outs["bfp8"], outs["k4"]), "the K cache format is invisible to prefill"
+    assert not torch.equal(outs["bfp8"], outs["v4"]), "the V cache format is invisible to prefill"
     assert not torch.equal(outs["bfp8"], outs["bfp4"]), "the cache format is invisible to prefill"
     assert not torch.equal(outs["bfp8"], outs["bfp8_blind"]), "the round trip changed nothing"
     assert torch.equal(outs["bfp4_blind"], outs["bfp8_blind"]), "the switch is off: prefill must not see the format"
+    # The round trip must not change what is *cached*: the cache write re-quantises an already-quantised
+    # latent, which is exact (block-float groups are 16 elements inside 32-wide tiles and the ranks are
+    # multiples of 32, so no group straddles the r-slice). That idempotency is what makes "prefill and
+    # decode see one latent" true -- without it prefill would attend over q(x) while the cache held q(q(x)).
+    for i, side in ((0, "K"), (1, "V")):
+        assert torch.equal(caches["bfp8"][i], caches["bfp8_blind"][i]), f"{side} cache moved under the round trip"
     # Both faithful rows still track the CPU reference, but not equally well, and that gap is the point of
-    # the stage: a bfp8 latent is nearly free (measured PCC 0.99958) while a *balanced-scale* bfp4 latent at
-    # rank 64 costs real accuracy (0.98414) -- the singular values sit on the latent side, so a 16-element
-    # block-float group spans a wide magnitude range and bfp4's 3-bit mantissa drops the small components
-    # (spec 0, "Palu's default split leaves them far from unit scale"). The bars are per format, not a
-    # single 0.99: raising bfp4 to 0.99 is the unit-scale work, not this task.
-    for name, bar in (("bfp8", 0.99), ("bfp4", 0.98)):
+    # the stage: a bfp8 latent is nearly free (svd_r64 measures PCC 0.99958) while a *balanced-scale* bfp4
+    # latent costs real accuracy (svd_r64: 0.98414) -- the singular values sit on the latent side, so a
+    # 16-element block-float group spans a wide magnitude range and bfp4's 3-bit mantissa drops the small
+    # components (spec 0, "Palu's default split leaves them far from unit scale"). The bfp4 number is the
+    # quantity stage 2f exists to measure, and it barely moves across the four shapes (0.9818..0.9841):
+    # raising it is the unit-scale work, not this task.
+    for name, bar in (("bfp8", pcc8), ("bfp4", pcc4)):
         ok, msg = comp_pcc(y_ref, outs[name], bar)
-        logger.info(f"{name} {msg}")
+        logger.info(f"{palu_dir} {name} {msg}")
         assert ok, f"{name}: {msg}"
-    logger.info(f"max |bfp8 - bfp4| = {(outs['bfp8'] - outs['bfp4']).abs().max():.4g}, "
+    logger.info(f"{palu_dir} max |bfp8 - bfp4| = {(outs['bfp8'] - outs['bfp4']).abs().max():.4g}, "
+                f"max |bfp8 - k4| = {(outs['bfp8'] - outs['k4']).abs().max():.4g}, "
+                f"max |bfp8 - v4| = {(outs['bfp8'] - outs['v4']).abs().max():.4g}, "
                 f"max |bfp8 - blind| = {(outs['bfp8'] - outs['bfp8_blind']).abs().max():.4g}")

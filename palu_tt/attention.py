@@ -21,6 +21,19 @@ except AttributeError:                      # pragma: no cover
     pass
 
 
+def _roundtrip(t, dtype):
+    """`t` quantised to `dtype` and back to bf16 -- a new tensor; the caller frees the old one.
+
+    Identity when the cache is already bf16. Both typecasts stay DRAM interleaved, which is where the
+    prefill latents live."""
+    if dtype == ttnn.bfloat16:
+        return t
+    q = ttnn.typecast(t, dtype=dtype, memory_config=ttnn.DRAM_MEMORY_CONFIG)
+    out = ttnn.typecast(q, dtype=ttnn.bfloat16, memory_config=ttnn.DRAM_MEMORY_CONFIG)
+    ttnn.deallocate(q)
+    return out
+
+
 def cache_tag(cache_id: str, r_k: int, r_v: int, gs: int = 1) -> str:
     """Prefix for every Palu-specific weight-cache entry.
 
@@ -395,22 +408,15 @@ class PaluAttention(LightweightModule):
 
         keys, values = self.layer_past
 
-        def _roundtrip(t, dtype):
-            """t quantised to the cache format and back to bf16 (a new tensor; caller frees the old one)."""
-            if dtype == ttnn.bfloat16:
-                return t
-            q = ttnn.typecast(t, dtype=dtype)
-            out = ttnn.typecast(q, dtype=ttnn.bfloat16, memory_config=ttnn.DRAM_MEMORY_CONFIG)
-            ttnn.deallocate(q)
-            return out
-
         if self.palu.runtime.latent_quant_in_prefill:
             # stage 2f (spec 0b): attend over what decode will read back, so the prefill-only instruments
             # score the cache format. The zero padding of the slots stays zero and the ranks are multiples
             # of 32, so a block-float group never straddles the r-slice; the cache write below re-quantises
             # to the same values (block floating point is idempotent on aligned tiles) and prefill and
-            # decode see one latent. Not the fast-path K (recon_k False: the cache holds rotated full K and
-            # the SDPA already runs on k8, typecast to the cache dtype) nor a full-width V.
+            # decode see one latent. The fast paths are not round-tripped here: recon_k False caches the
+            # rotated full K and recon_v False caches the full V, i.e. the very tensors the SDPA below is
+            # handed, so those two sides are made faithful by casting k8/v8 to the cache's dtype instead
+            # (self.kv_cache_dtype is *not* the cache's dtype once --latent-dtype overrides the latents).
             # The old slot is freed here and *both* names rebound, so the deallocations after the cache
             # loop still free exactly one live tensor: at gs == 1 k_slot *is* k_lat_pad, and at gs > 1
             # k_lat_pad was consumed by the concat above and only k_slot is freed.
@@ -464,8 +470,14 @@ class PaluAttention(LightweightModule):
 
         # SDPA (stock, with reconstructed K/V) -----------------------------------------------------------
         q8 = ttnn.typecast(q, dtype=self.activation_dtype or ttnn.bfloat8_b)
-        k8 = ttnn.typecast(k_rot, dtype=self.kv_cache_dtype)
-        v8 = ttnn.typecast(v_full, dtype=self.kv_cache_dtype)
+        # stage 2f: on a fast path the cache stores this very tensor, so with the round trip on the SDPA
+        # must see the *cache's* dtype. self.kv_cache_dtype is the model's KV precision (bfp8) and differs
+        # from it whenever --latent-dtype overrides the latent caches -- exactly the bfp4 sweep this stage
+        # is built for, where a recon_v False layer caches full V at bfp4 while prefill attended at bfp8.
+        # The reconstructed sides were round-tripped above and keep the stock SDPA precision here.
+        faithful = self.palu.runtime.latent_quant_in_prefill
+        k8 = ttnn.typecast(k_rot, dtype=(keys.dtype if (faithful and not self.recon_k) else self.kv_cache_dtype))
+        v8 = ttnn.typecast(v_full, dtype=(values.dtype if (faithful and not self.recon_v) else self.kv_cache_dtype))
         for t in (q, k_rot, v_full):
             ttnn.deallocate(t)
         attn = ttnn.transformer.scaled_dot_product_attention(

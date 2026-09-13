@@ -7,5 +7,7 @@
  "row": "palu_full_50_l4",
  "kind": "palu",
  "palu_dir": "compressed/palu_full_0.5",
- "latent_dtype": "bfp4"
+ "latent_dtype": "bfp4",
+ "latent_quant_in_prefill": false,
+ "note": "prefill-blind: measured before the cache-faithful prefill (stage 2f Task 1b); equals the bfp8 row by construction"
 }

@@ -83,6 +83,10 @@ def main():
     p.add_argument("--latent-scale", choices=["balanced", "unit"], default="balanced",
                    help="stage 2f: 'unit' moves the singular values into the up-projection so every latent "
                         "component has unit variance (what bfp4 caches want); 'balanced' is Palu's split.")
+    p.add_argument("--no-latent-quant-in-prefill", dest="latent_quant_in_prefill", action="store_false",
+                   help="stage 2f: score the stage 1..2e way, with prefill blind to the latent cache format "
+                        "(no round trip through the cache dtype). Perplexity is a prefill-only measurement, "
+                        "so this is what makes a blind/faithful pair reproducible from the repo.")
     a = p.parse_args()
     RAW.mkdir(parents=True, exist_ok=True)
     if a.cpu:
@@ -101,13 +105,14 @@ def main():
         md = dev.open_n300()
         try:
             args, model, _ = pm.build_model(md, a.kind, a.palu_dir, max_batch_size=1, max_seq_len=a.seq_len,
-                                            latent_dtype=LATENT_DTYPES[a.latent_dtype], latent_scale=a.latent_scale)
+                                            latent_dtype=LATENT_DTYPES[a.latent_dtype], latent_scale=a.latent_scale,
+                                            latent_quant_in_prefill=a.latent_quant_in_prefill)
             r = device_ppl(args, model, hf.snapshot_dir(), wikitext2_ids(args.tokenizer), a.seq_len, a.windows)
         finally:
             dev.close(md)
         out = RAW / f"ppl_{a.row}.json"
     r.update({"row": a.row, "kind": a.kind, "palu_dir": a.palu_dir, "latent_dtype": a.latent_dtype,
-              "latent_scale": a.latent_scale})
+              "latent_scale": a.latent_scale, "latent_quant_in_prefill": bool(a.latent_quant_in_prefill)})
     out.write_text(json.dumps(r, indent=1))
     print(json.dumps(r))
 

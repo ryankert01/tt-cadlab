@@ -99,6 +99,10 @@ def main():
     p.add_argument("--latent-scale", choices=["balanced", "unit"], default="balanced",
                    help="stage 2f: 'unit' moves the singular values into the up-projection so every latent "
                         "component has unit variance (what bfp4 caches want); 'balanced' is Palu's split.")
+    p.add_argument("--no-latent-quant-in-prefill", dest="latent_quant_in_prefill", action="store_false",
+                   help="stage 2f: score the stage 1..2e way, with prefill blind to the latent cache format "
+                        "(no round trip through the cache dtype). These tasks are scored in prefill, so this "
+                        "is what makes a blind/faithful pair reproducible from the repo.")
     a = p.parse_args()
     from palu_tt import device as dev, model as pm
     RAW.mkdir(parents=True, exist_ok=True)
@@ -107,7 +111,8 @@ def main():
         args, model, _ = pm.build_model(md, a.kind, a.palu_dir, max_batch_size=1, max_seq_len=2048,
                                         use_fused_k=a.fused != "off", cs_recurrence=a.fused == "p2",
                                         group_heads=None if a.group_heads == "auto" else int(a.group_heads),
-                                        latent_scale=a.latent_scale)
+                                        latent_scale=a.latent_scale,
+                                        latent_quant_in_prefill=a.latent_quant_in_prefill)
         lm = lm_eval_tt.TTLM.for_device(args, model, hf.snapshot_dir())
         r = run(lm, [t for t in a.tasks.split(",") if t], a.limit)
     finally:
@@ -115,6 +120,7 @@ def main():
     import importlib.metadata as m
     r.update({"row": a.row, "kind": a.kind, "palu_dir": a.palu_dir, "fused": a.fused,
               "group_heads": a.group_heads, "limit": a.limit, "latent_scale": a.latent_scale,
+              "latent_quant_in_prefill": bool(a.latent_quant_in_prefill),
               "lm_eval_version": m.version("lm_eval")})
     (RAW / f"tasks_{a.row}.json").write_text(json.dumps(r, indent=1, default=str))
     print(json.dumps(r["tasks"]))
