@@ -56,7 +56,10 @@ BATCH = 32
 # and passed to every model/attention build below. ``--fused off`` (the default) reproduces the
 # stage-1 rows exactly -- ``build_model``'s own defaults are these same three values.
 FUSED = {"use_fused_k": False, "cs_recurrence": False, "fused_k_chunk": None, "group_heads": None,
-         "rot_mode": "legacy", "table_mcast": False}
+         "rot_mode": "legacy", "table_mcast": False, "latent_dtype": None}
+
+# stage 2e/2f: tile format of the Palu latent K/V caches, selected by --latent-dtype.
+LATENT_DTYPES = {"bfp8": ttnn.bfloat8_b, "bfp4": ttnn.bfloat4_b}
 # stage 2c: per-layer heads_per_core the last model/layer built actually ran with (after any allocator
 # fallback), so a row's timings can be read against the H that produced them. Empty for non-grouped rows.
 GROUP_HEADS = []
@@ -378,6 +381,8 @@ def main():
                    help="stage-2e K rebuild mode in the fused op (see docs/superpowers/specs/2026-09-14-palu-tt-stage2e-design.md).")
     p.add_argument("--table-mcast", choices=["off", "on"], default="off",
                    help="stage-2e: multicast the Phase 2 angle table down each grid column (Phase 2 only).")
+    p.add_argument("--latent-dtype", choices=["bfp8", "bfp4"], default="bfp8",
+                   help="tile format of the Palu latent K/V caches (default bfp8, the model's KV cache format).")
     p.add_argument("--batch", type=int, default=32,
                    help="batch size for decode, attention and maxctx (default: 32). "
                         "tt_transformers accepts any value <= 32. prefill is single-user by "
@@ -393,7 +398,7 @@ def main():
         p.error("--batch must be between 1 and 32 (tt_transformers's cap)")
     FUSED.update(use_fused_k=a.fused != "off", cs_recurrence=a.fused == "p2", fused_k_chunk=a.fused_k_chunk,
                  group_heads=None if a.group_heads == "auto" else int(a.group_heads),
-                 rot_mode=a.rot_mode, table_mcast=a.table_mcast == "on")
+                 rot_mode=a.rot_mode, table_mcast=a.table_mcast == "on", latent_dtype=LATENT_DTYPES[a.latent_dtype])
     BATCH = a.batch
     RAW.mkdir(parents=True, exist_ok=True)
     mesh = Mesh()
@@ -408,7 +413,7 @@ def main():
     r = {"row": a.row, "kind": a.kind, "palu_dir": a.palu_dir, "what": a.what,
          "fused": a.fused, "fused_k_chunk": a.fused_k_chunk, "group_heads": a.group_heads,
          "group_heads_per_layer": list(GROUP_HEADS), "batch": a.batch,
-         "rot_mode": a.rot_mode, "table_mcast": a.table_mcast}
+         "rot_mode": a.rot_mode, "table_mcast": a.table_mcast, "latent_dtype": a.latent_dtype}
     if a.what in ("decode", "attention"):  # prefill/maxctx use their own fixed lengths, not CONTEXTS
         r["contexts"] = list(CONTEXTS)
     r["data"] = data

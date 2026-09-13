@@ -78,6 +78,8 @@ def main():
     p.add_argument("--windows", type=int, default=None)
     p.add_argument("--seq-len", type=int, default=2048)
     p.add_argument("--cpu", action="store_true", help="CPU HF/low-rank model instead of the device")
+    p.add_argument("--latent-dtype", choices=["bfp8", "bfp4"], default="bfp8",
+                   help="tile format of the Palu latent K/V caches (default bfp8, the model's KV cache format).")
     a = p.parse_args()
     RAW.mkdir(parents=True, exist_ok=True)
     if a.cpu:
@@ -89,15 +91,18 @@ def main():
         r = cpu_ppl(lm, wikitext2_ids(tok), a.seq_len, a.windows)
         out = RAW / f"ppl_cpu_{a.row}.json"
     else:
+        import ttnn
         from palu_tt import device as dev, model as pm
+        LATENT_DTYPES = {"bfp8": ttnn.bfloat8_b, "bfp4": ttnn.bfloat4_b}
         md = dev.open_n300()
         try:
-            args, model, _ = pm.build_model(md, a.kind, a.palu_dir, max_batch_size=1, max_seq_len=a.seq_len)
+            args, model, _ = pm.build_model(md, a.kind, a.palu_dir, max_batch_size=1, max_seq_len=a.seq_len,
+                                            latent_dtype=LATENT_DTYPES[a.latent_dtype])
             r = device_ppl(args, model, hf.snapshot_dir(), wikitext2_ids(args.tokenizer), a.seq_len, a.windows)
         finally:
             dev.close(md)
         out = RAW / f"ppl_{a.row}.json"
-    r.update({"row": a.row, "kind": a.kind, "palu_dir": a.palu_dir})
+    r.update({"row": a.row, "kind": a.kind, "palu_dir": a.palu_dir, "latent_dtype": a.latent_dtype})
     out.write_text(json.dumps(r, indent=1))
     print(json.dumps(r))
 

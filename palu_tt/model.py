@@ -61,5 +61,5 @@ def kv_bytes_per_token_per_layer(model, args) -> float:
     attn = model.layers[0].attention
     if hasattr(attn, "kv_bytes_per_token"):
         return attn.kv_bytes_per_token()
-    bpe = {ttnn.bfloat8_b: 1.0625, ttnn.bfloat16: 2.0}[attn.kv_cache_dtype]
+    bpe = {ttnn.bfloat8_b: 1.0625, ttnn.bfloat16: 2.0, ttnn.bfloat4_b: 0.5625}[attn.kv_cache_dtype]
     return attn.n_local_kv_heads * 2 * attn.head_dim * bpe

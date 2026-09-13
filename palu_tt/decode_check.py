@@ -20,12 +20,14 @@ import json
 from pathlib import Path
 
 import torch
+import ttnn
 from models.common.utility_functions import comp_pcc
 
 from palu_tt import device as dev, eval_ppl, fused, generate, model as pm
 
 RAW = Path("docs/results/raw")
 PROMPT = 512
+LATENT_DTYPES = {"bfp8": ttnn.bfloat8_b, "bfp4": ttnn.bfloat4_b}
 
 
 def _pcc(a, b):
@@ -78,6 +80,8 @@ def main():
                    help="stage-2e K rebuild mode in the fused op (see docs/superpowers/specs/2026-09-14-palu-tt-stage2e-design.md).")
     p.add_argument("--table-mcast", choices=["off", "on"], default="off",
                    help="stage-2e: multicast the Phase 2 angle table down each grid column (Phase 2 only).")
+    p.add_argument("--latent-dtype", choices=["bfp8", "bfp4"], default="bfp8",
+                   help="tile format of the Palu latent K/V caches (default bfp8, the model's KV cache format).")
     p.add_argument("--steps", type=int, default=64)
     a = p.parse_args()
     RAW.mkdir(parents=True, exist_ok=True)
@@ -85,11 +89,12 @@ def main():
     try:
         args_tok = pm.ModelArgs(md, instruct=True, max_batch_size=1, max_seq_len=2048, cache_hf=False)
         ids = eval_ppl.wikitext2_ids(args_tok.tokenizer)
-        naive = _logits(md, a.palu_dir, ids, a.steps)
+        naive = _logits(md, a.palu_dir, ids, a.steps, latent_dtype=LATENT_DTYPES[a.latent_dtype])
         fused_logits = _logits(md, a.palu_dir, ids, a.steps, use_fused_k=True, cs_recurrence=a.fused == "p2",
                         fused_k_chunk=a.fused_k_chunk,
                         group_heads=None if a.group_heads == "auto" else int(a.group_heads),
-                        rot_mode=a.rot_mode, table_mcast=a.table_mcast == "on")
+                        rot_mode=a.rot_mode, table_mcast=a.table_mcast == "on",
+                        latent_dtype=LATENT_DTYPES[a.latent_dtype])
     finally:
         dev.close(md)
     # Index 0 of both stacks is the shared prefill logit (bit-identical on both paths, since the
@@ -98,7 +103,7 @@ def main():
     pccs = [_pcc(naive_decode[i], fused_decode[i]) for i in range(naive_decode.shape[0])]
     r = {"row": a.row, "palu_dir": a.palu_dir, "fused": a.fused, "fused_k_chunk": a.fused_k_chunk,
          "group_heads": a.group_heads, "group_heads_per_layer": list(GROUP_HEADS),
-         "rot_mode": a.rot_mode, "table_mcast": a.table_mcast,
+         "rot_mode": a.rot_mode, "table_mcast": a.table_mcast, "latent_dtype": a.latent_dtype,
          "steps": naive_decode.shape[0],
          "pcc_mean": sum(pccs) / len(pccs), "pcc_min": min(pccs),
          "argmax_agree": float((naive_decode.argmax(-1) == fused_decode.argmax(-1)).float().mean())}

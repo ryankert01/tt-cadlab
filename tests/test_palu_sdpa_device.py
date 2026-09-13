@@ -510,3 +510,20 @@ def test_table_mcast_is_bit_identical(mesh_device, batch, S, grid):
             cur_pos_tensor=_pos(mesh_device, pos), scale=HD ** -0.5, table_mcast=mcast, **extra, **_cfg(0, grid))
         return _host(out)
     assert torch.equal(run(False), run(True))
+
+
+def test_bfp4_latents_are_accepted_and_close(mesh_device):
+    """bfp4 K and V latents (stage 2e L4 / stage 2f): the op must accept the format and the output must
+    still track the fp32 reference, though at a looser bar than bfp8 (4-bit mantissas)."""
+    q, k_lat, u_k, v, pos, cos, sin = _inputs(32, 1024, 64, 128)
+    S = 1024
+    c = fused.chunk_size(S)
+    out = ttnn.transformer.palu_sdpa_decode(
+        _dev(mesh_device, q), _dev(mesh_device, k_lat, ttnn.bfloat4_b), _dev(mesh_device, fused.w_rot_from_u_k(u_k)[None]),
+        _dev(mesh_device, fused.cs_table(cos, sin, S)[None, None]), _dev(mesh_device, v, ttnn.bfloat4_b), head_dim_v=128,
+        cur_pos_tensor=_pos(mesh_device, pos), scale=HD ** -0.5,
+        rot_step=_dev(mesh_device, fused.rot_step_table(cos, sin, c)[None, None], ttnn.float32),
+        trans_mat=_dev(mesh_device, fused.trans_mat_tile()), **_cfg(0))
+    ref = fused.reference_decode(q, k_lat, u_k, v, pos, cos, sin, HD ** -0.5)
+    ok, msg = comp_pcc(ref, _host(out), 0.95)
+    assert ok, msg
