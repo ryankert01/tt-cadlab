@@ -32,9 +32,28 @@ loaded on top of ``rows`` specifically for this table), and the bfp4-latent (``L
 fidelity comparison. The measurement matrix can still be running when this renders, so a variant or
 row with no JSON yet renders as an explicit note rather than a crash or an invented number; the
 ablation table distinguishes a variant with *no* profile JSON at all (``(not measured)``) from one
-with fewer than the two distinct contexts a fit needs (``(N context(s) measured: ...)``), since the
+with fewer than the two distinct contexts a fit needs (``(N profile JSON(s) at M distinct
+context(s): ...)``, counting distinct contexts rather than files -- two rows profiled at the same
+one context is still one context), since the
 two mean different things and collapsing them would silently misreport a partially-measured variant
 as unmeasured.
+
+Stage 2f (``--stage 2f``) renders ``docs/results/stage2f.md``: the rank/format frontier -- wikitext
+perplexity against KV bytes per token for every cell of the stage 2f grid (rank x cache format x
+latent scale). Unlike every earlier stage, the row set is not a fixed dict: ``frontier_rows`` *
+discovers* it by globbing ``docs/results/raw/ppl_*.json`` for names matching the row-naming scheme
+(``<dump>[_u][_lk4|_lv4|_l4][_w40]``, stock rows ``baseline``/``baseline_kv4``; ``FRONTIER_RE``) and
+reading each row's ppl JSON directly, so a
+grid that is still mid-measurement (most of it, at the time this was written) renders whatever
+exists instead of refusing or inventing dashes for a whole table of rows that have simply not run
+yet. A row's K/V cache format and latent scale come from parsing its own name, which is the only
+thing that works uniformly across every row (some pre-date the JSON carrying its own format fields
+at all); where a row's JSON *does* carry ``k_latent_dtype``/``v_latent_dtype``/``kv_dtype``/
+``latent_scale``, a disagreement with the name's parse is a warning, not something silently
+ignored. Two committed rows (``palu_full_{50,70}_l4``) were measured before the cache-faithful
+prefill existed and are annotated ``"latent_quant_in_prefill": false``: their perplexity is
+identical to the bfp8 row by construction and is never presented as bfp4 evidence -- the table
+renders their ppl cell as ``blind`` instead of a number.
 
 Usage: ``python -m palu_tt.report [--stage 2]`` (writes the file and prints it).
 ``main(raw=..., out=..., rows=...)`` takes the paths and the row set as parameters so either stage
@@ -45,7 +64,9 @@ carried over verbatim, so re-rendering after a re-measured row does not destroy 
 """
 import argparse
 import json
+import re as _re
 import subprocess
+import warnings
 from pathlib import Path
 
 RAW = Path("docs/results/raw")
@@ -54,6 +75,7 @@ OUT2 = Path("docs/results/stage2.md")
 OUT2B = Path("docs/results/stage2b.md")
 OUT2C = Path("docs/results/stage2c.md")
 OUT2E = Path("docs/results/stage2e.md")
+OUT2F = Path("docs/results/stage2f.md")
 
 # row -> human label. Order is the render order of every table.
 ROWS = {
@@ -141,6 +163,13 @@ L4_ROWS2E = (("palu_full_50", "palu_full_50_l4", "palu_full_50_fk2", "palu_full_
 # op (an uncompressed layer), and mixing that in shifts the published stock fit away from stage 2d's
 # own 47.7/88.4 fixed/per-chunk us.
 REF_ROWS2E = ("baseline", "palu_full_50")
+# Stage 2f (Task 4): the rank/format frontier. There is no fixed row dict to visit here -- unlike
+# every earlier stage, ``_stage2f_lines`` gets its rows from ``frontier_rows`` discovering whichever
+# ``ppl_*.json`` files exist and match the row-naming scheme (``FRONTIER_RE``), because most of the
+# grid (Grid A/B) has not run yet at the time this table is first generated. ``ROWS2F`` exists only
+# so ``--stage 2f`` fits the same rows/out dispatch table as ``main``'s other stages; it is never
+# iterated, and is deliberately empty rather than a guess at what the grid will contain.
+ROWS2F = {}
 TASK_COLS = ("openbookqa", "piqa", "arc_easy", "arc_challenge", "winogrande")
 TASK_LABELS = {"openbookqa": "OBQA", "piqa": "PIQA", "arc_easy": "ARC-e",
                "arc_challenge": "ARC-c", "winogrande": "WinoGrande"}
@@ -535,7 +564,14 @@ def main(raw=RAW, out=OUT, rows=ROWS, stage=None):
     """
     raw = Path(raw)
     stage = stage or ("2" if rows is ROWS2 else "2b" if rows is ROWS2B else "2c" if rows is ROWS2C
-                       else "2e" if rows is ROWS2E else "1")
+                       else "2e" if rows is ROWS2E else "2f" if rows is ROWS2F else "1")
+    if stage == "2f":
+        # The frontier's row set is discovered from the raw dir itself (frontier_rows), not a fixed
+        # dict, so it skips the generic per-row loading and the "no data at all" refusal below --
+        # those protect the fixed-row stages from silently blanking a committed table over a bad
+        # --raw, but an almost-empty raw dir is the normal, expected state for most of stage 2f's
+        # own run and must render as a (mostly empty) table, not a crash.
+        return _finish(_stage2f_lines(raw), out)
     stage2 = stage == "2"
     stage2b = stage == "2b"
     stage2c = stage == "2c"
@@ -1024,9 +1060,13 @@ def _stage2e_lines(raw, rows, loaded, steps):
             existing = [(row, ctx) for row in variant_rows for ctx in (1024, 4096, 8192)
                         if (Path(raw) / f"profile_{row}_{ctx}.json").exists()]
             if existing:
+                # Distinct contexts, not profile JSON files: two rows profiled at the same one
+                # context is still only one context, and a fit needs two distinct ones -- counting
+                # files there would over-report how measured a variant actually is.
+                n_ctx = len({ctx for _, ctx in existing})
                 desc = ", ".join(f"{row} @ {ctx}" for row, ctx in existing)
-                lines.append(f"| {label} | ({len(existing)} context(s) measured: {desc} -- "
-                             "a fit needs two) |")
+                lines.append(f"| {label} | ({len(existing)} profile JSON(s) at {n_ctx} distinct "
+                             f"context(s): {desc} -- a fit needs two distinct contexts) |")
             else:
                 lines.append(f"| {label} | (not measured) |")
             continue
@@ -1112,13 +1152,193 @@ def _stage2e_lines(raw, rows, loaded, steps):
     return lines
 
 
+# Stage 2f (Task 4): the rank/format frontier.
+#
+# Row naming (the 2f spec): ``<dump>[_kv4][_u][_lk4|_lv4|_l4][_w40]`` -- ``_kv4`` only on ``baseline``
+# (stock's whole KV cache in bfp4, the format-only competitor); ``_u`` is unit-variance latent scale;
+# ``_lk4``/``_lv4``/``_l4`` put the K/V/both latent caches in bfp4 (default bfp8); ``_w40`` is a
+# 40-window perplexity screen (default 141 windows). ``FRONTIER_RE`` is anchored on both ends so a
+# row that does not fit the scheme (an unrelated ``ppl_*.json``, e.g. a stage 1/2 row) is quietly
+# skipped rather than mis-parsed.
+FRONTIER_RE = _re.compile(r"^(?P<dump>baseline|palu_full_50|palu_full_70|glrd_50_f256|glrd_70_f256|uni_rk\d+_rv\d+)"
+                          r"(?P<kv4>_kv4)?(?P<u>_u)?(?P<fmt>_lk4|_lv4|_l4)?(?P<w40>_w40)?$")
+BPE = {"bfp8": 1.0625, "bfp4": 0.5625}  # bytes per tile element (spec sec 2)
+STOCK_BYTES_LAYER_CHIP = 4 * (HEAD_DIM * BPE["bfp8"] + HEAD_DIM * BPE["bfp8"])  # 1088 B, r_k=r_v=128 bfp8
+
+
+def _dump_ranks(raw, dump, ranks):
+    """(mean r_k, mean r_v) for a dump: the caller's override, else derived from the dump itself.
+
+    ``baseline`` is full rank by construction; a ``uni_rk<K>_rv<V>`` dump's ranks are in its own name;
+    every other dump is a Palu/G-LRD recipe whose per-layer ranks are read the same way ``_ranks``
+    reads them for stage 1/2/2b/2c -- via ``convert.load_palu_dir`` against its ``config.json``,
+    since a calibrated dump's per-head ranks are not uniform and only that reader gives the exact
+    per-layer allocation the device builds caches for. ``raw`` is unused (every dump's rank source is
+    either the caller's override, the row name, or a fixed path under ``compressed/``) but kept in
+    the signature to match ``frontier_rows``' call site and a future per-raw-dir override.
+    """
+    if dump in ranks:
+        return ranks[dump]
+    if dump == "baseline":
+        return HEAD_DIM, HEAD_DIM
+    if dump.startswith("uni_"):
+        m = _re.match(r"uni_rk(\d+)_rv(\d+)", dump)
+        return int(m.group(1)), int(m.group(2))
+    palu_dir = {"palu_full_50": "compressed/palu_full_0.5", "palu_full_70": "compressed/palu_full_0.7",
+                "glrd_50_f256": "compressed/glrd_0.5_f256", "glrd_70_f256": "compressed/glrd_0.7_f256"}[dump]
+    cfg = json.loads((Path(palu_dir) / "config.json").read_text())
+    rk, rv = _per_layer_ranks(Path(palu_dir), cfg)
+    return sum(rk) / len(rk), sum(rv) / len(rv)
+
+
+def _row_is_blind(d, has_bfp4_latent_suffix):
+    """Whether this row's perplexity is prefill-blind to the stored latent cache format (measured
+    before stage 2f Task 1b's cache-faithful prefill) and must not be reported as bfp4 evidence.
+
+    ``latent_quant_in_prefill`` is the authoritative field when a row's JSON carries it -- ``False``
+    on the two committed ``_l4`` rows measured before Task 1b landed. A row with no such field at
+    all is a pre-2f measurement (older than the field itself): bfp8 rows were never blind, so those
+    are trusted as faithful, but a bfp4-latent-suffixed row with no field cannot be -- it predates
+    both the fix and the record of whether the fix was in effect.
+    """
+    lqip = d.get("latent_quant_in_prefill")
+    if lqip is not None:
+        return not lqip
+    return has_bfp4_latent_suffix
+
+
+def _check_row_fields(row, d, stock, k_fmt, v_fmt, scale):
+    """Warn (never raise, never silently pass) when a row's own JSON carries the 2f format/scale
+    fields (``k_latent_dtype``/``v_latent_dtype``/``kv_dtype``/``latent_scale``, written by the CLIs
+    since 2f Tasks 1b/2) and they disagree with what its file name parses to. The name is what every
+    row -- including the ones measured before these fields existed -- can be read from, so it stays
+    the source of truth here, but a real disagreement on a row that *does* carry the fields would
+    mean a mis-named file or a CLI bug, and that must not pass unnoticed.
+    """
+    mismatches = []
+    if stock:
+        if d.get("kv_dtype") is not None and d["kv_dtype"] != k_fmt:
+            mismatches.append(f"kv_dtype={d['kv_dtype']!r} vs name-parsed {k_fmt!r}")
+    else:
+        if d.get("k_latent_dtype") is not None and d["k_latent_dtype"] != k_fmt:
+            mismatches.append(f"k_latent_dtype={d['k_latent_dtype']!r} vs name-parsed {k_fmt!r}")
+        if d.get("v_latent_dtype") is not None and d["v_latent_dtype"] != v_fmt:
+            mismatches.append(f"v_latent_dtype={d['v_latent_dtype']!r} vs name-parsed {v_fmt!r}")
+    if d.get("latent_scale") is not None and d["latent_scale"] != scale:
+        mismatches.append(f"latent_scale={d['latent_scale']!r} vs name-parsed {scale!r}")
+    if mismatches:
+        warnings.warn(f"frontier_rows: ppl_{row}.json disagrees with its own row name: "
+                      + "; ".join(mismatches) + " -- trusting the name.")
+
+
+def frontier_rows(raw, ranks=None):
+    """One dict per stage 2f row found in ``raw`` (see module docstring and ``FRONTIER_RE``).
+
+    ``ranks`` overrides ``_dump_ranks``' own per-dump lookup -- tests pass synthetic ranks so they
+    never have to build a real ``compressed/*`` dump just to exercise the byte/format parsing.
+    Sorted by KB/token then perplexity, i.e. roughly the Pareto-front order ``_stage2f_lines`` and
+    ``plots.frontier_figure`` both want.
+    """
+    raw, ranks = Path(raw), ranks or {}
+    out = []
+    for p in sorted(raw.glob("ppl_*.json")):
+        row = p.stem[len("ppl_"):]
+        m = FRONTIER_RE.match(row)
+        if not m:
+            continue
+        dump = m.group("dump")
+        stock = dump == "baseline"
+        fmt = m.group("fmt") or ""
+        k_fmt = "bfp4" if (fmt in ("_lk4", "_l4") or (stock and m.group("kv4"))) else "bfp8"
+        v_fmt = "bfp4" if (fmt in ("_lv4", "_l4") or (stock and m.group("kv4"))) else "bfp8"
+        scale = "unit" if m.group("u") else "balanced"
+        r_k, r_v = _dump_ranks(raw, dump, ranks)
+        bytes_lc = 4 * (r_k * BPE[k_fmt] + r_v * BPE[v_fmt])
+        d = json.loads(p.read_text())
+        _check_row_fields(row, d, stock, k_fmt, v_fmt, scale)
+        tsk = _load(raw, f"tasks_{row}")
+        dec = _load(raw, f"bench_decode_{row}")
+        mx = _load(raw, f"bench_maxctx_{row}")
+        out.append({"row": row, "dump": dump, "r_k_mean": r_k, "r_v_mean": r_v, "k_fmt": k_fmt, "v_fmt": v_fmt,
+                    "scale": scale, "bytes_layer_chip": bytes_lc,
+                    "kb_token": bytes_lc * LAYERS * CHIPS / 1024, "reduction": STOCK_BYTES_LAYER_CHIP / bytes_lc,
+                    "ppl": d["ppl"], "windows": d["windows"], "blind": _row_is_blind(d, fmt != ""),
+                    "avg5": _avg5(tsk) if tsk else None,
+                    "decode_4k": _min_only(_cell(dec, "4096")) if dec else None,
+                    "maxctx": (mx.get("data") or {}).get("max_context_batch32") if mx else None})
+    return sorted(out, key=lambda r: (r["kb_token"], r["ppl"]))
+
+
+def _fmt_mean_rank(x):
+    """``"33"`` for a whole-number mean rank, ``"33.5"`` otherwise."""
+    return str(int(x)) if float(x).is_integer() else f"{x:.1f}"
+
+
+def _stage2f_lines(raw):
+    """Stage 2f (Task 4): the rank/format frontier -- ``frontier_rows`` rendered as the spec section
+    3 table (row, ranks, formats, scale, bytes, perplexity, tasks, decode, max context).
+
+    The row set is whatever ``frontier_rows`` finds, so an empty or almost-empty raw dir (most of
+    stage 2f's own grid, at the time this table was first added) renders a table with only its
+    header, or a header plus a one-line note, rather than refusing like the fixed-row stages do.
+    """
+    rows = frontier_rows(raw)
+    lines = [
+        "# Stage 2f results: the rank/format frontier",
+        "",
+        f"Generated by `python -m palu_tt.report --stage 2f` from `docs/results/raw/*.json` at "
+        f"commit `{_commit()}`; tt-metal v0.78.0 plus the `palu-sdpa` submodule branch, TP=2 (one "
+        "n300, two chips), non-paged, untraced decode. Bytes are per token, per layer, per chip: "
+        "`4 x (r_k x bpe_k + r_v x bpe_v)`, `bpe` 1.0625 for bfp8 and 0.5625 for bfp4 (stock is "
+        f"{STOCK_BYTES_LAYER_CHIP:.0f} B bfp8 / {STOCK_BYTES_LAYER_CHIP * BPE['bfp4'] / BPE['bfp8']:.0f} B "
+        "bfp4); `reduction` is stock bfp8 bytes / this row's bytes. `scale` is the latent scale "
+        "(`balanced`, Palu's default split, or `unit`, stage 2f's rescaled latents). `avg5` is the "
+        "same five-task zero-shot average as the earlier stages; `decode 4k`/`max ctx` are the fused "
+        "Phase 2 kernel's decode-step `min_ms` at 4096 and `bench --what maxctx` at batch 32. All "
+        "three are rendered only where measured -- most rows have none of them yet.",
+        "",
+        "| row | dump | r_k | r_v | K fmt | V fmt | scale | B/token/layer/chip | KB/token (model) | "
+        "reduction | ppl (windows) | avg5 | decode 4k ms | max ctx |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    if not rows:
+        lines.append("| (no stage 2f rows measured yet) |")
+    any_blind = False
+    for r in rows:
+        if r["blind"]:
+            any_blind = True
+            ppl_cell = f"blind ({r['windows']})"
+        else:
+            ppl_cell = f"{_fmt(r['ppl'], 3)} ({r['windows']})"
+        lines.append(
+            f"| {r['row']} | {r['dump']} | {_fmt_mean_rank(r['r_k_mean'])} | {_fmt_mean_rank(r['r_v_mean'])} | "
+            f"{r['k_fmt']} | {r['v_fmt']} | {r['scale']} | {r['bytes_layer_chip']:.1f} | "
+            f"{r['kb_token']:.2f} | {r['reduction']:.2f}x | {ppl_cell} | "
+            f"{r['avg5'] if r['avg5'] is not None else '-'} | "
+            f"{r['decode_4k'] if r['decode_4k'] is not None else '-'} | "
+            f"{r['maxctx'] if r['maxctx'] is not None else '-'} |"
+        )
+    lines.append("")
+    if any_blind:
+        lines += [
+            "A `ppl` cell of `blind` is a row measured before the cache-faithful prefill (stage 2f "
+            "Task 1b): its perplexity comes from a prefill-only instrument that reconstructs K/V "
+            "from the bf16 latent before the forward pass and never touches the stored cache dtype, "
+            "so it is identical to the row's bfp8 sibling by construction and is not evidence about "
+            "that format -- see stage 2e's L4 section and the `note` field on the row's own "
+            "`ppl_*.json`.",
+            "",
+        ]
+    return lines
+
+
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="Render docs/results/stage{1,2,2b,2c,2e}.md from the raw JSONs.")
+    ap = argparse.ArgumentParser(description="Render docs/results/stage{1,2,2b,2c,2e,2f}.md from the raw JSONs.")
     ap.add_argument("--raw", default=RAW, type=Path)
-    ap.add_argument("--stage", choices=("1", "2", "2b", "2c", "2e"), default="1")
+    ap.add_argument("--stage", choices=("1", "2", "2b", "2c", "2e", "2f"), default="1")
     ap.add_argument("--out", default=None, type=Path,
-                     help="default: stage1.md / stage2.md / stage2b.md / stage2c.md / stage2e.md")
+                     help="default: stage1.md / stage2.md / stage2b.md / stage2c.md / stage2e.md / stage2f.md")
     a = ap.parse_args()
-    _rows = {"1": ROWS, "2": ROWS2, "2b": ROWS2B, "2c": ROWS2C, "2e": ROWS2E}[a.stage]
-    _default_out = {"1": OUT, "2": OUT2, "2b": OUT2B, "2c": OUT2C, "2e": OUT2E}[a.stage]
+    _rows = {"1": ROWS, "2": ROWS2, "2b": ROWS2B, "2c": ROWS2C, "2e": ROWS2E, "2f": ROWS2F}[a.stage]
+    _default_out = {"1": OUT, "2": OUT2, "2b": OUT2B, "2c": OUT2C, "2e": OUT2E, "2f": OUT2F}[a.stage]
     print(main(raw=a.raw, out=a.out or _default_out, rows=_rows, stage=a.stage))

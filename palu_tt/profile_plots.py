@@ -44,6 +44,12 @@ CAT_COLOR = {"attention": "#5347c9", "k_recon": "#eb6834", "mlp": "#8f99a7", "cc
 CAT_LABEL = {"attention": "attention op", "k_recon": "K/V reconstruction (separate device ops)", "mlp": "MLP matmuls",
              "ccl": "cross-chip CCL", "qkv": "QKV matmul", "wo": "wo matmul", "lm_head": "lm_head", "norm": "RMSNorm",
              "heads": "heads / RoPE", "cache": "KV cache update", "elementwise": "elementwise", "layout": "layout", "other": "other"}
+# Short legend labels for attention_ctx_variants_figure: report.VARIANTS2E's own labels are the long,
+# table-appropriate prose ("legacy + table multicast") and ate ~48% of that figure's width as a
+# legend. The variant *set* still comes from VARIANTS2E (so the figure and the stage 2e ablation
+# table cannot drift apart on which variants exist); this only shortens how each is drawn.
+PLOT_LABEL2E = {"": "legacy", "r": "legacy (same day)", "p": "pack", "d": "dst",
+                "m": "legacy+mcast", "pm": "pack+mcast", "dm": "dst+mcast"}
 
 
 def _load(row, ctx):
@@ -143,9 +149,12 @@ def attention_ctx_variants_figure(out_png, dump="palu_full_50"):
 
     The variant list is imported from ``palu_tt.report`` rather than duplicated here, so the figure
     and the stage 2e ablation table cannot drift apart (they used to: a hardcoded local list here was
-    missing "r"). A variant whose profile JSONs are not there yet (the stage 2e measurement matrix
-    can still be running) is simply not plotted -- ``xs``/``ys`` come out empty and the ``if xs:``
-    guard skips it, so a partial matrix renders a partial figure instead of crashing.
+    missing "r"). The legend, though, uses ``PLOT_LABEL2E``'s short form of each label rather than
+    ``VARIANTS2E``'s own table-appropriate prose ("legacy + table multicast" was ~48% of the plot's
+    width as a legend entry) -- only the variant *set* is shared, not its long labels. A variant
+    whose profile JSONs are not there yet (the stage 2e measurement matrix can still be running) is
+    simply not plotted -- ``xs``/``ys`` come out empty and the ``if xs:`` guard skips it, so a
+    partial matrix renders a partial figure instead of crashing.
     """
     fig, ax = plt.subplots(figsize=(7.5, 4.6))
     xs = [ctx // 1024 for ctx in CONTEXTS if _load("baseline", ctx)]
@@ -157,8 +166,8 @@ def attention_ctx_variants_figure(out_png, dump="palu_full_50"):
         xs = [ctx // 1024 for ctx in CONTEXTS if _load(row, ctx)]
         ys = [_cat_ms(_load(row, ctx), "attention") for ctx in CONTEXTS if _load(row, ctx)]
         if xs:
-            ax.plot(xs, ys, marker="o", label=label, linewidth=1.6, linestyle="-" if "m" not in sfx else "--",
-                    color=plt.cm.viridis(i / len(VARIANTS2E)))
+            ax.plot(xs, ys, marker="o", label=PLOT_LABEL2E.get(sfx, label), linewidth=1.6,
+                    linestyle="-" if "m" not in sfx else "--", color=plt.cm.viridis(i / len(VARIANTS2E)))
     ax.set_xticks([c // 1024 for c in CONTEXTS])
     ax.set_xticklabels([f"{c // 1024}k" for c in CONTEXTS])
     ax.set_ylabel("attention ms per decode step (device)")

@@ -7,6 +7,7 @@ contexts whose model does not allocate. The rank column has two producers -- our
 and must never fall back to inventing full rank for a dump it cannot read.
 """
 import json
+import warnings
 from pathlib import Path
 
 import pytest
@@ -564,9 +565,11 @@ def test_stage2e_tables_render_from_a_fixture_raw_dir(tmp_path):
     for ctx, ms in ((1024, 6.0), (4096, 11.0), (8192, 20.0)):
         _write(raw, f"profile_palu_full_50_fk2_{ctx}", _prof([("PaluSdpaDecodeDeviceOperation", 32, 128, ms, 18.0)]))
         _write(raw, f"profile_palu_full_70_fk2_{ctx}", _prof([("PaluSdpaDecodeDeviceOperation", 64, 128, ms + 2, 18.0)]))
-    # The "p" (pack) variant: exactly one context measured for one of its two rows -- not enough for a
-    # fit (needs two distinct contexts), but not "no data" either.
+    # The "p" (pack) variant: two profile JSONs (both its rows), but at the *same* one context -- not
+    # enough for a fit (needs two distinct contexts), but not "no data" either. Deliberately two files
+    # at one context, not one: the count in the note must be of distinct contexts, not files.
     _write(raw, "profile_palu_full_50_fk2p_8192", _prof([("PaluSdpaDecodeDeviceOperation", 32, 128, 19.0, 18.0)]))
+    _write(raw, "profile_palu_full_70_fk2p_8192", _prof([("PaluSdpaDecodeDeviceOperation", 64, 128, 21.0, 18.0)]))
     # The "d" (dst) variant: no profile JSON at all.
 
     _write(raw, "bench_decode_baseline", {
@@ -611,8 +614,11 @@ def test_stage2e_tables_render_from_a_fixture_raw_dir(tmp_path):
     dst_label = dict(report.VARIANTS2E)["d"]
     pack_label = dict(report.VARIANTS2E)["p"]
     assert f"| {dst_label} | (not measured) |" in ablation
-    assert (f"| {pack_label} | (1 context(s) measured: palu_full_50_fk2p @ 8192 -- a fit needs two) |"
-            in ablation)
+    # Carried finding (stage 2e review): the note counts *distinct contexts*, not profile JSON files
+    # -- two files (palu_full_50_fk2p and palu_full_70_fk2p) both at 8192 is one distinct context.
+    assert (f"| {pack_label} | (2 profile JSON(s) at 1 distinct context(s): palu_full_50_fk2p @ 8192, "
+            "palu_full_70_fk2p @ 8192 -- a fit needs two distinct contexts) |" in ablation)
+    assert "(2 context(s) measured" not in ablation   # old file-counting wording must be gone
 
     # Minor 5: the stock signature's "rows" column is fed by baseline/palu_full_50 only -- restricting
     # the reference fit means no "_fk2" row can appear in it (that was the fixture pollution finding 5
@@ -641,3 +647,68 @@ def test_stage2e_tables_render_from_a_fixture_raw_dir(tmp_path):
     assert ppl8 == ppl4 and ppl8 != "-"
     assert "ppl (prefill-blind, see stage 2f)" in text
     assert "stage 2f" in bfp4   # the caveat sentence under the table
+
+
+def test_frontier_rows_parse_the_2f_row_names(tmp_path):
+    from palu_tt import report
+    raw = tmp_path
+    (raw / "ppl_baseline.json").write_text('{"ppl": 7.254, "windows": 141}')
+    (raw / "ppl_baseline_kv4.json").write_text('{"ppl": 7.9, "windows": 141}')
+    (raw / "ppl_palu_full_50_u_l4_w40.json").write_text('{"ppl": 13.1, "windows": 40}')
+    (raw / "ppl_uni_rk64_rv32_lv4_w40.json").write_text('{"ppl": 9.9, "windows": 40}')
+    rows = {r["row"]: r for r in report.frontier_rows(raw, ranks={"palu_full_50": (33, 102), "uni_rk64_rv32": (64, 32)})}
+    assert rows["baseline"]["bytes_layer_chip"] == 1088 and rows["baseline_kv4"]["bytes_layer_chip"] == 576
+    r = rows["palu_full_50_u_l4_w40"]
+    assert (r["k_fmt"], r["v_fmt"], r["scale"], r["windows"]) == ("bfp4", "bfp4", "unit", 40)
+    assert abs(r["bytes_layer_chip"] - 4 * (33 + 102) * 0.5625) < 1e-6
+    u = rows["uni_rk64_rv32_lv4_w40"]
+    assert (u["k_fmt"], u["v_fmt"]) == ("bfp8", "bfp4")
+    assert abs(u["bytes_layer_chip"] - 4 * (64 * 1.0625 + 32 * 0.5625)) < 1e-6
+
+
+def test_frontier_rows_flags_prefill_blind_l4_rows_and_trusts_faithful_ones(tmp_path):
+    """The two committed ``_l4`` rows carry ``latent_quant_in_prefill: false`` and must never render
+    as ordinary bfp4 measurements; a row with no such field at all (every pre-2f row, including the
+    stock/M-LRD/G-LRD rows already in docs/results/raw) is trusted as faithful precisely because it
+    has no bfp4-latent suffix -- bfp8 rows were never blind."""
+    from palu_tt import report
+    raw = tmp_path
+    (raw / "ppl_palu_full_50.json").write_text(
+        '{"ppl": 12.93, "windows": 141, "palu_dir": "compressed/palu_full_0.5"}')
+    (raw / "ppl_palu_full_50_l4.json").write_text(
+        '{"ppl": 12.93, "windows": 141, "palu_dir": "compressed/palu_full_0.5", '
+        '"latent_quant_in_prefill": false, "note": "prefill-blind"}')
+    (raw / "ppl_palu_full_70_l4.json").write_text(
+        '{"ppl": 9.03, "windows": 141, "palu_dir": "compressed/palu_full_0.7", '
+        '"latent_quant_in_prefill": true}')
+    rows = {r["row"]: r for r in report.frontier_rows(
+        raw, ranks={"palu_full_50": (33, 102), "palu_full_70": (58, 121)})}
+    assert rows["palu_full_50"]["blind"] is False
+    assert rows["palu_full_50_l4"]["blind"] is True
+    assert rows["palu_full_70_l4"]["blind"] is False   # field present and true -> faithful
+
+
+def test_frontier_rows_warns_when_a_rows_own_fields_disagree_with_its_name(tmp_path):
+    """A row's format/scale is parsed from its name (the only thing every row -- pre- and post-2f --
+    can be read from uniformly), but when the JSON itself carries the 2f fields (k_latent_dtype/
+    v_latent_dtype/kv_dtype/latent_scale), a disagreement must not pass silently."""
+    from palu_tt import report
+    raw = tmp_path
+    (raw / "ppl_palu_full_50_l4.json").write_text(
+        '{"ppl": 13.0, "windows": 40, "k_latent_dtype": "bfp8", "v_latent_dtype": "bfp8"}')
+    with pytest.warns(UserWarning):
+        report.frontier_rows(raw, ranks={"palu_full_50": (33, 102)})
+
+    (raw / "ppl_baseline_kv4.json").write_text('{"ppl": 7.9, "windows": 141, "kv_dtype": "bfp8"}')
+    with pytest.warns(UserWarning):
+        report.frontier_rows(raw)
+
+    # A row whose fields agree with its name must not warn.
+    raw2 = tmp_path / "agree"
+    raw2.mkdir()
+    (raw2 / "ppl_palu_full_70.json").write_text(
+        '{"ppl": 9.0, "windows": 141, "k_latent_dtype": "bfp8", "v_latent_dtype": "bfp8", '
+        '"latent_scale": "balanced"}')
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        report.frontier_rows(raw2, ranks={"palu_full_70": (58, 121)})

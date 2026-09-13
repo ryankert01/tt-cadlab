@@ -8,6 +8,13 @@ an adjacent-pairlist chart (a line chart with a legend, not scatter/all-pairs): 
 (yellow) -- the same four hues used unmodified from the palette's documented default order.
 
 Usage: ``python -m palu_tt.plots --batch 1 --batch 8`` writes both PNGs into ``docs/results/``.
+
+``--frontier`` renders ``docs/results/frontier_2f.png`` instead: the stage 2f rank/format frontier
+(``frontier_figure``), wikitext perplexity against KV bytes per token for every cell
+``report.frontier_rows`` finds in the raw dir, marker/fill encoding K/V cache format and colour the
+dump family, with the Pareto front drawn through the points. A row whose perplexity predates the
+cache-faithful prefill (``frontier_rows``' ``blind`` flag) is left off the figure entirely -- see
+``frontier_figure``'s own docstring.
 """
 import argparse
 import json
@@ -110,13 +117,61 @@ def ctx_scaling_figure(raw_dir, batch, out_png, rows=SCALING_ROWS):
     return out_png
 
 
+FRONTIER_COLOR = {"baseline": "#333333", "palu_full_50": "#2f6fdb", "palu_full_70": "#7fa8f2",
+                   "glrd_50_f256": "#e07b39", "glrd_70_f256": "#f0a06a"}
+
+
+def frontier_figure(raw_dir, out_png, ranks=None):
+    """Perplexity against KB per token for every stage 2f cell (``report.frontier_rows``): marker
+    shape is K format, fill is V format, colour is dump family, with the Pareto front (lowest
+    perplexity at each byte budget) drawn through the points.
+
+    A row measured before the cache-faithful prefill (``report.frontier_rows``' ``blind`` flag --
+    see its docstring) is excluded: its perplexity is its bfp8 sibling's by construction, so it would
+    otherwise plot as a bfp4 point at bfp8-level quality, which is exactly the kind of misleading
+    reading the frontier table works to avoid.
+    """
+    from palu_tt import report
+    rows = [r for r in report.frontier_rows(raw_dir, ranks=ranks) if not r["blind"]]
+    fig, ax = plt.subplots(figsize=(8, 5))
+    for r in rows:
+        c = FRONTIER_COLOR.get(r["dump"], "#3c9d6b")
+        marker = "s" if r["k_fmt"] == "bfp4" else "o"
+        face = c if r["v_fmt"] == "bfp8" else "white"
+        ax.scatter(r["kb_token"], r["ppl"], marker=marker, s=48, facecolors=face, edgecolors=c, linewidths=1.5)
+        ax.annotate(r["row"], (r["kb_token"], r["ppl"]), textcoords="offset points", xytext=(4, 3), fontsize=6)
+    front, best = [], float("inf")
+    for r in sorted(rows, key=lambda r: r["kb_token"]):
+        if r["ppl"] < best:
+            best = r["ppl"]
+            front.append(r)
+    if len(front) > 1:
+        ax.plot([r["kb_token"] for r in front], [r["ppl"] for r in front], color="#999999", linewidth=1,
+                 linestyle="--")
+    ax.set_xlabel("KV cache, KB per token (whole model, both chips)")
+    ax.set_ylabel("wikitext-2 perplexity")
+    ax.set_title("quality per byte: rank x format (filled = bfp8 V, hollow = bfp4 V; square = bfp4 K)")
+    fig.tight_layout()
+    out_png = Path(out_png)
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_png, dpi=150)
+    plt.close(fig)
+    return out_png
+
+
 def main():
-    ap = argparse.ArgumentParser(description="Render docs/results/ctx_scaling_b<B>.png from the raw JSONs.")
+    ap = argparse.ArgumentParser(description="Render docs/results/ctx_scaling_b<B>.png / frontier_2f.png "
+                                              "from the raw JSONs.")
     ap.add_argument("--batch", type=int, action="append", default=None,
                      help="repeatable; default: both %s" % (SCALING_BATCHES,))
+    ap.add_argument("--frontier", action="store_true",
+                     help="render docs/results/frontier_2f.png (stage 2f) instead of the context-scaling figures")
     ap.add_argument("--raw", default=RAW, type=Path)
     ap.add_argument("--out-dir", default=OUT_DIR, type=Path)
     a = ap.parse_args()
+    if a.frontier:
+        print(frontier_figure(a.raw, a.out_dir / "frontier_2f.png"))
+        return
     for b in (a.batch or list(SCALING_BATCHES)):
         out = ctx_scaling_figure(a.raw, b, a.out_dir / f"ctx_scaling_b{b}.png")
         print(out)

@@ -85,6 +85,9 @@ def test_attention_ctx_variants_figure_plots_exactly_the_measured_variants(tmp_p
     _write(raw, "profile_baseline_4096", _profile(15.0))
     _write(raw, "profile_palu_full_50_fk2d_4096", _profile(9.5))
     _write(raw, "profile_palu_full_50_fk2d_8192", _profile(17.0))
+    # "m" (legacy + multicast): its VARIANTS2E label is long prose, unlike "d"'s ("dst"), which is
+    # already short -- this is what actually exercises the short-label carried finding below.
+    _write(raw, "profile_palu_full_50_fk2m_4096", _profile(8.0))
     monkeypatch.setattr(profile_plots, "RAW", raw)
 
     captured = {}
@@ -97,5 +100,52 @@ def test_attention_ctx_variants_figure_plots_exactly_the_measured_variants(tmp_p
 
     assert out.exists() and out.stat().st_size > 0
     ax = captured["fig"].axes[0]
-    expected = ["stock"] + [label for sfx, label in VARIANTS2E if sfx == "d"]
-    assert [line.get_label() for line in ax.lines] == expected
+    long_labels = dict(VARIANTS2E)
+    expected = ["stock"] + [profile_plots.PLOT_LABEL2E[sfx] for sfx, _ in VARIANTS2E if sfx in ("d", "m")]
+    got = [line.get_label() for line in ax.lines]
+    assert got == expected
+
+    # Carried finding (stage 2e review): the legend uses PLOT_LABEL2E's short labels, not
+    # VARIANTS2E's own long table prose -- "m"'s table label is long enough that this actually
+    # distinguishes the two ("d"'s table label, "dst", already happens to be short).
+    assert "legacy+mcast" in got
+    assert long_labels["m"] not in got
+
+
+def test_frontier_figure_renders(tmp_path):
+    from palu_tt import plots
+    (tmp_path / "ppl_baseline.json").write_text('{"ppl": 7.254, "windows": 141}')
+    (tmp_path / "ppl_baseline_kv4.json").write_text('{"ppl": 7.9, "windows": 141}')
+    (tmp_path / "ppl_uni_rk64_rv32_l4_w40.json").write_text('{"ppl": 9.9, "windows": 40}')
+    out = tmp_path / "frontier.png"
+    plots.frontier_figure(tmp_path, out, ranks={"uni_rk64_rv32": (64, 32)})
+    assert out.exists() and out.stat().st_size > 1000
+
+
+def test_frontier_figure_skips_prefill_blind_rows(tmp_path, monkeypatch):
+    """A row measured before the cache-faithful prefill (``latent_quant_in_prefill: false``) must not
+    be drawn as a bfp4 point -- its perplexity is its bfp8 sibling's by construction, so plotting it
+    would show a fake, too-good bfp4 point on the frontier. ``frontier_rows`` already flags it
+    (``blind``); the figure must actually act on that flag, not just the table."""
+    from palu_tt import plots
+
+    (tmp_path / "ppl_palu_full_50.json").write_text(
+        '{"ppl": 12.93, "windows": 141, "palu_dir": "compressed/palu_full_0.5"}')
+    (tmp_path / "ppl_palu_full_50_l4.json").write_text(
+        '{"ppl": 12.93, "windows": 141, "palu_dir": "compressed/palu_full_0.5", '
+        '"latent_quant_in_prefill": false, "note": "prefill-blind"}')
+    out = tmp_path / "frontier.png"
+
+    captured = {}
+    real_close = plots.plt.close
+    monkeypatch.setattr(plots.plt, "close", lambda fig: (captured.setdefault("fig", fig), real_close(fig)))
+
+    plots.frontier_figure(tmp_path, out, ranks={"palu_full_50": (33, 102)})
+
+    assert out.exists()
+    ax = captured["fig"].axes[0]
+    plotted_x = {round(pt[0], 3) for coll in ax.collections for pt in coll.get_offsets()}
+    from palu_tt import report
+    rows = {r["row"]: r for r in report.frontier_rows(tmp_path, ranks={"palu_full_50": (33, 102)})}
+    assert round(rows["palu_full_50"]["kb_token"], 3) in plotted_x
+    assert round(rows["palu_full_50_l4"]["kb_token"], 3) not in plotted_x
