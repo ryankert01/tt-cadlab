@@ -34,7 +34,7 @@ def build_model(mesh_device, kind: str, palu_dir: Optional[str] = None, max_batc
                 n_layers: Optional[int] = None, dtype=ttnn.bfloat8_b, latent_dtype=None,
                 k_latent_dtype=None, v_latent_dtype=None, kv_cache_dtype=None,
                 use_fused_k: bool = False, cs_recurrence: bool = False, fused_k_chunk: Optional[int] = None,
-                group_heads: Optional[int] = None, rot_mode: str = "legacy", table_mcast: bool = False,
+                group_heads: Optional[int] = None, rot_mode: str = "dst", table_mcast: bool = True,
                 latent_scale: str = "balanced", latent_quant_in_prefill: bool = True):
     """latent_dtype: optional ttnn dtype for the Palu latent K/V caches (None = the model's KV cache
     dtype, i.e. bfp8). k_latent_dtype / v_latent_dtype: stage 2f, per-cache overrides of latent_dtype
@@ -44,7 +44,11 @@ def build_model(mesh_device, kind: str, palu_dir: Optional[str] = None, max_batc
     tt_transformers' own choice (bfp8) alone. use_fused_k / cs_recurrence / fused_k_chunk: stage-2 fused decode kernel
     (Phase 1, Phase 2, chunk override). group_heads: stage-2c KV heads per core in the fused op's
     group-shared mode (None = pick the largest that fits L1 per layer, 1 = the stage 2b per-head
-    kernel). latent_scale: stage 2f, "balanced" (Palu's split, default) or "unit" (every latent
+    kernel). rot_mode / table_mcast: stage 2e, how the fused op rebuilds a K row tile ("legacy" /
+    "pack" / "dst") and whether one core per grid column reads the Phase 2 angle table and multicasts
+    it; the shipped defaults are "dst" and True (stage 2e Task 9 -- 39.1 / 55.6 / 77.4 ms at 1k / 4k /
+    8k on palu_full_50 against legacy's 43.0 / 65.0 / 94.5). Only meaningful with use_fused_k, and the
+    multicast only in Phase 2. latent_scale: stage 2f, "balanced" (Palu's split, default) or "unit" (every latent
     component rescaled to unit variance -- see convert.unit_scale_lowrank). latent_quant_in_prefill:
     stage 2f, round-trip the prefill latents through the cache format before reconstructing K and V, so
     the prefill-only instruments (eval_ppl, eval_tasks) score what decode reads back; False restores the
@@ -116,7 +120,7 @@ def set_kv_cache_dtype(args, kv_cache_dtype) -> None:
 
 def apply_palu_flags(cfg, latent_dtype=None, k_latent_dtype=None, v_latent_dtype=None,
                      use_fused_k: bool = False, cs_recurrence: bool = False, fused_k_chunk=None,
-                     group_heads=None, rot_mode: str = "legacy", table_mcast: bool = False,
+                     group_heads=None, rot_mode: str = "dst", table_mcast: bool = True,
                      latent_quant_in_prefill: bool = True, latent_scale=None, kv_cache_dtype=None):
     """Write one run's Palu switches onto ``cfg``: the single place ``build_model``'s keyword arguments
     become ``PaluConfig`` state.

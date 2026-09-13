@@ -383,6 +383,27 @@ The rebuild is cheap in bytes and FLOPs and expensive in round trips: it adds ab
 chunk to a flash step that needs about 24, and each acquisition carries the three-thread handshake and its own
 init and reconfiguration overhead.
 
+**Two cheaper rotations (stage 2e).** The steps above are `rot_mode` `legacy`; the op takes two more, both
+attacking those round trips. On Wormhole the ELWMUL LLK behind `mul_tiles` cannot accumulate into DST, so neither mode
+can simply add the second product on top of the first -- the add has to come from somewhere else, and both take
+it from the packer's L1 accumulate (`pack_reconfig_l1_acc(1)`), which sums what it writes onto the tile already
+in the CB.
+
+`pack` mode keeps step 1 unchanged and rewrites step 2 to do two column tiles per DST trip: `A_j cos_j`,
+`B_j sin_j`, `A_j+1 cos_j+1`, `B_j+1 sin_j+1` into DST 0 to 3, then the two `A` products are packed into `c_1`
+with accumulate off and the two `B` products onto the same two L1 tiles with it on. That halves the DST
+acquisitions of step 2 (from four per row tile to two) and removes the SFPU pass entirely, at the cost of a
+second bf16 rounding of `K_rot` -- the `A` product is written to L1 before the `B` product is added to it.
+
+`dst` mode fuses both steps into one trip per column-tile pair. `lat_i @ w[:, j..j+1]` lands in DST 0 to 1 and
+`lat_i @ w[:, j+DHt..j+DHt+1]` in DST 2 to 3, then `mul_reuse_dest_tiles<DEST_TO_SRCA>` multiplies each of the
+four in place against its cos/sin tile, reading the matmul result straight back out of DST into SrcA, and the
+packer accumulates the `B` half onto the `A` half as in `pack` mode. Nothing stages `AB` through L1, so the
+`c_10` block shrinks from `2 * Wt` tiles to the statistics peel scratch, and both the SFPU pass and step 1's
+separate pack disappear. It is the shipped default: 85.6 us per chunk per layer against `legacy`'s 114.4 at
+`r_k` 32 / `r_v` 128 (`docs/results/stage2e.md`), the same second rounding as `pack`, and measured PCC 0.999+
+against `legacy` at every calibrated rank.
+
 ### C4. Where the angles come from: Phase 1 and Phase 2
 
 ![Fig. C4](figures/kernel_c4_phase2.svg)

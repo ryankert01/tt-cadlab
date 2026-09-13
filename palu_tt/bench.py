@@ -57,9 +57,10 @@ BATCH = 32
 
 # Stage 2: the fused-kernel runtime flags for this process, set once by ``main`` from ``--fused``
 # and passed to every model/attention build below. ``--fused off`` (the default) reproduces the
-# stage-1 rows exactly -- ``build_model``'s own defaults are these same three values.
+# stage-1 rows exactly -- ``build_model``'s own defaults are these same values, including the stage 2e
+# shipped rebuild mode ("dst") and angle-table multicast (on), which are inert without use_fused_k.
 FUSED = {"use_fused_k": False, "cs_recurrence": False, "fused_k_chunk": None, "group_heads": None,
-         "rot_mode": "legacy", "table_mcast": False, "latent_dtype": None, "k_latent_dtype": None,
+         "rot_mode": "dst", "table_mcast": True, "latent_dtype": None, "k_latent_dtype": None,
          "v_latent_dtype": None, "kv_cache_dtype": None, "latent_scale": "balanced"}
 
 
@@ -383,10 +384,12 @@ def main():
                    help="stage-2c group-shared mode: KV heads per core in the fused op. auto = the "
                         "largest that fits L1 per layer; 1 reproduces the stage 2b per-head kernel. "
                         "Grouped (G-LRD) Palu rows only.")
-    p.add_argument("--rot-mode", choices=["legacy", "pack", "dst"], default="legacy",
-                   help="stage-2e K rebuild mode in the fused op (see docs/superpowers/specs/2026-09-14-palu-tt-stage2e-design.md).")
-    p.add_argument("--table-mcast", choices=["off", "on"], default="off",
-                   help="stage-2e: multicast the Phase 2 angle table down each grid column (Phase 2 only).")
+    p.add_argument("--rot-mode", choices=["legacy", "pack", "dst"], default="dst",
+                   help="stage-2e K rebuild mode in the fused op (default: dst, the shipped variant; see "
+                        "docs/superpowers/specs/2026-09-14-palu-tt-stage2e-design.md).")
+    p.add_argument("--table-mcast", choices=["off", "on"], default="on",
+                   help="stage-2e: multicast the Phase 2 angle table down each grid column, instead of "
+                        "reading it per core (default: on, the shipped variant; Phase 2 only).")
     p.add_argument("--latent-dtype", choices=["bfp8", "bfp4"], default="bfp8",
                    help="tile format of the Palu latent K/V caches (default bfp8, the model's KV cache format).")
     p.add_argument("--k-latent-dtype", choices=["bfp8", "bfp4"], default=None,

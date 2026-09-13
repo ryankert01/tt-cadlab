@@ -45,10 +45,13 @@ class PaluRuntime:
     group_heads_per_core: Optional[int] = None
     # stage 2e: how the fused op rebuilds a K row tile. "legacy" = AB through c_10 and an SFPU add
     # (stage 2); "pack" = the packer's L1 accumulate does the add, two column tiles per DST trip;
-    # "dst" = matmul straight into DST, dest-reuse multiplies, no AB scratch buffer.
-    rot_mode: str = "legacy"
+    # "dst" = matmul straight into DST, dest-reuse multiplies, no AB scratch buffer. "dst" is the
+    # shipped default (stage 2e Task 9): the lowest per-chunk cost of the three, 85.6 us/layer against
+    # legacy's 114.4 at r_k 32 / r_v 128.
+    rot_mode: str = "dst"
     # stage 2e: read the Phase 2 angle table once per grid column and multicast it to the column.
-    table_mcast: bool = False
+    # Shipped on: the per-core table read was ~61 us of the fused op's fixed cost per layer.
+    table_mcast: bool = True
     # stage 2f: round-trip the prefill latents through the cache format before reconstructing K and V, so
     # perplexity and task scores (prefill-only) see what decode will read back. Off = the stage 1..2e
     # behaviour, where the cache format never entered a prefill score.

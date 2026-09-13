@@ -65,6 +65,15 @@ def _stock_on_reconstructed_k(md, q, k_lat, u_k, v, pos, cos, sin, r_v, k_chunk)
     return _host(out)
 
 
+# Sentinel for "do not pass this keyword at all", so a test can exercise the op's *own* default
+# instead of whatever these helpers happen to pass (stage 2e Task 9 made the defaults dst + multicast).
+_OP_DEFAULT = object()
+
+
+def _switches(rot_mode, table_mcast):
+    return {k: v for k, v in (("rot_mode", rot_mode), ("table_mcast", table_mcast)) if v is not _OP_DEFAULT}
+
+
 def _fused(md, q, k_lat, u_k, v, pos, cos, sin, r_v, k_chunk, phase2, rot_mode="legacy", table_mcast=False):
     S = k_lat.shape[2]
     extra = {}
@@ -74,8 +83,8 @@ def _fused(md, q, k_lat, u_k, v, pos, cos, sin, r_v, k_chunk, phase2, rot_mode="
                      trans_mat=_dev(md, fused.trans_mat_tile()))
     out = ttnn.transformer.palu_sdpa_decode(
         _dev(md, q), _dev(md, k_lat), _dev(md, fused.w_rot_from_u_k(u_k)[None]), _dev(md, fused.cs_table(cos, sin, S)[None, None]),
-        _dev(md, v), head_dim_v=r_v, cur_pos_tensor=_pos(md, pos), scale=HD ** -0.5, rot_mode=rot_mode,
-        table_mcast=table_mcast, **extra, **_cfg(k_chunk))
+        _dev(md, v), head_dim_v=r_v, cur_pos_tensor=_pos(md, pos), scale=HD ** -0.5,
+        **_switches(rot_mode, table_mcast), **extra, **_cfg(k_chunk))
     return _host(out)
 
 
@@ -136,11 +145,20 @@ def test_phase2_matches_reference_default_chunk(mesh_device, r_k, batch, rot_mod
     _check(mesh_device, batch, 1024, r_k, 64, k_chunk=0, phase2=True, rot_mode=rot_mode)      # the op picks 512
 
 
-def test_rot_mode_legacy_is_the_default_and_bogus_is_rejected(mesh_device):
+def test_rot_mode_dst_and_table_mcast_are_the_defaults_and_bogus_is_rejected(mesh_device):
+    """Stage 2e Task 9 ships `dst` + table multicast as the op's own defaults, so a Phase 2 call that
+    names neither must be exactly the call that names both. Phase 1 has no resident angle table to
+    broadcast, so the shipped multicast default has to fold away there rather than be rejected."""
     q, k_lat, u_k, v, pos, cos, sin = _inputs(32, 1024, 32, 128)
-    default = _fused(mesh_device, q, k_lat, u_k, v, pos, cos, sin, 128, 0, True)
-    legacy = _fused(mesh_device, q, k_lat, u_k, v, pos, cos, sin, 128, 0, True, rot_mode="legacy")
-    assert torch.equal(default, legacy)
+    default = _fused(mesh_device, q, k_lat, u_k, v, pos, cos, sin, 128, 0, True,
+                     rot_mode=_OP_DEFAULT, table_mcast=_OP_DEFAULT)
+    shipped = _fused(mesh_device, q, k_lat, u_k, v, pos, cos, sin, 128, 0, True, rot_mode="dst", table_mcast=True)
+    assert torch.equal(default, shipped)
+    p1_default = _fused(mesh_device, q, k_lat, u_k, v, pos, cos, sin, 128, 128, False,
+                        rot_mode=_OP_DEFAULT, table_mcast=_OP_DEFAULT)
+    p1_explicit = _fused(mesh_device, q, k_lat, u_k, v, pos, cos, sin, 128, 128, False,
+                         rot_mode="dst", table_mcast=False)
+    assert torch.equal(p1_default, p1_explicit)
     with pytest.raises(RuntimeError, match="rot_mode must be"):
         _fused(mesh_device, q, k_lat, u_k, v, pos, cos, sin, 128, 0, True, rot_mode="bogus")
 
@@ -223,8 +241,8 @@ def _fused_group(md, q, k_lat, u_k, v_lat, u_v, pos, cos, sin, k_chunk, phase2, 
         extra["heads_per_core"] = heads_per_core
     out = ttnn.transformer.palu_sdpa_decode(
         _dev(md, q), _dev(md, k_lat), _dev(md, fused.w_rot_from_u_k(u_k)[None]), _dev(md, fused.cs_table(cos, sin, S)[None, None]),
-        _dev(md, v_lat), head_dim_v=HD, cur_pos_tensor=_pos(md, pos), scale=HD ** -0.5, rot_mode=rot_mode,
-        table_mcast=table_mcast, **extra, **_cfg(k_chunk, grid))
+        _dev(md, v_lat), head_dim_v=HD, cur_pos_tensor=_pos(md, pos), scale=HD ** -0.5,
+        **_switches(rot_mode, table_mcast), **extra, **_cfg(k_chunk, grid))
     return _host(out)
 
 

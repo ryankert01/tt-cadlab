@@ -31,10 +31,12 @@ def main():
     p.add_argument("--fused", choices=["off", "p1", "p2"], default="off")
     p.add_argument("--fused-k-chunk", type=int, default=None)
     p.add_argument("--group-heads", choices=["auto", "1", "2", "4"], default="auto")
-    p.add_argument("--rot-mode", choices=["legacy", "pack", "dst"], default="legacy",
-                   help="stage-2e K rebuild mode in the fused op (see docs/superpowers/specs/2026-09-14-palu-tt-stage2e-design.md).")
-    p.add_argument("--table-mcast", choices=["off", "on"], default="off",
-                   help="stage-2e: multicast the Phase 2 angle table down each grid column (Phase 2 only).")
+    p.add_argument("--rot-mode", choices=["legacy", "pack", "dst"], default="dst",
+                   help="stage-2e K rebuild mode in the fused op (default: dst, the shipped variant; see "
+                        "docs/superpowers/specs/2026-09-14-palu-tt-stage2e-design.md).")
+    p.add_argument("--table-mcast", choices=["off", "on"], default="on",
+                   help="stage-2e: multicast the Phase 2 angle table down each grid column, instead of "
+                        "reading it per core (default: on, the shipped variant; Phase 2 only).")
     p.add_argument("--ctx", type=int, required=True)
     p.add_argument("--steps", type=int, default=3)
     p.add_argument("--warmup", type=int, default=3)

@@ -74,10 +74,12 @@ def main():
                         "every layer without the allocator fallback that 4 hits on most layers at "
                         "batch 1 (4 is a ceiling the run may fall back from). Pass 1 for the "
                         "per-head kernel on purpose, or auto to mirror what bench picks.")
-    p.add_argument("--rot-mode", choices=["legacy", "pack", "dst"], default="legacy",
-                   help="stage-2e K rebuild mode in the fused op (see docs/superpowers/specs/2026-09-14-palu-tt-stage2e-design.md).")
-    p.add_argument("--table-mcast", choices=["off", "on"], default="off",
-                   help="stage-2e: multicast the Phase 2 angle table down each grid column (Phase 2 only).")
+    p.add_argument("--rot-mode", choices=["legacy", "pack", "dst"], default="dst",
+                   help="stage-2e K rebuild mode in the fused op (default: dst, the shipped variant; see "
+                        "docs/superpowers/specs/2026-09-14-palu-tt-stage2e-design.md).")
+    p.add_argument("--table-mcast", choices=["off", "on"], default="on",
+                   help="stage-2e: multicast the Phase 2 angle table down each grid column, instead of "
+                        "reading it per core (default: on, the shipped variant; Phase 2 only).")
     p.add_argument("--latent-dtype", choices=["bfp8", "bfp4"], default="bfp8",
                    help="tile format of the Palu latent K/V caches (default bfp8, the model's KV cache format).")
     p.add_argument("--k-latent-dtype", choices=["bfp8", "bfp4"], default=None,

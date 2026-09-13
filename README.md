@@ -217,6 +217,29 @@ tree-reduction rounds**, breaking ties by the largest H; the chosen values reach
   that it actually exercises the group kernel.
 - `eval_tasks` scores whole continuations in prefill, so the flag cannot change its numbers at all.
 
+Three more fused-path flags sit next to `--group-heads` on `bench` and `decode_check` (`--rot-mode`
+and `--table-mcast` are also on `profile_decode`), all added in stage 2e:
+
+- `--rot-mode {legacy,pack,dst}` is how the kernel rebuilds one K row tile. `legacy` is stage 2's:
+  the `lat @ [u_k | u_k T]` block goes to L1 (`c_10`) and an SFPU add sums `A cos + B sin`. `pack`
+  keeps that block but rotates two column tiles per DST trip and lets the packer's L1 accumulate do
+  the add. `dst` matmuls straight into DST, multiplies in place with `mul_reuse_dest_tiles` and
+  accumulates in the packer, so the `c_10` block disappears. **Default `dst`** (the shipped variant):
+  85.6 us per chunk per layer against `legacy`'s 114.4 at `r_k` 32 / `r_v` 128.
+- `--table-mcast {off,on}` reads the Phase 2 angle table once per grid *column* and multicasts it
+  down the column instead of every core reading it from DRAM. Phase 2 only (Phase 1 streams the table
+  per chunk and ignores the flag). **Default `on`**: the per-core read was about 61 us of the fused
+  op's fixed cost per layer (118.7 -> 57.4 us).
+- `--latent-dtype {bfp8,bfp4}` (with the per-cache `--k-latent-dtype` / `--v-latent-dtype`) is the
+  tile format of the Palu *latent* caches, not of a reconstructed K/V. **Default `bfp8`**, the model's
+  own KV cache format; `bfp4` halves the latent bytes per token and is measured in stage 2e §4 and
+  swept in stage 2f. Palu-path only -- use `--kv-dtype` for the stock KV cache.
+
+Together `--rot-mode dst --table-mcast on` is what a run gets when it names neither, at every level
+(the `PaluRuntime` dataclass, `build_model`, the three CLIs and `ttnn.transformer.palu_sdpa_decode`
+itself), so the stage 2e rows that carry an explicit `--rot-mode legacy` are the ones re-measuring
+the old kernel. See `docs/results/stage2e.md`.
+
 Each harness writes one JSON to `docs/results/raw/`; `palu_tt.report` reads only those and refuses to
 render when none are present. The samples (`docs/results/raw/samples.json`) come from
 `palu_tt.generate.greedy` driven by a short ad-hoc runner, not a committed script.
