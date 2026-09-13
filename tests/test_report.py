@@ -891,3 +891,16 @@ def test_frontier_rows_blind_fallback_when_field_is_absent_reaches_the_table(tmp
            "2.67x | 8.500 (141) | - | - | - |" in text
     assert "| uni_rk64_rv32_l4 | uni_rk64_rv32 | 64 | 32 | bfp4 | bfp4 | balanced | 216.0 | 13.50 | " \
            "5.04x | blind (141) | - | - | - |" in text
+
+
+def test_frontier_stock_rows_read_their_plain_bench_files(tmp_path):
+    """Stock rows have no fused/naive split: ``bench_decode_baseline.json`` IS the stock
+    tt_transformers kernel, so the frontier's decode/maxctx columns must show it (suffix "")."""
+    from palu_tt import report
+    raw = tmp_path
+    _write(raw, "ppl_baseline", {"ppl": 7.254, "windows": 141})
+    _write(raw, "bench_decode_baseline", {"data": {"4096": {"p50_ms": 55.4, "min_ms": 55.3, "iters": 10}}})
+    _write(raw, "bench_maxctx_baseline", {"data": {"max_context_batch32": 4096}})
+    r = {x["row"]: x for x in report.frontier_rows(raw)}["baseline"]
+    assert r["decode_4k"] == "55.3" and r["maxctx"] == 4096
+    assert r["decode_4k_suffix"] == "" and r["maxctx_suffix"] == ""

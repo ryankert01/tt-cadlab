@@ -1276,6 +1276,10 @@ def _frontier_fused_bench(raw, what, row):
     ``palu_full_*``/``glrd_*`` dump -- multiple times slower than the fused kernel it stands in for
     on a decode-latency frontier -- and is never read here, on purpose, even as a fallback.
     """
+    if row == "baseline" or row.startswith("baseline_"):
+        # stock rows have no fused/naive split: the plain file IS the stock tt_transformers kernel
+        data = _load(raw, f"bench_{what}_{row}")
+        return (data, "") if data is not None else (None, None)
     for suffix in FRONTIER_FUSED_SUFFIXES:
         data = _load(raw, f"bench_{what}_{row}{suffix}")
         if data is not None:
