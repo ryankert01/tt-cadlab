@@ -1,0 +1,16 @@
+{
+ "ppl": 9.76368174033665,
+ "nll": 657685.5581665039,
+ "tokens": 288627,
+ "windows": 141,
+ "seq_len": 2048,
+ "row": "baseline_kv4",
+ "kind": "stock",
+ "palu_dir": null,
+ "latent_scale": "balanced",
+ "latent_dtype": null,
+ "k_latent_dtype": null,
+ "v_latent_dtype": null,
+ "kv_dtype": "bfp4",
+ "latent_quant_in_prefill": true
+}
