@@ -1,0 +1,1071 @@
+{
+ "steps": 3,
+ "device_ms_per_step": 41.82466333333333,
+ "device_ms_per_step_chip1": 41.83317666666667,
+ "ops_per_step": 882.0,
+ "categories": {
+  "mlp": {
+   "ms": 12.33319,
+   "count": 96.00000000000013
+  },
+  "attention": {
+   "ms": 11.619171999999997,
+   "count": 31.999999999999993
+  },
+  "ccl": {
+   "ms": 9.341505666666668,
+   "count": 130.00000000000034
+  },
+  "qkv": {
+   "ms": 2.0183073333333326,
+   "count": 31.999999999999954
+  },
+  "wo": {
+   "ms": 1.3877610000000002,
+   "count": 31.999999999999954
+  },
+  "norm": {
+   "ms": 0.8094183333333331,
+   "count": 65.00000000000016
+  },
+  "lm_head": {
+   "ms": 1.0918936666666665,
+   "count": 2.0
+  },
+  "elementwise": {
+   "ms": 0.8309223333333334,
+   "count": 99.00000000000013
+  },
+  "heads": {
+   "ms": 0.7206943333333333,
+   "count": 96.99999999999986
+  },
+  "layout": {
+   "ms": 1.0367779999999998,
+   "count": 232.99999999999983
+  },
+  "cache": {
+   "ms": 0.6350206666666667,
+   "count": 63.99999999999996
+  }
+ },
+ "ops": [
+  {
+   "op": "MatmulDeviceOperation",
+   "category": "mlp",
+   "ms": 8.222026,
+   "count": 64.00000000000017,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    4096
+   ],
+   "in1": [
+    1,
+    1,
+    4096,
+    7168
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    7168
+   ]
+  },
+  {
+   "op": "PaluSdpaDecodeDeviceOperation",
+   "category": "attention",
+   "ms": 7.893121333333331,
+   "count": 20.999999999999993,
+   "cores": 64.0,
+   "in0": [
+    1,
+    32,
+    16,
+    128
+   ],
+   "in1": [
+    32,
+    4,
+    1024,
+    64
+   ],
+   "out": [
+    1,
+    32,
+    16,
+    128
+   ]
+  },
+  {
+   "op": "ReduceScatterMinimalAsyncDeviceOperation",
+   "category": "ccl",
+   "ms": 7.026592333333334,
+   "count": 64.00000000000017,
+   "cores": 5.0,
+   "in0": [
+    1,
+    1,
+    32,
+    4096
+   ],
+   "in1": [],
+   "out": [
+    2,
+    1,
+    32,
+    4096
+   ]
+  },
+  {
+   "op": "MatmulDeviceOperation",
+   "category": "mlp",
+   "ms": 4.1111640000000005,
+   "count": 31.999999999999954,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    7168
+   ],
+   "in1": [
+    1,
+    1,
+    7168,
+    4096
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    4096
+   ]
+  },
+  {
+   "op": "MatmulDeviceOperation",
+   "category": "qkv",
+   "ms": 2.0183073333333326,
+   "count": 31.999999999999954,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    4096
+   ],
+   "in1": [
+    1,
+    1,
+    4096,
+    3072
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    3072
+   ]
+  },
+  {
+   "op": "PaluSdpaDecodeDeviceOperation",
+   "category": "attention",
+   "ms": 1.7186906666666664,
+   "count": 4.999999999999999,
+   "cores": 64.0,
+   "in0": [
+    1,
+    32,
+    16,
+    128
+   ],
+   "in1": [
+    32,
+    4,
+    1024,
+    32
+   ],
+   "out": [
+    1,
+    32,
+    16,
+    96
+   ]
+  },
+  {
+   "op": "AllGatherAsyncDeviceOperation",
+   "category": "ccl",
+   "ms": 1.5629539999999997,
+   "count": 65.00000000000016,
+   "cores": 5.0,
+   "in0": [
+    1,
+    1,
+    32,
+    2048
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    4096
+   ]
+  },
+  {
+   "op": "MatmulDeviceOperation",
+   "category": "wo",
+   "ms": 1.3877610000000002,
+   "count": 31.999999999999954,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    2048
+   ],
+   "in1": [
+    1,
+    1,
+    2048,
+    4096
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    4096
+   ]
+  },
+  {
+   "op": "PaluSdpaDecodeDeviceOperation",
+   "category": "attention",
+   "ms": 1.0384300000000002,
+   "count": 3.0,
+   "cores": 64.0,
+   "in0": [
+    1,
+    32,
+    16,
+    128
+   ],
+   "in1": [
+    32,
+    4,
+    1024,
+    32
+   ],
+   "out": [
+    1,
+    32,
+    16,
+    128
+   ]
+  },
+  {
+   "op": "LayerNormDeviceOperation",
+   "category": "norm",
+   "ms": 0.8094183333333331,
+   "count": 65.00000000000016,
+   "cores": 32.0,
+   "in0": [
+    1,
+    1,
+    32,
+    4096
+   ],
+   "in1": [
+    1,
+    1,
+    128,
+    32
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    4096
+   ]
+  },
+  {
+   "op": "AllGatherAsyncDeviceOperation",
+   "category": "ccl",
+   "ms": 0.7519593333333332,
+   "count": 1.0,
+   "cores": 5.0,
+   "in0": [
+    1,
+    1,
+    32,
+    64128
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    128256
+   ]
+  },
+  {
+   "op": "PaluSdpaDecodeDeviceOperation",
+   "category": "attention",
+   "ms": 0.7494276666666667,
+   "count": 1.9999999999999998,
+   "cores": 64.0,
+   "in0": [
+    1,
+    32,
+    16,
+    128
+   ],
+   "in1": [
+    32,
+    4,
+    1024,
+    64
+   ],
+   "out": [
+    1,
+    32,
+    16,
+    96
+   ]
+  },
+  {
+   "op": "MatmulDeviceOperation",
+   "category": "lm_head",
+   "ms": 0.727641,
+   "count": 1.0,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    4096
+   ],
+   "in1": [
+    1,
+    1,
+    4096,
+    42752
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    42752
+   ]
+  },
+  {
+   "op": "BinaryNgDeviceOperation",
+   "category": "elementwise",
+   "ms": 0.6717476666666667,
+   "count": 31.999999999999954,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    7168
+   ],
+   "in1": [
+    1,
+    1,
+    32,
+    7168
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    7168
+   ]
+  },
+  {
+   "op": "MatmulDeviceOperation",
+   "category": "lm_head",
+   "ms": 0.3642526666666666,
+   "count": 1.0,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    4096
+   ],
+   "in1": [
+    1,
+    1,
+    4096,
+    21376
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    21376
+   ]
+  },
+  {
+   "op": "NLPCreateQKVHeadsDecodeDeviceOperation",
+   "category": "heads",
+   "ms": 0.3547403333333333,
+   "count": 31.999999999999954,
+   "cores": 32.0,
+   "in0": [
+    1,
+    1,
+    32,
+    3072
+   ],
+   "in1": [],
+   "out": [
+    1,
+    32,
+    16,
+    128
+   ]
+  },
+  {
+   "op": "PadDeviceOperation",
+   "category": "layout",
+   "ms": 0.26103299999999996,
+   "count": 6.999999999999997,
+   "cores": 64.0,
+   "in0": [
+    1,
+    32,
+    16,
+    96
+   ],
+   "in1": [],
+   "out": [
+    1,
+    32,
+    32,
+    128
+   ]
+  },
+  {
+   "op": "PagedUpdateCacheDeviceOperation",
+   "category": "cache",
+   "ms": 0.24224300000000007,
+   "count": 25.999999999999975,
+   "cores": 32.0,
+   "in0": [
+    32,
+    4,
+    1024,
+    128
+   ],
+   "in1": [
+    1,
+    32,
+    4,
+    128
+   ],
+   "out": [
+    32,
+    4,
+    1024,
+    128
+   ]
+  },
+  {
+   "op": "SdpaDecodeDeviceOperation",
+   "category": "attention",
+   "ms": 0.21950233333333333,
+   "count": 1.0,
+   "cores": 64.0,
+   "in0": [
+    1,
+    32,
+    16,
+    128
+   ],
+   "in1": [
+    32,
+    4,
+    1024,
+    128
+   ],
+   "out": [
+    1,
+    32,
+    16,
+    128
+   ]
+  },
+  {
+   "op": "NLPConcatHeadsDecodeDeviceOperation",
+   "category": "heads",
+   "ms": 0.1990606666666667,
+   "count": 31.999999999999954,
+   "cores": 16.0,
+   "in0": [
+    1,
+    32,
+    16,
+    128
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    2048
+   ]
+  },
+  {
+   "op": "PagedUpdateCacheDeviceOperation",
+   "category": "cache",
+   "ms": 0.198823,
+   "count": 22.999999999999986,
+   "cores": 32.0,
+   "in0": [
+    32,
+    4,
+    1024,
+    64
+   ],
+   "in1": [
+    1,
+    32,
+    4,
+    64
+   ],
+   "out": [
+    32,
+    4,
+    1024,
+    64
+   ]
+  },
+  {
+   "op": "RotaryEmbeddingLlamaDeviceOperation",
+   "category": "heads",
+   "ms": 0.16174299999999994,
+   "count": 31.999999999999954,
+   "cores": 32.0,
+   "in0": [
+    1,
+    32,
+    16,
+    128
+   ],
+   "in1": [
+    1,
+    32,
+    1,
+    128
+   ],
+   "out": [
+    1,
+    32,
+    16,
+    128
+   ]
+  },
+  {
+   "op": "FillPadDeviceOperation",
+   "category": "layout",
+   "ms": 0.13455466666666666,
+   "count": 6.999999999999997,
+   "cores": 64.0,
+   "in0": [
+    1,
+    32,
+    16,
+    96
+   ],
+   "in1": [],
+   "out": [
+    1,
+    32,
+    16,
+    96
+   ]
+  },
+  {
+   "op": "BinaryNgDeviceOperation",
+   "category": "elementwise",
+   "ms": 0.130619,
+   "count": 64.00000000000017,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    2048
+   ],
+   "in1": [
+    1,
+    1,
+    32,
+    2048
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    2048
+   ]
+  },
+  {
+   "op": "PagedUpdateCacheDeviceOperation",
+   "category": "cache",
+   "ms": 0.1273713333333333,
+   "count": 6.999999999999997,
+   "cores": 32.0,
+   "in0": [
+    32,
+    4,
+    1024,
+    96
+   ],
+   "in1": [
+    1,
+    32,
+    4,
+    96
+   ],
+   "out": [
+    32,
+    4,
+    1024,
+    96
+   ]
+  },
+  {
+   "op": "UntilizeCodegenDeviceOperation",
+   "category": "layout",
+   "ms": 0.10619900000000002,
+   "count": 1.0,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    128256
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    128256
+   ]
+  },
+  {
+   "op": "ShardedToInterleavedDeviceOperation",
+   "category": "layout",
+   "ms": 0.09387833333333333,
+   "count": 37.99999999999999,
+   "cores": 32.0,
+   "in0": [
+    1,
+    32,
+    4,
+    128
+   ],
+   "in1": [],
+   "out": [
+    1,
+    32,
+    4,
+    128
+   ]
+  },
+  {
+   "op": "InterleavedToShardedDeviceOperation",
+   "category": "layout",
+   "ms": 0.08435233333333331,
+   "count": 33.999999999999964,
+   "cores": 32.0,
+   "in0": [
+    1,
+    32,
+    1,
+    128
+   ],
+   "in1": [],
+   "out": [
+    1,
+    32,
+    1,
+    128
+   ]
+  },
+  {
+   "op": "ShardedToInterleavedDeviceOperation",
+   "category": "layout",
+   "ms": 0.07512566666666667,
+   "count": 31.999999999999954,
+   "cores": 32.0,
+   "in0": [
+    1,
+    1,
+    32,
+    3072
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    3072
+   ]
+  },
+  {
+   "op": "ReshardDeviceOperation",
+   "category": "layout",
+   "ms": 0.068839,
+   "count": 31.999999999999954,
+   "cores": 32.0,
+   "in0": [
+    1,
+    1,
+    32,
+    2048
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    2048
+   ]
+  },
+  {
+   "op": "PagedUpdateCacheDeviceOperation",
+   "category": "cache",
+   "ms": 0.06658333333333333,
+   "count": 7.9999999999999964,
+   "cores": 32.0,
+   "in0": [
+    32,
+    4,
+    1024,
+    32
+   ],
+   "in1": [
+    1,
+    32,
+    4,
+    32
+   ],
+   "out": [
+    32,
+    4,
+    1024,
+    32
+   ]
+  },
+  {
+   "op": "SliceDeviceOperation",
+   "category": "layout",
+   "ms": 0.056278999999999996,
+   "count": 22.999999999999986,
+   "cores": 64.0,
+   "in0": [
+    1,
+    32,
+    4,
+    128
+   ],
+   "in1": [],
+   "out": [
+    1,
+    32,
+    32,
+    64
+   ]
+  },
+  {
+   "op": "InterleavedToShardedDeviceOperation",
+   "category": "layout",
+   "ms": 0.048147,
+   "count": 22.999999999999986,
+   "cores": 32.0,
+   "in0": [
+    1,
+    32,
+    4,
+    64
+   ],
+   "in1": [],
+   "out": [
+    1,
+    32,
+    4,
+    64
+   ]
+  },
+  {
+   "op": "EmbeddingsDeviceOperation",
+   "category": "elementwise",
+   "ms": 0.020705333333333333,
+   "count": 1.0,
+   "cores": 1.0,
+   "in0": [
+    1,
+    1,
+    1,
+    32
+   ],
+   "in1": [
+    1,
+    1,
+    128256,
+    2048
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    2048
+   ]
+  },
+  {
+   "op": "SliceDeviceOperation",
+   "category": "layout",
+   "ms": 0.020144999999999996,
+   "count": 6.999999999999997,
+   "cores": 64.0,
+   "in0": [
+    1,
+    32,
+    4,
+    128
+   ],
+   "in1": [],
+   "out": [
+    1,
+    32,
+    32,
+    96
+   ]
+  },
+  {
+   "op": "SliceDeviceOperation",
+   "category": "layout",
+   "ms": 0.018202999999999997,
+   "count": 7.9999999999999964,
+   "cores": 32.0,
+   "in0": [
+    1,
+    32,
+    4,
+    128
+   ],
+   "in1": [],
+   "out": [
+    1,
+    32,
+    32,
+    32
+   ]
+  },
+  {
+   "op": "InterleavedToShardedDeviceOperation",
+   "category": "layout",
+   "ms": 0.01667366666666667,
+   "count": 6.999999999999997,
+   "cores": 32.0,
+   "in0": [
+    1,
+    32,
+    4,
+    96
+   ],
+   "in1": [],
+   "out": [
+    1,
+    32,
+    4,
+    96
+   ]
+  },
+  {
+   "op": "InterleavedToShardedDeviceOperation",
+   "category": "layout",
+   "ms": 0.015963333333333333,
+   "count": 7.9999999999999964,
+   "cores": 32.0,
+   "in0": [
+    1,
+    32,
+    4,
+    32
+   ],
+   "in1": [],
+   "out": [
+    1,
+    32,
+    4,
+    32
+   ]
+  },
+  {
+   "op": "ConcatDeviceOperation",
+   "category": "layout",
+   "ms": 0.014732000000000002,
+   "count": 1.0,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    42752
+   ],
+   "in1": [
+    1,
+    1,
+    32,
+    21376
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    64128
+   ]
+  },
+  {
+   "op": "TransposeDeviceOperation",
+   "category": "layout",
+   "ms": 0.010240666666666667,
+   "count": 1.9999999999999998,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    128
+   ],
+   "in1": [],
+   "out": [
+    1,
+    32,
+    1,
+    128
+   ]
+  },
+  {
+   "op": "EmbeddingsDeviceOperation",
+   "category": "elementwise",
+   "ms": 0.007850333333333334,
+   "count": 1.9999999999999998,
+   "cores": 1.0,
+   "in0": [
+    1,
+    1,
+    1,
+    32
+   ],
+   "in1": [
+    1,
+    1,
+    1024,
+    128
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    128
+   ]
+  },
+  {
+   "op": "ShardedToInterleavedDeviceOperation",
+   "category": "layout",
+   "ms": 0.007245333333333333,
+   "count": 1.0,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    42752
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    42752
+   ]
+  },
+  {
+   "op": "RotaryEmbeddingLlamaDeviceOperation",
+   "category": "heads",
+   "ms": 0.005150333333333333,
+   "count": 1.0,
+   "cores": 32.0,
+   "in0": [
+    1,
+    32,
+    4,
+    128
+   ],
+   "in1": [
+    1,
+    32,
+    1,
+    128
+   ],
+   "out": [
+    1,
+    32,
+    4,
+    128
+   ]
+  },
+  {
+   "op": "ShardedToInterleavedDeviceOperation",
+   "category": "layout",
+   "ms": 0.0038996666666666667,
+   "count": 1.0,
+   "cores": 61.0,
+   "in0": [
+    1,
+    1,
+    32,
+    21376
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    21376
+   ]
+  },
+  {
+   "op": "InterleavedToShardedDeviceOperation",
+   "category": "layout",
+   "ms": 0.0012673333333333332,
+   "count": 1.0,
+   "cores": 32.0,
+   "in0": [
+    1,
+    1,
+    32,
+    2048
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    2048
+   ]
+  }
+ ],
+ "csv": "third_party/tt-metal/generated/profiler/palu_full_70_fk2_1024/reports/2026_09_13_15_52_06/ops_perf_results_2026_09_13_15_52_06.csv",
+ "name": "palu_full_70_fk2_1024"
+}

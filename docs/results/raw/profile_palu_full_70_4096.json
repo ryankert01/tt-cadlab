@@ -1,0 +1,1095 @@
+{
+ "steps": 3,
+ "device_ms_per_step": 256.71567566666664,
+ "device_ms_per_step_chip1": 256.72521566666666,
+ "ops_per_step": 975.0,
+ "categories": {
+  "k_recon": {
+   "ms": 202.39881933333334,
+   "count": 92.9999999999999
+  },
+  "attention": {
+   "ms": 23.685243333333336,
+   "count": 31.999999999999975
+  },
+  "mlp": {
+   "ms": 12.324746,
+   "count": 96.00000000000013
+  },
+  "ccl": {
+   "ms": 9.750785666666669,
+   "count": 130.00000000000034
+  },
+  "qkv": {
+   "ms": 2.0228649999999995,
+   "count": 31.999999999999954
+  },
+  "wo": {
+   "ms": 1.3774343333333334,
+   "count": 31.999999999999954
+  },
+  "norm": {
+   "ms": 0.8113449999999998,
+   "count": 65.00000000000016
+  },
+  "lm_head": {
+   "ms": 1.0904443333333333,
+   "count": 2.0
+  },
+  "elementwise": {
+   "ms": 0.8309956666666668,
+   "count": 99.00000000000013
+  },
+  "heads": {
+   "ms": 0.727933,
+   "count": 96.99999999999986
+  },
+  "layout": {
+   "ms": 1.0429546666666667,
+   "count": 232.99999999999983
+  },
+  "cache": {
+   "ms": 0.6521093333333335,
+   "count": 63.99999999999996
+  }
+ },
+ "ops": [
+  {
+   "op": "RotaryEmbeddingLlamaDeviceOperation",
+   "category": "k_recon",
+   "ms": 77.27373066666667,
+   "count": 30.999999999999957,
+   "cores": 64.0,
+   "in0": [
+    1,
+    128,
+    4096,
+    128
+   ],
+   "in1": [
+    1,
+    1,
+    4096,
+    128
+   ],
+   "out": [
+    1,
+    128,
+    4096,
+    128
+   ]
+  },
+  {
+   "op": "MatmulDeviceOperation",
+   "category": "k_recon",
+   "ms": 69.74862766666666,
+   "count": 22.999999999999986,
+   "cores": 64.0,
+   "in0": [
+    32,
+    4,
+    4096,
+    64
+   ],
+   "in1": [
+    32,
+    4,
+    64,
+    128
+   ],
+   "out": [
+    32,
+    4,
+    4096,
+    128
+   ]
+  },
+  {
+   "op": "TypecastDeviceOperation",
+   "category": "k_recon",
+   "ms": 31.833940666666667,
+   "count": 30.999999999999957,
+   "cores": 64.0,
+   "in0": [
+    32,
+    4,
+    4096,
+    128
+   ],
+   "in1": [],
+   "out": [
+    32,
+    4,
+    4096,
+    128
+   ]
+  },
+  {
+   "op": "MatmulDeviceOperation",
+   "category": "k_recon",
+   "ms": 23.54252033333333,
+   "count": 7.9999999999999964,
+   "cores": 64.0,
+   "in0": [
+    32,
+    4,
+    4096,
+    32
+   ],
+   "in1": [
+    32,
+    4,
+    32,
+    128
+   ],
+   "out": [
+    32,
+    4,
+    4096,
+    128
+   ]
+  },
+  {
+   "op": "SdpaDecodeDeviceOperation",
+   "category": "attention",
+   "ms": 18.985933333333335,
+   "count": 24.99999999999998,
+   "cores": 64.0,
+   "in0": [
+    1,
+    32,
+    16,
+    128
+   ],
+   "in1": [
+    32,
+    4,
+    4096,
+    128
+   ],
+   "out": [
+    1,
+    32,
+    16,
+    128
+   ]
+  },
+  {
+   "op": "MatmulDeviceOperation",
+   "category": "mlp",
+   "ms": 8.221962333333334,
+   "count": 64.00000000000017,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    4096
+   ],
+   "in1": [
+    1,
+    1,
+    4096,
+    7168
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    7168
+   ]
+  },
+  {
+   "op": "ReduceScatterMinimalAsyncDeviceOperation",
+   "category": "ccl",
+   "ms": 7.438359333333335,
+   "count": 64.00000000000017,
+   "cores": 5.0,
+   "in0": [
+    1,
+    1,
+    32,
+    4096
+   ],
+   "in1": [],
+   "out": [
+    2,
+    1,
+    32,
+    4096
+   ]
+  },
+  {
+   "op": "SdpaDecodeDeviceOperation",
+   "category": "attention",
+   "ms": 4.69931,
+   "count": 6.999999999999997,
+   "cores": 64.0,
+   "in0": [
+    1,
+    32,
+    16,
+    128
+   ],
+   "in1": [
+    32,
+    4,
+    4096,
+    128
+   ],
+   "out": [
+    1,
+    32,
+    16,
+    96
+   ]
+  },
+  {
+   "op": "MatmulDeviceOperation",
+   "category": "mlp",
+   "ms": 4.1027836666666655,
+   "count": 31.999999999999954,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    7168
+   ],
+   "in1": [
+    1,
+    1,
+    7168,
+    4096
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    4096
+   ]
+  },
+  {
+   "op": "MatmulDeviceOperation",
+   "category": "qkv",
+   "ms": 2.0228649999999995,
+   "count": 31.999999999999954,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    4096
+   ],
+   "in1": [
+    1,
+    1,
+    4096,
+    3072
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    3072
+   ]
+  },
+  {
+   "op": "AllGatherAsyncDeviceOperation",
+   "category": "ccl",
+   "ms": 1.5600930000000004,
+   "count": 65.00000000000016,
+   "cores": 5.0,
+   "in0": [
+    1,
+    1,
+    32,
+    2048
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    4096
+   ]
+  },
+  {
+   "op": "MatmulDeviceOperation",
+   "category": "wo",
+   "ms": 1.3774343333333334,
+   "count": 31.999999999999954,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    2048
+   ],
+   "in1": [
+    1,
+    1,
+    2048,
+    4096
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    4096
+   ]
+  },
+  {
+   "op": "LayerNormDeviceOperation",
+   "category": "norm",
+   "ms": 0.8113449999999998,
+   "count": 65.00000000000016,
+   "cores": 32.0,
+   "in0": [
+    1,
+    1,
+    32,
+    4096
+   ],
+   "in1": [
+    1,
+    1,
+    128,
+    32
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    4096
+   ]
+  },
+  {
+   "op": "AllGatherAsyncDeviceOperation",
+   "category": "ccl",
+   "ms": 0.7523333333333333,
+   "count": 1.0,
+   "cores": 5.0,
+   "in0": [
+    1,
+    1,
+    32,
+    64128
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    128256
+   ]
+  },
+  {
+   "op": "MatmulDeviceOperation",
+   "category": "lm_head",
+   "ms": 0.726137,
+   "count": 1.0,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    4096
+   ],
+   "in1": [
+    1,
+    1,
+    4096,
+    42752
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    42752
+   ]
+  },
+  {
+   "op": "BinaryNgDeviceOperation",
+   "category": "elementwise",
+   "ms": 0.6720376666666669,
+   "count": 31.999999999999954,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    7168
+   ],
+   "in1": [
+    1,
+    1,
+    32,
+    7168
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    7168
+   ]
+  },
+  {
+   "op": "MatmulDeviceOperation",
+   "category": "lm_head",
+   "ms": 0.3643073333333333,
+   "count": 1.0,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    4096
+   ],
+   "in1": [
+    1,
+    1,
+    4096,
+    21376
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    21376
+   ]
+  },
+  {
+   "op": "NLPCreateQKVHeadsDecodeDeviceOperation",
+   "category": "heads",
+   "ms": 0.353762,
+   "count": 31.999999999999954,
+   "cores": 32.0,
+   "in0": [
+    1,
+    1,
+    32,
+    3072
+   ],
+   "in1": [],
+   "out": [
+    1,
+    32,
+    16,
+    128
+   ]
+  },
+  {
+   "op": "PadDeviceOperation",
+   "category": "layout",
+   "ms": 0.2607553333333333,
+   "count": 6.999999999999997,
+   "cores": 64.0,
+   "in0": [
+    1,
+    32,
+    16,
+    96
+   ],
+   "in1": [],
+   "out": [
+    1,
+    32,
+    32,
+    128
+   ]
+  },
+  {
+   "op": "PagedUpdateCacheDeviceOperation",
+   "category": "cache",
+   "ms": 0.2522133333333334,
+   "count": 25.999999999999975,
+   "cores": 32.0,
+   "in0": [
+    32,
+    4,
+    4096,
+    128
+   ],
+   "in1": [
+    1,
+    32,
+    4,
+    128
+   ],
+   "out": [
+    32,
+    4,
+    4096,
+    128
+   ]
+  },
+  {
+   "op": "NLPConcatHeadsDecodeDeviceOperation",
+   "category": "heads",
+   "ms": 0.20737300000000006,
+   "count": 31.999999999999954,
+   "cores": 16.0,
+   "in0": [
+    1,
+    32,
+    16,
+    128
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    2048
+   ]
+  },
+  {
+   "op": "PagedUpdateCacheDeviceOperation",
+   "category": "cache",
+   "ms": 0.20272833333333337,
+   "count": 22.999999999999986,
+   "cores": 32.0,
+   "in0": [
+    32,
+    4,
+    4096,
+    64
+   ],
+   "in1": [
+    1,
+    32,
+    4,
+    64
+   ],
+   "out": [
+    32,
+    4,
+    4096,
+    64
+   ]
+  },
+  {
+   "op": "RotaryEmbeddingLlamaDeviceOperation",
+   "category": "heads",
+   "ms": 0.16164100000000003,
+   "count": 31.999999999999954,
+   "cores": 32.0,
+   "in0": [
+    1,
+    32,
+    16,
+    128
+   ],
+   "in1": [
+    1,
+    32,
+    1,
+    128
+   ],
+   "out": [
+    1,
+    32,
+    16,
+    128
+   ]
+  },
+  {
+   "op": "FillPadDeviceOperation",
+   "category": "layout",
+   "ms": 0.1380796666666667,
+   "count": 6.999999999999997,
+   "cores": 64.0,
+   "in0": [
+    1,
+    32,
+    16,
+    96
+   ],
+   "in1": [],
+   "out": [
+    1,
+    32,
+    16,
+    96
+   ]
+  },
+  {
+   "op": "PagedUpdateCacheDeviceOperation",
+   "category": "cache",
+   "ms": 0.130808,
+   "count": 6.999999999999997,
+   "cores": 32.0,
+   "in0": [
+    32,
+    4,
+    4096,
+    96
+   ],
+   "in1": [
+    1,
+    32,
+    4,
+    96
+   ],
+   "out": [
+    32,
+    4,
+    4096,
+    96
+   ]
+  },
+  {
+   "op": "BinaryNgDeviceOperation",
+   "category": "elementwise",
+   "ms": 0.13036666666666663,
+   "count": 64.00000000000017,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    2048
+   ],
+   "in1": [
+    1,
+    1,
+    32,
+    2048
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    2048
+   ]
+  },
+  {
+   "op": "UntilizeCodegenDeviceOperation",
+   "category": "layout",
+   "ms": 0.10543066666666667,
+   "count": 1.0,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    128256
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    128256
+   ]
+  },
+  {
+   "op": "ShardedToInterleavedDeviceOperation",
+   "category": "layout",
+   "ms": 0.09426700000000002,
+   "count": 37.99999999999999,
+   "cores": 32.0,
+   "in0": [
+    1,
+    32,
+    4,
+    128
+   ],
+   "in1": [],
+   "out": [
+    1,
+    32,
+    4,
+    128
+   ]
+  },
+  {
+   "op": "InterleavedToShardedDeviceOperation",
+   "category": "layout",
+   "ms": 0.0854996666666667,
+   "count": 33.999999999999964,
+   "cores": 32.0,
+   "in0": [
+    1,
+    32,
+    1,
+    128
+   ],
+   "in1": [],
+   "out": [
+    1,
+    32,
+    1,
+    128
+   ]
+  },
+  {
+   "op": "ShardedToInterleavedDeviceOperation",
+   "category": "layout",
+   "ms": 0.07508799999999997,
+   "count": 31.999999999999954,
+   "cores": 32.0,
+   "in0": [
+    1,
+    1,
+    32,
+    3072
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    3072
+   ]
+  },
+  {
+   "op": "ReshardDeviceOperation",
+   "category": "layout",
+   "ms": 0.06861933333333332,
+   "count": 31.999999999999954,
+   "cores": 32.0,
+   "in0": [
+    1,
+    1,
+    32,
+    2048
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    2048
+   ]
+  },
+  {
+   "op": "PagedUpdateCacheDeviceOperation",
+   "category": "cache",
+   "ms": 0.06635966666666668,
+   "count": 7.9999999999999964,
+   "cores": 32.0,
+   "in0": [
+    32,
+    4,
+    4096,
+    32
+   ],
+   "in1": [
+    1,
+    32,
+    4,
+    32
+   ],
+   "out": [
+    32,
+    4,
+    4096,
+    32
+   ]
+  },
+  {
+   "op": "SliceDeviceOperation",
+   "category": "layout",
+   "ms": 0.05661466666666667,
+   "count": 22.999999999999986,
+   "cores": 64.0,
+   "in0": [
+    1,
+    32,
+    4,
+    128
+   ],
+   "in1": [],
+   "out": [
+    1,
+    32,
+    32,
+    64
+   ]
+  },
+  {
+   "op": "InterleavedToShardedDeviceOperation",
+   "category": "layout",
+   "ms": 0.05000133333333332,
+   "count": 22.999999999999986,
+   "cores": 32.0,
+   "in0": [
+    1,
+    32,
+    4,
+    64
+   ],
+   "in1": [],
+   "out": [
+    1,
+    32,
+    4,
+    64
+   ]
+  },
+  {
+   "op": "EmbeddingsDeviceOperation",
+   "category": "elementwise",
+   "ms": 0.020725,
+   "count": 1.0,
+   "cores": 1.0,
+   "in0": [
+    1,
+    1,
+    1,
+    32
+   ],
+   "in1": [
+    1,
+    1,
+    128256,
+    2048
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    2048
+   ]
+  },
+  {
+   "op": "SliceDeviceOperation",
+   "category": "layout",
+   "ms": 0.020125999999999998,
+   "count": 6.999999999999997,
+   "cores": 64.0,
+   "in0": [
+    1,
+    32,
+    4,
+    128
+   ],
+   "in1": [],
+   "out": [
+    1,
+    32,
+    32,
+    96
+   ]
+  },
+  {
+   "op": "SliceDeviceOperation",
+   "category": "layout",
+   "ms": 0.01844566666666667,
+   "count": 7.9999999999999964,
+   "cores": 32.0,
+   "in0": [
+    1,
+    32,
+    4,
+    128
+   ],
+   "in1": [],
+   "out": [
+    1,
+    32,
+    32,
+    32
+   ]
+  },
+  {
+   "op": "InterleavedToShardedDeviceOperation",
+   "category": "layout",
+   "ms": 0.016335666666666665,
+   "count": 6.999999999999997,
+   "cores": 32.0,
+   "in0": [
+    1,
+    32,
+    4,
+    96
+   ],
+   "in1": [],
+   "out": [
+    1,
+    32,
+    4,
+    96
+   ]
+  },
+  {
+   "op": "InterleavedToShardedDeviceOperation",
+   "category": "layout",
+   "ms": 0.016122666666666667,
+   "count": 7.9999999999999964,
+   "cores": 32.0,
+   "in0": [
+    1,
+    32,
+    4,
+    32
+   ],
+   "in1": [],
+   "out": [
+    1,
+    32,
+    4,
+    32
+   ]
+  },
+  {
+   "op": "ConcatDeviceOperation",
+   "category": "layout",
+   "ms": 0.014868,
+   "count": 1.0,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    42752
+   ],
+   "in1": [
+    1,
+    1,
+    32,
+    21376
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    64128
+   ]
+  },
+  {
+   "op": "TransposeDeviceOperation",
+   "category": "layout",
+   "ms": 0.010171,
+   "count": 1.9999999999999998,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    128
+   ],
+   "in1": [],
+   "out": [
+    1,
+    32,
+    1,
+    128
+   ]
+  },
+  {
+   "op": "EmbeddingsDeviceOperation",
+   "category": "elementwise",
+   "ms": 0.007866333333333333,
+   "count": 1.9999999999999998,
+   "cores": 1.0,
+   "in0": [
+    1,
+    1,
+    1,
+    32
+   ],
+   "in1": [
+    1,
+    1,
+    4096,
+    128
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    128
+   ]
+  },
+  {
+   "op": "ShardedToInterleavedDeviceOperation",
+   "category": "layout",
+   "ms": 0.007318333333333333,
+   "count": 1.0,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    42752
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    42752
+   ]
+  },
+  {
+   "op": "RotaryEmbeddingLlamaDeviceOperation",
+   "category": "heads",
+   "ms": 0.005157,
+   "count": 1.0,
+   "cores": 32.0,
+   "in0": [
+    1,
+    32,
+    4,
+    128
+   ],
+   "in1": [
+    1,
+    32,
+    1,
+    128
+   ],
+   "out": [
+    1,
+    32,
+    4,
+    128
+   ]
+  },
+  {
+   "op": "ShardedToInterleavedDeviceOperation",
+   "category": "layout",
+   "ms": 0.0038589999999999996,
+   "count": 1.0,
+   "cores": 61.0,
+   "in0": [
+    1,
+    1,
+    32,
+    21376
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    21376
+   ]
+  },
+  {
+   "op": "InterleavedToShardedDeviceOperation",
+   "category": "layout",
+   "ms": 0.0013526666666666667,
+   "count": 1.0,
+   "cores": 32.0,
+   "in0": [
+    1,
+    1,
+    32,
+    2048
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    2048
+   ]
+  }
+ ],
+ "csv": "third_party/tt-metal/generated/profiler/palu_full_70_4096/reports/2026_09_13_15_56_00/ops_perf_results_2026_09_13_15_56_00.csv",
+ "name": "palu_full_70_4096"
+}
