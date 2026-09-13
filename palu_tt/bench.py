@@ -175,11 +175,13 @@ def _attention_one(md, kind, palu_dir, ctx):
             args.palu = convert.add_palu_to_state_dict(sd, hf.snapshot_dir(), palu_dir, 1, args.n_heads,
                                                        args.n_kv_heads, args.head_dim)
             # ``build_model`` writes these from its keyword arguments; this path builds the layer by
-            # hand, so the same three runtime flags are set on the config here.
+            # hand, so the same runtime flags are set on the config here.
             args.palu.runtime.use_fused_k = FUSED["use_fused_k"]
             args.palu.runtime.cs_recurrence = FUSED["cs_recurrence"]
             args.palu.runtime.fused_k_chunk = FUSED["fused_k_chunk"]
             args.palu.runtime.group_heads_per_core = FUSED["group_heads"]
+            args.palu.runtime.rot_mode = FUSED["rot_mode"]
+            args.palu.runtime.table_mcast = FUSED["table_mcast"]
             cls = PaluAttention
         rope = RotarySetup(md, BATCH, args.head_dim, ctx, args.rope_theta, args.rope_scaling, False)
         attn = cls(md, TT_CCL(md), args, sd, weight_cache_path=args.weight_cache_path(ttnn.bfloat8_b), layer_num=0,
