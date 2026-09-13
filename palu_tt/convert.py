@@ -68,6 +68,11 @@ class PaluConfig:
     # Optional ttnn dtype override for the latent K/V caches (default: the model's KV_CACHE dtype,
     # bfp8). Kept as a plain object so this module stays ttnn-free.
     latent_dtype: Optional[object] = None
+    # stage 2f: per-cache overrides of ``latent_dtype`` -- the K and V latent caches may take different
+    # block-float formats (the rank/format frontier sweeps bfp8 against bfp4 on each side on its own).
+    # None = follow ``latent_dtype``. Same plain-object convention as above.
+    k_latent_dtype: Optional[object] = None
+    v_latent_dtype: Optional[object] = None
     # Palu head group size (1 = M-LRD per head, 4 = G-LRD one group per chip on the N300). rank_k/rank_v
     # are the per-layer *group* latent widths; at group size 1 those are the per-head ranks as before.
     group_size: int = 1

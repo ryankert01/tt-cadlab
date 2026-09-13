@@ -156,8 +156,14 @@ class PaluAttention(LightweightModule):
         self.wqkv_dtype = opt.get_tensor_dtype(decoder_id=layer_num, tensor=TensorGroup.WQKV)
         self.wo_dtype = opt.get_tensor_dtype(decoder_id=layer_num, tensor=TensorGroup.WO)
         self.kv_cache_dtype = opt.get_tensor_dtype(decoder_id=layer_num, tensor=TensorGroup.KV_CACHE)
-        # latent caches may be kept wider than the stock KV cache dtype (spec 5, "Latent dtype")
-        self.latent_dtype = self.palu.latent_dtype if self.palu.latent_dtype is not None else self.kv_cache_dtype
+        # latent caches may be kept wider than the stock KV cache dtype (spec 5, "Latent dtype"), and
+        # stage 2f gives each side its own format: the frontier sweeps bfp8 against bfp4 on K and V
+        # separately, so a row can hold (bfp4 K, bfp8 V). k_/v_latent_dtype override the shared
+        # latent_dtype, which in turn overrides the model's KV_CACHE precision.
+        base = self.palu.latent_dtype if self.palu.latent_dtype is not None else self.kv_cache_dtype
+        self.k_latent_dtype = self.palu.k_latent_dtype or base
+        self.v_latent_dtype = self.palu.v_latent_dtype or base
+        self.latent_dtype = self.k_latent_dtype      # kept for callers that only know one format
         fid = lambda op: opt.get_math_fidelity(decoder_id=layer_num, op=op, configuration=configuration)
         self.li_qkv_decode_compute_kernel_cfg = fid(OpGroup.LI_QKV_DECODE)
         self.sdpa_decode_compute_kernel_cfg = fid(OpGroup.SDPA_DECODE)
@@ -264,12 +270,12 @@ class PaluAttention(LightweightModule):
 
         # --- latent caches ---------------------------------------------------------------------------
         self.layer_past = []
-        for r in (self.r_k, self.r_v):
+        for r, cache_dtype in ((self.r_k, self.k_latent_dtype), (self.r_v, self.v_latent_dtype)):
             z = torch.zeros(B, self.n_local_groups, self.max_seq_len, r)
             # Never through the weight cache: the content is zeros and every batch/context shape would
             # leave a file of up to 273 MB behind (212 GB of them found on disk during stage 2b).
             self.layer_past.append(ttnn.from_torch(
-                z, dtype=self.latent_dtype, layout=ttnn.TILE_LAYOUT, device=mesh_device,
+                z, dtype=cache_dtype, layout=ttnn.TILE_LAYOUT, device=mesh_device,
                 memory_config=ttnn.DRAM_MEMORY_CONFIG, mesh_mapper=ttnn.ReplicateTensorToMesh(mesh_device),
             ))
 
@@ -318,12 +324,14 @@ class PaluAttention(LightweightModule):
                 if h is None:
                     # The batch decides the sequence split; the split decides how many tree-reduction
                     # receive slots each head needs and how much of the grid the layout fills, so both
-                    # are part of the choice. The latent cache dtype sets the latent CBs' tile size.
+                    # are part of the choice. Each latent cache's dtype sets its own CB's tile size
+                    # (c_9 from K, c_2 from V), so a mixed row is sized from the two formats it holds.
                     h = fused.group_heads_per_core(
                         self.r_k, self.r_v, chunk, self.phase2, self.gs,
                         batch=self.max_batch_size, num_kv_heads=self.n_local_kv_heads,
                         rot_mode=self.rot_mode,
-                        latent_tile_bytes=LATENT_TILE_BYTES.get(self.latent_dtype, 2048))
+                        k_latent_tile_bytes=LATENT_TILE_BYTES.get(self.k_latent_dtype, 2048),
+                        v_latent_tile_bytes=LATENT_TILE_BYTES.get(self.v_latent_dtype, 2048))
                 self.group_heads = max(1, min(int(h), self.gs))
                 if self.gs % self.group_heads != 0:
                     self.group_heads = 1
@@ -339,9 +347,12 @@ class PaluAttention(LightweightModule):
 
     # ------------------------------------------------------------------------------------------------
     def kv_bytes_per_token(self):
-        """Bytes per token per layer on one chip (tile-padded), for the results table."""
-        bpe = {ttnn.bfloat8_b: 1.0625, ttnn.bfloat16: 2.0, ttnn.bfloat4_b: 0.5625}[self.latent_dtype]
-        return self.n_local_groups * (self.r_k + self.r_v) * bpe
+        """Bytes per token per layer on one chip (tile-padded), for the results table.
+
+        The two latent caches are charged at their own formats (stage 2f: a row may hold a bfp4 K latent
+        beside a bfp8 V one), so this is n_local_groups * (r_k * bpe(K) + r_v * bpe(V))."""
+        bpe = {ttnn.bfloat8_b: 1.0625, ttnn.bfloat16: 2.0, ttnn.bfloat4_b: 0.5625}
+        return self.n_local_groups * (self.r_k * bpe[self.k_latent_dtype] + self.r_v * bpe[self.v_latent_dtype])
 
     def _latent_shard_cfg(self, width):
         return ttnn.create_sharded_memory_config(

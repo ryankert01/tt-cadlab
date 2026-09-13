@@ -223,3 +223,13 @@ def test_record_group_heads_indexes_by_layer_and_last_write_wins():
 class _Cfg:
     def __init__(self, tables):
         self.device_tables = tables
+
+
+def test_l1_model_takes_separate_k_and_v_latent_tile_sizes():
+    both8 = fused.palu_l1_cb_bytes(64, 128, 512, True, 1, cores_per_head=1)
+    k4 = fused.palu_l1_cb_bytes(64, 128, 512, True, 1, cores_per_head=1, k_latent_tile_bytes=576)
+    v4 = fused.palu_l1_cb_bytes(64, 128, 512, True, 1, cores_per_head=1, v_latent_tile_bytes=576)
+    assert both8 - k4 == 16 * 2 * 2 * (1088 - 576)      # c_9: sk * rt * 2 tiles at r_k 64
+    assert both8 - v4 == 16 * 4 * 2 * (1088 - 576)      # c_2: sk * rvt * 2 tiles at r_v 128
+    assert fused.palu_l1_cb_bytes(64, 128, 512, True, 1, cores_per_head=1, latent_tile_bytes=576) == \
+        fused.palu_l1_cb_bytes(64, 128, 512, True, 1, cores_per_head=1, k_latent_tile_bytes=576, v_latent_tile_bytes=576)

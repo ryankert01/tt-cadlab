@@ -23,6 +23,8 @@ cos/sin come from the same generator tt_transformers' ``get_rot_mats`` uses (so 
 tables the naive stage-1 path rotates with), Meta-interleaved: every frequency occupies two adjacent
 columns. ``reference_decode`` is the fp32 torch model of the whole op.
 """
+from typing import Optional
+
 import torch
 from models.common.tensor_utils import get_rot_transformation_mat
 from models.tt_transformers.tt.rope import compute_gather_cos_sin
@@ -141,17 +143,23 @@ L1_CB_BUDGET_BYTES = L1_MODEL_CEILING_BYTES - L1_RUNTIME_BASE_BYTES - L1_SAFETY_
 
 def palu_l1_cb_bytes(r_k: int, r_v: int, chunk: int, phase2: bool, heads_per_core: int,
                      cores_per_head: int = 4, tree_rounds: int = 2, head_dim: int = 128,
-                     q_head_tiles: int = 1, latent_tile_bytes: int = 1088, batch: int = 32,
-                     rot_mode: str = "legacy") -> int:
+                     q_head_tiles: int = 1, latent_tile_bytes: int = 1088,
+                     k_latent_tile_bytes: Optional[int] = None, v_latent_tile_bytes: Optional[int] = None,
+                     batch: int = 32, rot_mode: str = "legacy") -> int:
     """Bytes of circular buffer the program factory allocates per core, for one fused-decode program.
 
     ``cores_per_head`` / ``tree_rounds`` describe the sequence split; the default is the widest one
     group-shared mode allows (the program factory caps it at 4 cores per item, i.e. two tree rounds),
     because the receive slots for the tree reduction are sized per head in group-shared mode.
-    ``latent_tile_bytes`` is 1088 for a bfp8 latent cache (the default), 2048 for bf16.
+    ``latent_tile_bytes`` is 1088 for a bfp8 latent cache (the default), 2048 for bf16, 576 for bfp4;
+    ``k_latent_tile_bytes`` / ``v_latent_tile_bytes`` override it for one side only (stage 2f: the two
+    latent caches may take different block-float formats), so c_9 is sized from the K cache's tile and
+    c_2 from the V cache's.
     ``rot_mode`` is the stage 2e K-rebuild mode: "dst" never stages the AB block through c_10, so the
     factory shrinks that slot to the group-mode peel scratch (PNHt tiles); "legacy" and "pack" keep it.
     """
+    kt = k_latent_tile_bytes or latent_tile_bytes
+    vt_ = v_latent_tile_bytes or latent_tile_bytes
     t, f = 2048, 4096                       # bf16 / fp32 32x32 tile
     dht = head_dim // 32                    # head dim in tiles
     wt = 2 * dht                            # [u_k | u_k T] width
@@ -164,11 +172,11 @@ def palu_l1_cb_bytes(r_k: int, r_v: int, chunk: int, phase2: bool, heads_per_cor
     n = 0
     n += q_head_tiles * dht * t                                   # c_0  Q
     n += sk * dht * 2 * t                                         # c_1  K_rot (double buffered)
-    n += sk * rvt * 2 * latent_tile_bytes                         # c_2  V latent
+    n += sk * rvt * 2 * vt_                                       # c_2  V latent
     n += sk * q_head_tiles * t                                    # c_3  causal mask
     n += 3 * t                                                    # c_5 scale, c_6 m_in, c_7 l_in
     n += 2 * cur_pos_stick                                        # c_8 / c_15 cur_pos
-    n += sk * rt * 2 * latent_tile_bytes                          # c_9  K latent
+    n += sk * rt * 2 * kt                                         # c_9  K latent
     n += h * (rt * wt + rvt * dht + p2) * t                       # c_4  H resident weight blocks
     n += (q_head_tiles if rot_mode == "dst" else 2 * wt) * t      # c_10 AB block (dst mode: peel scratch only)
     n += (sk * wt if phase2 else 2 * sk * wt) * t                 # c_13 [cos | sin]
@@ -222,7 +230,8 @@ def group_heads_per_core(r_k: int, r_v: int, chunk: int, phase2: bool, heads_per
     ``batch`` (and the grid) matter because the sequence split follows from them, and in group mode the
     tree-reduction receive slots are sized per head: the same layer needs one round of slots at batch
     32 and two at batch 8. ``num_kv_heads`` defaults to ``heads_per_group`` (one group per chip, which
-    is the N300 G-LRD layout).
+    is the N300 G-LRD layout). ``**kwargs`` -- ``latent_tile_bytes`` and the per-cache
+    ``k_latent_tile_bytes`` / ``v_latent_tile_bytes`` -- is forwarded to ``palu_l1_cb_bytes``.
 
     The choice is occupancy- and reduction-aware, in that order, from the stage 2c measurements
     (docs/results/stage2c.md §2): halving the item count halves the cores an item can be split over

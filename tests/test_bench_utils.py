@@ -159,3 +159,11 @@ def test_bench_decode_stop_after_oom_breaks_right_after_the_first_error_cell(mon
     assert set(r) == {1024, 2048}  # 4096 never attempted
     assert "error" in r[2048]
     assert mesh.resets == 0  # never reopened for a context that will not run
+
+
+def test_latent_dtype_flags_resolve_to_ttnn_formats():
+    from palu_tt.bench import resolve_latent_dtypes
+    import ttnn
+    assert resolve_latent_dtypes("bfp8", None, None) == (ttnn.bfloat8_b, ttnn.bfloat8_b)
+    assert resolve_latent_dtypes("bfp8", "bfp4", None) == (ttnn.bfloat4_b, ttnn.bfloat8_b)
+    assert resolve_latent_dtypes("bfp4", None, "bfp8") == (ttnn.bfloat4_b, ttnn.bfloat8_b)

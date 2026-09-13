@@ -80,6 +80,15 @@ def main():
     p.add_argument("--cpu", action="store_true", help="CPU HF/low-rank model instead of the device")
     p.add_argument("--latent-dtype", choices=["bfp8", "bfp4"], default="bfp8",
                    help="tile format of the Palu latent K/V caches (default bfp8, the model's KV cache format).")
+    p.add_argument("--k-latent-dtype", choices=["bfp8", "bfp4"], default=None,
+                   help="stage 2f: tile format of the Palu *K* latent cache alone (default: follow --latent-dtype).")
+    p.add_argument("--v-latent-dtype", choices=["bfp8", "bfp4"], default=None,
+                   help="stage 2f: tile format of the Palu *V* latent cache alone (default: follow --latent-dtype).")
+    p.add_argument("--kv-dtype", choices=["bfp8", "bfp4"], default="bfp8",
+                   help="stage 2f: the model's KV_CACHE precision. On --kind stock this is the whole KV "
+                        "cache -- the format-only competitor the rank/format frontier is measured against "
+                        "-- and on --kind palu it is what the naive decode's reconstructed K/V temporaries "
+                        "are cast to, not the latent caches themselves.")
     p.add_argument("--latent-scale", choices=["balanced", "unit"], default="balanced",
                    help="stage 2f: 'unit' moves the singular values into the up-projection so every latent "
                         "component has unit variance (what bfp4 caches want); 'balanced' is Palu's split.")
@@ -99,20 +108,35 @@ def main():
         r = cpu_ppl(lm, wikitext2_ids(tok), a.seq_len, a.windows)
         out = RAW / f"ppl_cpu_{a.row}.json"
     else:
-        import ttnn
         from palu_tt import device as dev, model as pm
-        LATENT_DTYPES = {"bfp8": ttnn.bfloat8_b, "bfp4": ttnn.bfloat4_b}
+        from palu_tt.bench import LATENT_DTYPES, resolve_latent_dtypes
+        k_latent_dtype, v_latent_dtype = resolve_latent_dtypes(a.latent_dtype, a.k_latent_dtype, a.v_latent_dtype)
         md = dev.open_n300()
         try:
             args, model, _ = pm.build_model(md, a.kind, a.palu_dir, max_batch_size=1, max_seq_len=a.seq_len,
-                                            latent_dtype=LATENT_DTYPES[a.latent_dtype], latent_scale=a.latent_scale,
+                                            latent_dtype=LATENT_DTYPES[a.latent_dtype],
+                                            k_latent_dtype=k_latent_dtype, v_latent_dtype=v_latent_dtype,
+                                            kv_cache_dtype=LATENT_DTYPES[a.kv_dtype], latent_scale=a.latent_scale,
                                             latent_quant_in_prefill=a.latent_quant_in_prefill)
             r = device_ppl(args, model, hf.snapshot_dir(), wikitext2_ids(args.tokenizer), a.seq_len, a.windows)
         finally:
             dev.close(md)
         out = RAW / f"ppl_{a.row}.json"
-    r.update({"row": a.row, "kind": a.kind, "palu_dir": a.palu_dir, "latent_dtype": a.latent_dtype,
-              "latent_scale": a.latent_scale, "latent_quant_in_prefill": bool(a.latent_quant_in_prefill)})
+    # The cache formats and the prefill round trip are properties of the *device* model. A --cpu row
+    # scores the HF/low-rank reference, which has no KV cache at all, so recording the flags there would
+    # claim a measurement that never happened; they are null on a CPU row instead, which a reader can
+    # still tell apart from a pre-2f run that has no such key. --latent-scale is not device-only: the CPU
+    # reference is built with it too, so it is recorded on both.
+    formats = {"latent_dtype": None, "k_latent_dtype": None, "v_latent_dtype": None, "kv_dtype": None,
+               "latent_quant_in_prefill": None}
+    if not a.cpu:
+        formats = {"latent_dtype": a.latent_dtype,
+                   # the *resolved* per-cache formats, so a row says what each cache held
+                   "k_latent_dtype": a.k_latent_dtype or a.latent_dtype,
+                   "v_latent_dtype": a.v_latent_dtype or a.latent_dtype, "kv_dtype": a.kv_dtype,
+                   "latent_quant_in_prefill": bool(a.latent_quant_in_prefill)}
+    r.update({"row": a.row, "kind": a.kind, "palu_dir": a.palu_dir,
+              "latent_scale": a.latent_scale, **formats})
     out.write_text(json.dumps(r, indent=1))
     print(json.dumps(r))
 
