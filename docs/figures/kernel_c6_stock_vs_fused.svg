@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="940" height="480" viewBox="0 0 940 480" role="img" aria-label="Per head-item per chunk at 4k (from the stage 2d fit): where the fused kernel&#x27;s extra time goes, and the levers that address it">
+<title>Per head-item per chunk at 4k (from the stage 2d fit): where the fused kernel&#x27;s extra time goes, and the levers that address it</title>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#1f2430"/></marker></defs>
+<rect x="0" y="0" width="940" height="480" fill="#ffffff"/>
+<text x="14" y="24" font-family="Helvetica, Arial, sans-serif" font-size="15" text-anchor="start" font-weight="bold" fill="#1f2430">Why the fused op is 1.36x the stock op at 4k, in one chunk</text>
+<text x="190" y="90" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="end" font-weight="bold" fill="#1f2430">stock (r_v 128)</text>
+<rect x="200" y="70" width="397.8" height="30" rx="2" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="1.2" opacity="1.0"/>
+<text x="398.9" y="89" font-family="Helvetica, Arial, sans-serif" font-size="9" text-anchor="middle" font-weight="normal" fill="#1f2430">flash step, near DRAM-bound</text>
+<text x="605.8" y="90" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="11" text-anchor="start" font-weight="normal" fill="#1f2430">44.2 us</text>
+<text x="190" y="146" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="end" font-weight="bold" fill="#1f2430">fused r_k 32 / r_v 128</text>
+<rect x="200" y="126" width="397.8" height="30" rx="2" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="1.2" opacity="1.0"/>
+<text x="398.9" y="145" font-family="Helvetica, Arial, sans-serif" font-size="9" text-anchor="middle" font-weight="normal" fill="#1f2430">flash step</text>
+<rect x="597.8" y="126" width="39.6" height="30" rx="2" fill="#dff3e6" stroke="#3c9d6b" stroke-width="1.2" opacity="1.0"/>
+<rect x="637.4" y="126" width="77.39999999999999" height="30" rx="2" fill="#fbe1e1" stroke="#d64545" stroke-width="1.2" opacity="1.0"/>
+<text x="722.8" y="146" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="11" text-anchor="start" font-weight="normal" fill="#1f2430">57.2 us</text>
+<text x="190" y="202" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="end" font-weight="bold" fill="#1f2430">fused r_k 64 / r_v 128</text>
+<rect x="200" y="182" width="397.8" height="30" rx="2" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="1.2" opacity="1.0"/>
+<text x="398.9" y="201" font-family="Helvetica, Arial, sans-serif" font-size="9" text-anchor="middle" font-weight="normal" fill="#1f2430">flash step</text>
+<rect x="597.8" y="182" width="79.2" height="30" rx="2" fill="#dff3e6" stroke="#3c9d6b" stroke-width="1.2" opacity="1.0"/>
+<rect x="677.0" y="182" width="77.39999999999999" height="30" rx="2" fill="#fbe1e1" stroke="#d64545" stroke-width="1.2" opacity="1.0"/>
+<text x="762.4" y="202" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="11" text-anchor="start" font-weight="normal" fill="#1f2430">61.6 us</text>
+<rect x="200" y="223" width="14" height="11" rx="2" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="1.2" opacity="1.0"/>
+<text x="220" y="232" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">flash step (same code as stock)</text>
+<rect x="200" y="237" width="14" height="11" rx="2" fill="#dff3e6" stroke="#3c9d6b" stroke-width="1.2" opacity="1.0"/>
+<text x="220" y="246" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">AB matmul: the rank-dependent part</text>
+<rect x="200" y="251" width="14" height="11" rx="2" fill="#fbe1e1" stroke="#d64545" stroke-width="1.2" opacity="1.0"/>
+<text x="220" y="260" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">per-row-tile overhead: round trips, inits, reconfigs, eltwise, SFPU adds</text>
+<text x="200" y="282" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">us per head-item per chunk of 512 positions, 4k context, batch 32 (stage 2d least-squares fit over 1k / 4k / 8k)</text>
+<text x="200" y="296" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">the AB-matmul share is inferred from the r_k 32 -&gt; 64 difference (doubling the matmul costs 4.4 us); the rest is rank-independent</text>
+<text x="200" y="310" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">on top of this, the fused op carries 60-80 us more fixed cost per layer per call (full-tile Q math, seeding, table read).</text>
+<rect x="40" y="330" width="420" height="120" rx="6" fill="#ffffff" stroke="#d64545" stroke-width="1.2" opacity="1.0"/>
+<text x="52" y="350" font-family="Helvetica, Arial, sans-serif" font-size="11.5" text-anchor="start" font-weight="bold" fill="#1f2430">per K row tile (16 per chunk)</text>
+<text x="52" y="372" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">fused excess over stock:            ~810 ns  (~800-1100 cycles)</text>
+<text x="52" y="388" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">of which the AB matmul (rank part):  ~275 ns</text>
+<text x="52" y="404" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">the remaining ~535 ns is the 6 round trips, 3 inits,</text>
+<text x="52" y="420" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">4 reconfigs, 8 FPU multiplies and 4 SFPU adds</text>
+<rect x="480" y="330" width="430" height="120" rx="6" fill="#ffffff" stroke="#3c9d6b" stroke-width="1.2" opacity="1.0"/>
+<text x="492" y="350" font-family="Helvetica, Arial, sans-serif" font-size="11.5" text-anchor="start" font-weight="bold" fill="#1f2430">levers (untried; parity needs -27 % at 4k)</text>
+<text x="492" y="370" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">1. two column tiles per acquisition: 6 -&gt; 4 round trips per row tile</text>
+<text x="492" y="384" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">2. hoist matmul/mul/add inits out of the row-tile loop</text>
+<text x="492" y="398" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">3. accumulate A*cos + B*sin on the FPU (no SFPU pass, no dst 1)</text>
+<text x="492" y="412" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">4. restore 16-row (half-tile) Q math: attacks the fixed part, worst at 1k</text>
+<text x="492" y="426" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">5. bigger: rebuild two row tiles per AB matmul so one matmul feeds 8 packs</text>
+<text x="14" y="470" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="start" font-weight="normal" fill="#5f6673" font-style="italic">Fig. C6. The bytes are already gone; what is left is the number of times the three compute threads have to synchronise per chunk.</text>
+</svg>

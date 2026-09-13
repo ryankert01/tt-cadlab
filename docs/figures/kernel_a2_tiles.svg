@@ -1,0 +1,148 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="940" height="440" viewBox="0 0 940 440" role="img" aria-label="The 32 x 32 tile, its four faces, the data formats, and tile order inside a matrix">
+<title>The 32 x 32 tile, its four faces, the data formats, and tile order inside a matrix</title>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#1f2430"/></marker></defs>
+<rect x="0" y="0" width="940" height="440" fill="#ffffff"/>
+<text x="14" y="24" font-family="Helvetica, Arial, sans-serif" font-size="15" text-anchor="start" font-weight="bold" fill="#1f2430">Tiles: the unit of everything on device</text>
+<rect x="24" y="50" width="60" height="60" rx="2" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="1.2" opacity="1.0"/>
+<text x="54.0" y="84.0" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="11" text-anchor="middle" font-weight="normal" fill="#1f2430">face 0</text>
+<rect x="87" y="50" width="60" height="60" rx="2" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="1.2" opacity="1.0"/>
+<text x="117.0" y="84.0" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="11" text-anchor="middle" font-weight="normal" fill="#1f2430">face 1</text>
+<rect x="24" y="113" width="60" height="60" rx="2" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="1.2" opacity="1.0"/>
+<text x="54.0" y="147.0" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="11" text-anchor="middle" font-weight="normal" fill="#1f2430">face 2</text>
+<rect x="87" y="113" width="60" height="60" rx="2" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="1.2" opacity="1.0"/>
+<text x="117.0" y="147.0" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="11" text-anchor="middle" font-weight="normal" fill="#1f2430">face 3</text>
+<rect x="184" y="50" width="60" height="60" rx="2" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="1.2" opacity="1.0"/>
+<rect x="247" y="50" width="60" height="60" rx="2" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="1.2" opacity="1.0"/>
+<rect x="184" y="113" width="60" height="60" rx="2" fill="#f4f4f4" stroke="#c2c6cc" stroke-width="1.2" opacity="1.0" stroke-dasharray="3 3"/>
+<rect x="247" y="113" width="60" height="60" rx="2" fill="#f4f4f4" stroke="#c2c6cc" stroke-width="1.2" opacity="1.0" stroke-dasharray="3 3"/>
+<text x="245" y="84.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" font-weight="normal" fill="#1f2430">16 x 32 half tile</text>
+<text x="24" y="194" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">full tile: 32 x 32 elements = 4 faces of 16 x 16,</text>
+<text x="24" y="208" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">stored face by face (f0, f1, f2, f3), each row-major;</text>
+<text x="24" y="222" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">rows 0-15 live in faces 0 and 1.</text>
+<text x="24" y="236" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673"></text>
+<text x="24" y="250" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">half tile: 16 x 32 = faces 0 and 1 only. Stock decode</text>
+<text x="24" y="264" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">uses it for Q, the scores, the mask and the statistics</text>
+<text x="24" y="278" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">when there are &lt;= 16 query heads; the Palu op forces</text>
+<text x="24" y="292" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">full tiles everywhere (one of the untried levers).</text>
+<line x1="326" y1="58" x2="930" y2="58" stroke="#8e94a0" stroke-width="1.2"/>
+<text x="330" y="52" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="bold" fill="#5f6673">format</text>
+<text x="458" y="52" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="bold" fill="#5f6673">bytes / element</text>
+<text x="630" y="52" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="bold" fill="#5f6673">bytes / tile</text>
+<text x="730" y="52" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="bold" fill="#5f6673">used here for</text>
+<text x="330" y="74" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">bfloat16 (bf16)</text>
+<text x="458" y="74" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">2</text>
+<text x="630" y="74" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">2048</text>
+<text x="730" y="74" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">Q, K_rot, weights, cos/sin, intermediates</text>
+<text x="330" y="96" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">bfp8_b (block fp8)</text>
+<text x="458" y="96" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">1 + 8-bit exponent per 16</text>
+<text x="630" y="96" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">1088</text>
+<text x="730" y="96" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">stock K and V caches, Palu latent caches</text>
+<text x="330" y="118" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">float32 (fp32)</text>
+<text x="458" y="118" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">4</text>
+<text x="630" y="118" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">4096</text>
+<text x="730" y="118" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">Phase-2 query state and rotation step</text>
+<text x="330" y="140" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">bfp4_b</text>
+<text x="458" y="140" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">0.5 + exponent per 16</text>
+<text x="630" y="140" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">576</text>
+<text x="730" y="140" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">(supported, not used)</text>
+<text x="330" y="168" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">bfp8: 16 elements share one exponent, so a tile is 1024 mantissa bytes + 64 exponent bytes.</text>
+<text x="330" y="182" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">The FPU multiplies at 5 x 7 mantissa bits per pass; HiFi2 runs two passes, HiFi4 four (this study: HiFi2).</text>
+<text x="330" y="222" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="start" font-weight="bold" fill="#1f2430">A K chunk of 512 positions x 128 dims is 16 row tiles x 4 column tiles</text>
+<rect x="330" y="230" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="341.0" y="243.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">0</text>
+<rect x="354" y="230" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="365.0" y="243.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">1</text>
+<rect x="378" y="230" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="389.0" y="243.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">2</text>
+<rect x="402" y="230" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="413.0" y="243.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">3</text>
+<rect x="330" y="254" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="341.0" y="267.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">4</text>
+<rect x="354" y="254" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="365.0" y="267.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">5</text>
+<rect x="378" y="254" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="389.0" y="267.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">6</text>
+<rect x="402" y="254" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="413.0" y="267.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">7</text>
+<rect x="330" y="278" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="341.0" y="291.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">8</text>
+<rect x="354" y="278" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="365.0" y="291.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">9</text>
+<rect x="378" y="278" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="389.0" y="291.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">10</text>
+<rect x="402" y="278" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="413.0" y="291.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">11</text>
+<rect x="330" y="302" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="341.0" y="315.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">12</text>
+<rect x="354" y="302" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="365.0" y="315.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">13</text>
+<rect x="378" y="302" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="389.0" y="315.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">14</text>
+<rect x="402" y="302" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="413.0" y="315.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">15</text>
+<rect x="330" y="326" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="341.0" y="339.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">16</text>
+<rect x="354" y="326" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="365.0" y="339.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">17</text>
+<rect x="378" y="326" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="389.0" y="339.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">18</text>
+<rect x="402" y="326" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="413.0" y="339.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">19</text>
+<rect x="330" y="350" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="341.0" y="363.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">...</text>
+<rect x="354" y="350" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="378" y="350" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="402" y="350" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="434" y="244" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">row-major tile order: index = i * 4 + j</text>
+<text x="434" y="258" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">(how the tensor sits in DRAM)</text>
+<rect x="630" y="230" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="641.0" y="243.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">0</text>
+<rect x="654" y="230" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="665.0" y="243.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">16</text>
+<rect x="678" y="230" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="689.0" y="243.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">32</text>
+<rect x="702" y="230" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="713.0" y="243.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">48</text>
+<rect x="630" y="254" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="641.0" y="267.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">1</text>
+<rect x="654" y="254" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="665.0" y="267.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">17</text>
+<rect x="678" y="254" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="689.0" y="267.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">33</text>
+<rect x="702" y="254" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="713.0" y="267.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">49</text>
+<rect x="630" y="278" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="641.0" y="291.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">2</text>
+<rect x="654" y="278" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="665.0" y="291.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">18</text>
+<rect x="678" y="278" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="689.0" y="291.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">34</text>
+<rect x="702" y="278" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="713.0" y="291.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">50</text>
+<rect x="630" y="302" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="641.0" y="315.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">3</text>
+<rect x="654" y="302" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="665.0" y="315.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">19</text>
+<rect x="678" y="302" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="689.0" y="315.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">35</text>
+<rect x="702" y="302" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="713.0" y="315.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">51</text>
+<rect x="630" y="326" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="641.0" y="339.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">4</text>
+<rect x="654" y="326" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="665.0" y="339.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">20</text>
+<rect x="678" y="326" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="689.0" y="339.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">36</text>
+<rect x="702" y="326" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="713.0" y="339.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">52</text>
+<rect x="630" y="350" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="641.0" y="363.88" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="8" text-anchor="middle" font-weight="normal" fill="#1f2430">...</text>
+<rect x="654" y="350" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="678" y="350" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="702" y="350" width="22" height="22" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="734" y="244" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">column-major tile order: index = j * 16 + i</text>
+<text x="734" y="258" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">(the K chunk&#x27;s layout in L1 for Q K^T, and</text>
+<text x="734" y="272" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">the order the Palu kernel packs K_rot in)</text>
+<text x="330" y="390" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">row tile i = positions 32i .. 32i+31;  column tile j = head dims 32j .. 32j+31</text>
+<text x="14" y="430" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="start" font-weight="normal" fill="#5f6673" font-style="italic">Fig. A2. Tiles are 32 x 32; a tensor is padded to whole tiles and addressed by tile index, so every shape in the kernels is written in tiles (St, DHt, Sk_chunk_t, ...).</text>
+</svg>

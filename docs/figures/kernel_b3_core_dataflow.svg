@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="940" height="720" viewBox="0 0 940 720" role="img" aria-label="Inside one core for one K chunk: reader, compute chain with CB indices, writer">
+<title>Inside one core for one K chunk: reader, compute chain with CB indices, writer</title>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#1f2430"/></marker></defs>
+<rect x="0" y="0" width="940" height="720" fill="#ffffff"/>
+<text x="14" y="24" font-family="Helvetica, Arial, sans-serif" font-size="15" text-anchor="start" font-weight="bold" fill="#1f2430">One core, one chunk: who does what, through which circular buffer</text>
+<text x="14" y="42" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">numbers in [ ] are DST round trips for a 512-position chunk with dst_size = 4 (batch 32 layout: 1 x 16 score tiles)</text>
+<rect x="22" y="56" width="250" height="640" rx="6" fill="#ffffff" stroke="#6b6f8a" stroke-width="1.2" opacity="1.0"/>
+<rect x="292" y="56" width="380" height="640" rx="6" fill="#ffffff" stroke="#3c9d6b" stroke-width="1.2" opacity="1.0"/>
+<rect x="692" y="56" width="210" height="640" rx="6" fill="#ffffff" stroke="#6b6f8a" stroke-width="1.2" opacity="1.0"/>
+<text x="30" y="74" font-family="Helvetica, Arial, sans-serif" font-size="12" text-anchor="start" font-weight="bold" fill="#1f2430">reader (BRISC, NoC 0)</text>
+<text x="300" y="74" font-family="Helvetica, Arial, sans-serif" font-size="12" text-anchor="start" font-weight="bold" fill="#1f2430">compute (TRISC 0/1/2)</text>
+<text x="700" y="74" font-family="Helvetica, Arial, sans-serif" font-size="12" text-anchor="start" font-weight="bold" fill="#1f2430">writer (NCRISC, NoC 1)</text>
+<rect x="30" y="96" width="226" height="40" rx="5" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="1.2" opacity="1.0"/>
+<text x="143.0" y="113.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" font-weight="bold" fill="#1f2430">Q for this batch row</text>
+<text x="143.0" y="128.0" font-family="Helvetica, Arial, sans-serif" font-size="9.0" text-anchor="middle" font-weight="normal" fill="#5f6673">DRAM -&gt; c_0, once (4 tiles)</text>
+<text x="30" y="152" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">per chunk (double buffered, so up to</text>
+<text x="30" y="165" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">one chunk ahead of compute):</text>
+<rect x="30" y="178" width="226" height="54" rx="5" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="1.2" opacity="1.0"/>
+<text x="143.0" y="202.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" font-weight="bold" fill="#1f2430">K chunk, 64 tiles bfp8</text>
+<text x="143.0" y="217.0" font-family="Helvetica, Arial, sans-serif" font-size="9.0" text-anchor="middle" font-weight="normal" fill="#5f6673">read tile by tile in column-major order into c_1</text>
+<rect x="30" y="246" width="226" height="54" rx="5" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="1.2" opacity="1.0"/>
+<text x="143.0" y="270.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" font-weight="bold" fill="#1f2430">V chunk, 64 tiles bfp8</text>
+<text x="143.0" y="285.0" font-family="Helvetica, Arial, sans-serif" font-size="9.0" text-anchor="middle" font-weight="normal" fill="#5f6673">row-major into c_2</text>
+<text x="30" y="320" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">each tile is one NoC read of 1088 B;</text>
+<text x="30" y="333" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">a barrier every few tiles keeps the</text>
+<text x="30" y="346" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">number of reads in flight bounded.</text>
+<text x="30" y="359" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673"></text>
+<text x="30" y="372" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">Q is read once per item, K and V</text>
+<text x="30" y="385" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">once per chunk; nothing is reused</text>
+<text x="30" y="398" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">across decode steps (no cache).</text>
+<rect x="300" y="96" width="356" height="46" rx="5" fill="#dff3e6" stroke="#3c9d6b" stroke-width="1.2" opacity="1.0"/>
+<text x="478.0" y="116.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" font-weight="bold" fill="#1f2430">S = Q K^T</text>
+<text x="478.0" y="131.0" font-family="Helvetica, Arial, sans-serif" font-size="9.0" text-anchor="middle" font-weight="normal" fill="#5f6673">c_0 x c_1 -&gt; c_24 (16 tiles bf16)  [4: 1x4 tiles each, inner 4]</text>
+<line x1="478" y1="142" x2="478" y2="152" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="300" y="152" width="356" height="46" rx="5" fill="#dff3e6" stroke="#3c9d6b" stroke-width="1.2" opacity="1.0"/>
+<text x="478.0" y="172.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" font-weight="bold" fill="#1f2430">S += mask (last chunk only)</text>
+<text x="478.0" y="187.0" font-family="Helvetica, Arial, sans-serif" font-size="9.0" text-anchor="middle" font-weight="normal" fill="#5f6673">c_24 += c_3, tile by tile  [16]</text>
+<line x1="478" y1="198" x2="478" y2="208" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="300" y="208" width="356" height="46" rx="5" fill="#dff3e6" stroke="#3c9d6b" stroke-width="1.2" opacity="1.0"/>
+<text x="478.0" y="228.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" font-weight="bold" fill="#1f2430">m_new = max(m_prev, rowmax S)</text>
+<text x="478.0" y="243.0" font-family="Helvetica, Arial, sans-serif" font-size="9.0" text-anchor="middle" font-weight="normal" fill="#5f6673">c_24, c_28 -&gt; c_27  [1]</text>
+<line x1="478" y1="254" x2="478" y2="264" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="300" y="264" width="356" height="46" rx="5" fill="#ece4fb" stroke="#8b5cf6" stroke-width="1.2" opacity="1.0"/>
+<text x="478.0" y="284.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" font-weight="bold" fill="#1f2430">P = exp((S - m_new) * scale)</text>
+<text x="478.0" y="299.0" font-family="Helvetica, Arial, sans-serif" font-size="9.0" text-anchor="middle" font-weight="normal" fill="#5f6673">in place in c_24, 4 tiles per trip (FPU subtract, SFPU exp)  [4]</text>
+<line x1="478" y1="310" x2="478" y2="320" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="300" y="320" width="356" height="46" rx="5" fill="#dff3e6" stroke="#3c9d6b" stroke-width="1.2" opacity="1.0"/>
+<text x="478.0" y="340.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" font-weight="bold" fill="#1f2430">r = rowsum P</text>
+<text x="478.0" y="355.0" font-family="Helvetica, Arial, sans-serif" font-size="9.0" text-anchor="middle" font-weight="normal" fill="#5f6673">c_24 -&gt; c_29  [1]</text>
+<line x1="478" y1="366" x2="478" y2="376" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="300" y="376" width="356" height="46" rx="5" fill="#dff3e6" stroke="#3c9d6b" stroke-width="1.2" opacity="1.0"/>
+<text x="478.0" y="396.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" font-weight="bold" fill="#1f2430">PV = P V</text>
+<text x="478.0" y="411.0" font-family="Helvetica, Arial, sans-serif" font-size="9.0" text-anchor="middle" font-weight="normal" fill="#5f6673">c_24 x c_2 -&gt; c_25 (4 tiles)  [1: 1x4 tiles, inner 16]</text>
+<line x1="478" y1="422" x2="478" y2="432" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="300" y="432" width="356" height="46" rx="5" fill="#ece4fb" stroke="#8b5cf6" stroke-width="1.2" opacity="1.0"/>
+<text x="478.0" y="452.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" font-weight="bold" fill="#1f2430">a = exp((m_prev - m_new) * scale)</text>
+<text x="478.0" y="467.0" font-family="Helvetica, Arial, sans-serif" font-size="9.0" text-anchor="middle" font-weight="normal" fill="#5f6673">c_28, c_27 -&gt; c_31  [1]</text>
+<line x1="478" y1="478" x2="478" y2="488" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="300" y="488" width="356" height="46" rx="5" fill="#dff3e6" stroke="#3c9d6b" stroke-width="1.2" opacity="1.0"/>
+<text x="478.0" y="508.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" font-weight="bold" fill="#1f2430">l = a * l_prev + r</text>
+<text x="478.0" y="523.0" font-family="Helvetica, Arial, sans-serif" font-size="9.0" text-anchor="middle" font-weight="normal" fill="#5f6673">c_30 *= c_31 [1];  c_29 += c_30 [1]</text>
+<line x1="478" y1="534" x2="478" y2="544" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="300" y="544" width="356" height="46" rx="5" fill="#dff3e6" stroke="#3c9d6b" stroke-width="1.2" opacity="1.0"/>
+<text x="478.0" y="564.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" font-weight="bold" fill="#1f2430">O = a * O + PV</text>
+<text x="478.0" y="579.0" font-family="Helvetica, Arial, sans-serif" font-size="9.0" text-anchor="middle" font-weight="normal" fill="#5f6673">c_26 *= c_31 [4];  c_26 += c_25 [4]</text>
+<line x1="478" y1="590" x2="478" y2="600" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="300" y="600" width="356" height="46" rx="5" fill="#dff3e6" stroke="#3c9d6b" stroke-width="1.2" opacity="1.0"/>
+<text x="478.0" y="620.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" font-weight="bold" fill="#1f2430">m_prev &lt;- m_new, l_prev &lt;- l</text>
+<text x="478.0" y="635.0" font-family="Helvetica, Arial, sans-serif" font-size="9.0" text-anchor="middle" font-weight="normal" fill="#5f6673">c_27 -&gt; c_28, c_29 -&gt; c_30 (ping-pong)  [2]</text>
+<text x="300" y="664" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">about 24 round trips per chunk (13 on the first, +16 on the masked last one)</text>
+<text x="300" y="678" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">after the last chunk: l = 1/l, O *= l  -&gt;  c_20 (or c_16/17/18 for the tree)</text>
+<rect x="700" y="96" width="190" height="54" rx="5" fill="#f7f2e4" stroke="#b08a3e" stroke-width="1.2" opacity="1.0"/>
+<text x="795.0" y="120.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" font-weight="bold" fill="#1f2430">scalers, before the loop</text>
+<text x="795.0" y="135.0" font-family="Helvetica, Arial, sans-serif" font-size="9.0" text-anchor="middle" font-weight="normal" fill="#5f6673">c_5 reduce scaler, c_11 column</text>
+<text x="795" y="144" font-family="Helvetica, Arial, sans-serif" font-size="9" text-anchor="middle" font-weight="normal" fill="#5f6673">identity, c_12 zero tile</text>
+<rect x="700" y="164" width="190" height="54" rx="5" fill="#f7f2e4" stroke="#b08a3e" stroke-width="1.2" opacity="1.0"/>
+<text x="795.0" y="188.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" font-weight="bold" fill="#1f2430">causal mask</text>
+<text x="795.0" y="203.0" font-family="Helvetica, Arial, sans-serif" font-size="9.0" text-anchor="middle" font-weight="normal" fill="#5f6673">0 / -inf tiles into c_3, from</text>
+<text x="795" y="212" font-family="Helvetica, Arial, sans-serif" font-size="9" text-anchor="middle" font-weight="normal" fill="#5f6673">cur_pos, in L1 (no DRAM read)</text>
+<rect x="700" y="232" width="190" height="66" rx="5" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="1.2" opacity="1.0"/>
+<text x="795.0" y="262.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" font-weight="bold" fill="#1f2430">tree reduction</text>
+<text x="795.0" y="277.0" font-family="Helvetica, Arial, sans-serif" font-size="9.0" text-anchor="middle" font-weight="normal" fill="#5f6673">children&#x27;s (l, m, O) -&gt; c_7, c_6, c_16;</text>
+<text x="795" y="284" font-family="Helvetica, Arial, sans-serif" font-size="9" text-anchor="middle" font-weight="normal" fill="#5f6673">own (l, m, O) -&gt; parent&#x27;s c_19</text>
+<rect x="700" y="312" width="190" height="54" rx="5" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="1.2" opacity="1.0"/>
+<text x="795.0" y="336.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" font-weight="bold" fill="#1f2430">output</text>
+<text x="795.0" y="351.0" font-family="Helvetica, Arial, sans-serif" font-size="9.0" text-anchor="middle" font-weight="normal" fill="#5f6673">c_20 -&gt; DRAM (per-head rows as</text>
+<text x="795" y="360" font-family="Helvetica, Arial, sans-serif" font-size="9" text-anchor="middle" font-weight="normal" fill="#5f6673">partial tiles when GQA)</text>
+<text x="700" y="386" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">The writer is idle during the</text>
+<text x="700" y="399" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">chunk loop; all its work is</text>
+<text x="700" y="412" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">before (mask, scalers) or after</text>
+<text x="700" y="425" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">(reduce, write) the loop.</text>
+<text x="700" y="438" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673"></text>
+<text x="700" y="451" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">cur_pos arrives through c_8</text>
+<text x="700" y="464" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">(writer) and c_15 (compute).</text>
+<line x1="256" y1="116" x2="300" y2="119" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)" stroke-dasharray="3 3"/>
+<line x1="256" y1="205" x2="300" y2="119" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)" stroke-dasharray="3 3"/>
+<line x1="256" y1="273" x2="300" y2="399" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)" stroke-dasharray="3 3"/>
+<line x1="700" y1="191" x2="656" y2="175" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)" stroke-dasharray="3 3"/>
+<line x1="656" y1="620" x2="700" y2="320" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)" stroke-dasharray="3 3"/>
+<text x="14" y="710" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="start" font-weight="normal" fill="#5f6673" font-style="italic">Fig. B3. The compute kernel is straight-line code over CBs; the reader stays one chunk ahead; the writer only frames the loop. Every box in the middle column is one or more DST round trips.</text>
+</svg>

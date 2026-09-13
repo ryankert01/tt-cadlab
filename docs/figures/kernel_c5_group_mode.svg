@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="940" height="560" viewBox="0 0 940 560" role="img" aria-label="G-LRD: four heads share one latent; group-shared mode reads each latent chunk once per core and keeps per-head state as rings">
+<title>G-LRD: four heads share one latent; group-shared mode reads each latent chunk once per core and keeps per-head state as rings</title>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#1f2430"/></marker></defs>
+<rect x="0" y="0" width="940" height="560" fill="#ffffff"/>
+<text x="14" y="24" font-family="Helvetica, Arial, sans-serif" font-size="15" text-anchor="start" font-weight="bold" fill="#1f2430">In-kernel V and the group-shared loop (G-LRD, stage 2b/2c)</text>
+<rect x="40" y="60" width="420" height="220" rx="6" fill="#ffffff" stroke="#8e94a0" stroke-width="1.2" opacity="1.0"/>
+<text x="52" y="80" font-family="Helvetica, Arial, sans-serif" font-size="11.5" text-anchor="start" font-weight="bold" fill="#1f2430">per-head kernel: an item is (batch, head)</text>
+<rect x="60" y="100" width="180" height="70" rx="5" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="1.2" opacity="1.0"/>
+<text x="150.0" y="132.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" font-weight="bold" fill="#1f2430">core A: heads 0, 1</text>
+<text x="150.0" y="147.0" font-family="Helvetica, Arial, sans-serif" font-size="9.0" text-anchor="middle" font-weight="normal" fill="#5f6673">head 0 loop, then head 1 loop</text>
+<rect x="260" y="100" width="180" height="70" rx="5" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="1.2" opacity="1.0"/>
+<text x="350.0" y="132.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" font-weight="bold" fill="#1f2430">core B: heads 2, 3</text>
+<text x="350.0" y="147.0" font-family="Helvetica, Arial, sans-serif" font-size="9.0" text-anchor="middle" font-weight="normal" fill="#5f6673">head 2 loop, then head 3 loop</text>
+<rect x="160" y="210" width="180" height="44" rx="5" fill="#fde7d6" stroke="#e07b39" stroke-width="1.2" opacity="1.0"/>
+<text x="250.0" y="229.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" font-weight="bold" fill="#1f2430">group latent chunk</text>
+<text x="250.0" y="244.0" font-family="Helvetica, Arial, sans-serif" font-size="9.0" text-anchor="middle" font-weight="normal" fill="#5f6673">S x r_k, one per 4 heads</text>
+<line x1="250" y1="210" x2="100" y2="172" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)" stroke-dasharray="3 3"/>
+<line x1="250" y1="210" x2="190" y2="172" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)" stroke-dasharray="3 3"/>
+<line x1="250" y1="210" x2="310" y2="172" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)" stroke-dasharray="3 3"/>
+<line x1="250" y1="210" x2="400" y2="172" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)" stroke-dasharray="3 3"/>
+<text x="60" y="270" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">each latent chunk is read 4 times per step (2 per core); each head has its own</text>
+<text x="60" y="282" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">weight block and flash state, sequentially.</text>
+<rect x="480" y="60" width="430" height="220" rx="6" fill="#ffffff" stroke="#e07b39" stroke-width="1.2" opacity="1.0"/>
+<text x="492" y="80" font-family="Helvetica, Arial, sans-serif" font-size="11.5" text-anchor="start" font-weight="bold" fill="#1f2430">group-shared mode: an item is (batch, H heads), chunk outer, head inner</text>
+<text x="492" y="100" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10" text-anchor="start" font-weight="normal" fill="#1f2430">for chunk k:</text>
+<text x="492" y="114" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10" text-anchor="start" font-weight="normal" fill="#1f2430">    (Phase 2) q~ &lt;- q~ R_{-c}           once for the core: Q is per core, not per head</text>
+<text x="492" y="128" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10" text-anchor="start" font-weight="normal" fill="#1f2430">    for h in 0 .. H-1:</text>
+<text x="492" y="142" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10" text-anchor="start" font-weight="normal" fill="#1f2430">        K_h  = build_k(latent chunk, w block h)   -&gt; c_1</text>
+<text x="492" y="156" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10" text-anchor="start" font-weight="normal" fill="#1f2430">        S, softmax update of state h (m_h, l_h, O_h)</text>
+<text x="492" y="170" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10" text-anchor="start" font-weight="normal" fill="#1f2430">        V_h  = build_v(V latent chunk, u_v block h) -&gt; c_1 (K_h is spent)</text>
+<text x="492" y="184" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10" text-anchor="start" font-weight="normal" fill="#1f2430">        O_h += P V_h</text>
+<text x="492" y="198" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10" text-anchor="start" font-weight="normal" fill="#1f2430">    pop the shared latent chunks once</text>
+<text x="492" y="212" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10" text-anchor="start" font-weight="normal" fill="#1f2430">for h: tree-reduce head h (sequential), emit head h</text>
+<text x="492" y="240" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">latent chunk read once per core; H weight blocks resident in c_4 (this bounds H).</text>
+<text x="492" y="252" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">Auto selection: H = 2 at batch 32 (1 core per item), per-head kernel below (Fig. B2).</text>
+<rect x="40" y="310" width="420" height="200" rx="6" fill="#ffffff" stroke="#b08a3e" stroke-width="1.2" opacity="1.0"/>
+<text x="52" y="330" font-family="Helvetica, Arial, sans-serif" font-size="11.5" text-anchor="start" font-weight="bold" fill="#1f2430">per-head state as a FIFO ring (c_26 O, c_28 m, c_30 l, sized H blocks)</text>
+<rect x="60" y="350" width="120" height="30" rx="3" fill="#f7f2e4" stroke="#b08a3e" stroke-width="1.2" opacity="1.0"/>
+<text x="120.0" y="370" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="middle" font-weight="normal" fill="#1f2430">head 0 block</text>
+<rect x="188" y="350" width="120" height="30" rx="3" fill="#f7f2e4" stroke="#b08a3e" stroke-width="1.2" opacity="1.0"/>
+<text x="248.0" y="370" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="middle" font-weight="normal" fill="#1f2430">head 1 block</text>
+<text x="60" y="402" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">front = the head whose turn it is.  A head&#x27;s step does wait_front, pop_front,</text>
+<text x="60" y="416" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">reserve_back, push_back on each ring: its block goes to the back, the next</text>
+<text x="60" y="430" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">head&#x27;s comes to the front. Because every head runs the identical sequence,</text>
+<text x="60" y="444" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">the ring hands each head its own block back on the next chunk.</text>
+<text x="60" y="466" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">palu_rotate_blocks: pop + reserve + push with no data movement (the CB is</text>
+<text x="60" y="480" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">exactly full, so the bytes re-published at the back are the ones just popped).</text>
+<rect x="480" y="310" width="430" height="200" rx="6" fill="#ffffff" stroke="#e07b39" stroke-width="1.2" opacity="1.0"/>
+<text x="492" y="330" font-family="Helvetica, Arial, sans-serif" font-size="11.5" text-anchor="start" font-weight="bold" fill="#1f2430">in-kernel V (palu_build_v_chunk)</text>
+<rect x="500" y="350" width="16" height="16" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<rect x="518" y="350" width="16" height="16" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<rect x="500" y="368" width="16" height="16" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<rect x="518" y="368" width="16" height="16" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<rect x="500" y="386" width="16" height="16" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<rect x="518" y="386" width="16" height="16" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<rect x="500" y="404" width="16" height="16" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<text x="508.0" y="414.52" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="7" text-anchor="middle" font-weight="normal" fill="#1f2430">...</text>
+<rect x="518" y="404" width="16" height="16" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<text x="500" y="434" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">V latent chunk</text>
+<text x="500" y="446" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">512 x r_v (c_2)</text>
+<text x="550" y="386" font-family="Helvetica, Arial, sans-serif" font-size="14" text-anchor="start" font-weight="bold" fill="#1f2430">x</text>
+<rect x="570" y="350" width="16" height="16" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<rect x="588" y="350" width="16" height="16" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<rect x="606" y="350" width="16" height="16" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<rect x="624" y="350" width="16" height="16" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<rect x="570" y="368" width="16" height="16" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<rect x="588" y="368" width="16" height="16" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<rect x="606" y="368" width="16" height="16" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<rect x="624" y="368" width="16" height="16" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<text x="570" y="398" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">u_v: r_v x 128</text>
+<text x="570" y="410" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">(in the c_4 block)</text>
+<line x1="650" y1="368" x2="680" y2="368" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="690" y="350" width="16" height="16" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="708" y="350" width="16" height="16" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="726" y="350" width="16" height="16" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="744" y="350" width="16" height="16" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="690" y="368" width="16" height="16" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="708" y="368" width="16" height="16" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="726" y="368" width="16" height="16" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="744" y="368" width="16" height="16" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="690" y="386" width="16" height="16" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="708" y="386" width="16" height="16" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="726" y="386" width="16" height="16" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="744" y="386" width="16" height="16" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="690" y="404" width="16" height="16" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="698.0" y="414.52" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="7" text-anchor="middle" font-weight="normal" fill="#1f2430">...</text>
+<rect x="708" y="404" width="16" height="16" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="726" y="404" width="16" height="16" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="744" y="404" width="16" height="16" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="690" y="434" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">V_h: 512 x 128 into c_1,</text>
+<text x="690" y="446" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">row-major, for the PV matmul</text>
+<text x="492" y="470" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">one matmul per row tile (inner dim Rvt, 4 output tiles = 1 trip); needed because a</text>
+<text x="492" y="482" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">group&#x27;s u_v cannot be folded into wo without making wo 4x wider.</text>
+<text x="492" y="496" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">Group mode&#x27;s merge uses unfused primitives (Fig. B5 note); split capped at 4 cores.</text>
+<text x="14" y="550" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="start" font-weight="normal" fill="#5f6673" font-style="italic">Fig. C5. Group mode changes the loop nesting and the CB bookkeeping, not the per-head math: head h&#x27;s chunk and accumulation order are unchanged (bit-identical when no child is merged).</text>
+</svg>

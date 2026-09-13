@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="940" height="520" viewBox="0 0 940 520" role="img" aria-label="Phase 1 streams cos/sin per chunk; Phase 2 keeps a chunk-relative table resident and rotates the query once per chunk instead">
+<title>Phase 1 streams cos/sin per chunk; Phase 2 keeps a chunk-relative table resident and rotates the query once per chunk instead</title>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#1f2430"/></marker></defs>
+<rect x="0" y="0" width="940" height="520" fill="#ffffff"/>
+<text x="14" y="24" font-family="Helvetica, Arial, sans-serif" font-size="15" text-anchor="start" font-weight="bold" fill="#1f2430">Where the rotation angles come from: Phase 1 vs Phase 2</text>
+<line x1="60" y1="90" x2="880" y2="90" stroke="#1f2430" stroke-width="1.4"/>
+<line x1="60.0" y1="84" x2="60.0" y2="96" stroke="#1f2430" stroke-width="1.2"/>
+<text x="60.0" y="112" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10" text-anchor="middle" font-weight="normal" fill="#1f2430">0</text>
+<line x1="265.0" y1="84" x2="265.0" y2="96" stroke="#1f2430" stroke-width="1.2"/>
+<text x="265.0" y="112" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10" text-anchor="middle" font-weight="normal" fill="#1f2430">512</text>
+<line x1="470.0" y1="84" x2="470.0" y2="96" stroke="#1f2430" stroke-width="1.2"/>
+<text x="470.0" y="112" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10" text-anchor="middle" font-weight="normal" fill="#1f2430">1024</text>
+<line x1="675.0" y1="84" x2="675.0" y2="96" stroke="#1f2430" stroke-width="1.2"/>
+<text x="675.0" y="112" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10" text-anchor="middle" font-weight="normal" fill="#1f2430">1536</text>
+<line x1="880.0" y1="84" x2="880.0" y2="96" stroke="#1f2430" stroke-width="1.2"/>
+<text x="880.0" y="112" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10" text-anchor="middle" font-weight="normal" fill="#1f2430">2048</text>
+<text x="890" y="94" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">position</text>
+<rect x="63.0" y="50" width="199.0" height="26" rx="3" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="1.2" opacity="1.0"/>
+<text x="162.5" y="67" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="middle" font-weight="normal" fill="#1f2430">chunk 0: s0 = 0</text>
+<rect x="268.0" y="50" width="199.0" height="26" rx="3" fill="#fde7d6" stroke="#e07b39" stroke-width="1.2" opacity="1.0"/>
+<text x="367.5" y="67" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="middle" font-weight="normal" fill="#1f2430">chunk 1: s0 = 512</text>
+<rect x="473.0" y="50" width="199.0" height="26" rx="3" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="1.2" opacity="1.0"/>
+<text x="572.5" y="67" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="middle" font-weight="normal" fill="#1f2430">chunk 2: s0 = 1024</text>
+<rect x="678.0" y="50" width="199.0" height="26" rx="3" fill="#fde7d6" stroke="#e07b39" stroke-width="1.2" opacity="1.0"/>
+<text x="777.5" y="67" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="middle" font-weight="normal" fill="#1f2430">chunk 3: s0 = 1536</text>
+<text x="60" y="38" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">K side needs R_{s0 + t} for the positions of chunk k, t = 0 .. 511</text>
+<rect x="40" y="140" width="410" height="150" rx="6" fill="#ffffff" stroke="#2f6fdb" stroke-width="1.2" opacity="1.0"/>
+<text x="52" y="160" font-family="Helvetica, Arial, sans-serif" font-size="11.5" text-anchor="start" font-weight="bold" fill="#1f2430">Phase 1 (checkpoint): absolute angles</text>
+<text x="52" y="182" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">reader streams [cos | sin] rows s0 .. s0+511 into c_13 per chunk</text>
+<text x="52" y="197" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">= 512 x 256 bf16 = 256 KB per chunk per core: 2x the bytes of the</text>
+<text x="52" y="212" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">K it replaces, so it can only ever lose on traffic. Also forces</text>
+<text x="52" y="227" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">chunk 128 so the streamed table fits L1.</text>
+<text x="52" y="242" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673"></text>
+<text x="52" y="257" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">kernel: K_rot[i, j] = A * cos[s0+i, j] + B * sin[s0+i, j]</text>
+<rect x="470" y="140" width="440" height="150" rx="6" fill="#ffffff" stroke="#e07b39" stroke-width="1.2" opacity="1.0"/>
+<text x="482" y="160" font-family="Helvetica, Arial, sans-serif" font-size="11.5" text-anchor="start" font-weight="bold" fill="#1f2430">Phase 2 (the one measured): chunk-relative angles</text>
+<text x="482" y="182" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">2-D rotations commute, so for query position p and key s0 + t:</text>
+<text x="482" y="197" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">   q R_p . (k R_{s0+t})^T  =  (q R_{p-s0}) . (k R_t)^T</text>
+<text x="482" y="212" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">K side uses rows t = 0..511 only: read ONCE per core, resident in c_13.</text>
+<text x="482" y="227" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">The chunk base s0 moves to the query: a per-chunk state</text>
+<text x="482" y="242" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">   q~_k = q R_{-k c},  advanced by the constant R_{-c} each chunk.</text>
+<text x="482" y="257" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">Q K^T reads q~ from c_12 instead of Q from c_0; nothing else changes.</text>
+<rect x="40" y="310" width="870" height="150" rx="6" fill="#ffffff" stroke="#d64545" stroke-width="1.2" opacity="1.0"/>
+<text x="52" y="330" font-family="Helvetica, Arial, sans-serif" font-size="11.5" text-anchor="start" font-weight="bold" fill="#1f2430">The query step (palu_step_q), fp32 tiles in c_12, once per chunk</text>
+<text x="52" y="352" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">state block = [ q~ | q~ T ]</text>
+<text x="52" y="369" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">q~&#x27;     = q~ * cos_c  -  (q~ T) * sin_c</text>
+<text x="52" y="386" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">(q~&#x27; T) = (q~ T) * cos_c  +  q~ * sin_c</text>
+<text x="370" y="352" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">2n tiles, n = 4; T = the pair-swap tile carried in c_4, so q~ T is 4 single-tile matmuls at seed time</text>
+<text x="370" y="369" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">cos_c, sin_c = row c of the table, broadcast to all 32 rows (rot_step, c_14)</text>
+<text x="370" y="386" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">a complex multiply, no matmul: 2 x 4 DST trips of (mul, mul, sub or add)</text>
+<text x="52" y="410" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">The state is kept in fp32 tiles so 16 steps at 8k do not accumulate bf16 rounding; the multiplies themselves run at ~11 mantissa bits (Wormhole unpacks fp32 into 19-bit Src).</text>
+<text x="52" y="424" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">Cores that own a later slice of the sequence seed q~ and step it k_chunk_start times before their first chunk. Cost per chunk: 8 round trips on 8 tiles, independent of r_k.</text>
+<text x="14" y="510" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="start" font-weight="normal" fill="#5f6673" font-style="italic">Fig. C4. Phase 2 removes the cos/sin traffic entirely: the table is 256 KB read once per core per call, and the per-chunk price is one small in-register rotation of the query.</text>
+</svg>

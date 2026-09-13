@@ -1,0 +1,266 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="940" height="560" viewBox="0 0 940 560" role="img" aria-label="One Tensix core: five RISC-V dispatchers, L1, the compute engine and two NoCs">
+<title>One Tensix core: five RISC-V dispatchers, L1, the compute engine and two NoCs</title>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#1f2430"/></marker></defs>
+<rect x="0" y="0" width="940" height="560" fill="#ffffff"/>
+<text x="14" y="24" font-family="Helvetica, Arial, sans-serif" font-size="15" text-anchor="start" font-weight="bold" fill="#1f2430">A Wormhole chip and one of its Tensix cores</text>
+<text x="20" y="44" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">one chip: 8 x 8 Tensix cores used by this op</text>
+<rect x="20" y="50" width="14" height="14" fill="#eef2f7" stroke="#6b7a99" stroke-width="0.6"/>
+<text x="27.0" y="60.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">D</text>
+<rect x="37" y="50" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="44.0" y="60.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="54" y="50" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="61.0" y="60.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="71" y="50" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="78.0" y="60.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="88" y="50" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="95.0" y="60.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="105" y="50" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="112.0" y="60.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="122" y="50" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="129.0" y="60.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="139" y="50" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="146.0" y="60.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="156" y="50" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="163.0" y="60.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="20" y="67" width="14" height="14" fill="#eef2f7" stroke="#6b7a99" stroke-width="0.6"/>
+<text x="27.0" y="77.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">D</text>
+<rect x="37" y="67" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="44.0" y="77.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="54" y="67" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="61.0" y="77.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="71" y="67" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="78.0" y="77.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="88" y="67" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="95.0" y="77.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="105" y="67" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="112.0" y="77.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="122" y="67" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="129.0" y="77.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="139" y="67" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="146.0" y="77.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="156" y="67" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="163.0" y="77.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="20" y="84" width="14" height="14" fill="#eef2f7" stroke="#6b7a99" stroke-width="0.6"/>
+<text x="27.0" y="94.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">D</text>
+<rect x="37" y="84" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="44.0" y="94.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="54" y="84" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="61.0" y="94.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="71" y="84" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="78.0" y="94.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="88" y="84" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="95.0" y="94.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="105" y="84" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="112.0" y="94.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="122" y="84" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="129.0" y="94.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="139" y="84" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="146.0" y="94.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="156" y="84" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="163.0" y="94.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="20" y="101" width="14" height="14" fill="#eef2f7" stroke="#6b7a99" stroke-width="0.6"/>
+<text x="27.0" y="111.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">D</text>
+<rect x="37" y="101" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="44.0" y="111.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="54" y="101" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="61.0" y="111.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="71" y="101" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="78.0" y="111.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="88" y="101" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="95.0" y="111.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="105" y="101" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="112.0" y="111.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="122" y="101" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="129.0" y="111.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="139" y="101" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="146.0" y="111.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="156" y="101" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="163.0" y="111.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="20" y="118" width="14" height="14" fill="#eef2f7" stroke="#6b7a99" stroke-width="0.6"/>
+<text x="27.0" y="128.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">D</text>
+<rect x="37" y="118" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="44.0" y="128.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="54" y="118" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="61.0" y="128.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="71" y="118" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="78.0" y="128.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="88" y="118" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="95.0" y="128.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="105" y="118" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="112.0" y="128.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="122" y="118" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="129.0" y="128.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="139" y="118" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="146.0" y="128.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="156" y="118" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="163.0" y="128.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="20" y="135" width="14" height="14" fill="#eef2f7" stroke="#6b7a99" stroke-width="0.6"/>
+<text x="27.0" y="145.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">D</text>
+<rect x="37" y="135" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="44.0" y="145.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="54" y="135" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="61.0" y="145.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="71" y="135" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="78.0" y="145.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="88" y="135" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="95.0" y="145.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="105" y="135" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="112.0" y="145.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="122" y="135" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="129.0" y="145.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="139" y="135" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="146.0" y="145.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="156" y="135" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="163.0" y="145.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="20" y="152" width="14" height="14" fill="#eef2f7" stroke="#6b7a99" stroke-width="0.6"/>
+<text x="27.0" y="162.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">D</text>
+<rect x="37" y="152" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="44.0" y="162.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="54" y="152" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="61.0" y="162.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="71" y="152" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="78.0" y="162.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="88" y="152" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="95.0" y="162.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="105" y="152" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="112.0" y="162.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="122" y="152" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="129.0" y="162.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="139" y="152" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="146.0" y="162.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="156" y="152" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="163.0" y="162.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="20" y="169" width="14" height="14" fill="#eef2f7" stroke="#6b7a99" stroke-width="0.6"/>
+<text x="27.0" y="179.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">D</text>
+<rect x="37" y="169" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="44.0" y="179.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="54" y="169" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="61.0" y="179.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="71" y="169" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="78.0" y="179.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="88" y="169" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="95.0" y="179.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="105" y="169" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="112.0" y="179.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="122" y="169" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="129.0" y="179.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="139" y="169" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="146.0" y="179.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<rect x="156" y="169" width="14" height="14" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="0.6"/>
+<text x="163.0" y="179.0" font-family="Helvetica, Arial, sans-serif" font-size="7" text-anchor="middle" font-weight="normal" fill="#5f6673">T</text>
+<text x="20" y="200" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">D = DRAM controller tile</text>
+<text x="20" y="213" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">    (6 per chip, 12 GB GDDR6)</text>
+<text x="20" y="226" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">T = Tensix core; Ethernet tiles</text>
+<text x="20" y="239" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">    link the two chips of an n300</text>
+<text x="20" y="252" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">two NoCs ring the mesh in</text>
+<text x="20" y="265" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">    opposite directions</text>
+<text x="20" y="278" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">every core&#x27;s L1 has a chip-wide</text>
+<text x="20" y="291" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">    address (x, y, offset)</text>
+<rect x="226" y="44" width="700" height="480" rx="8" fill="#ffffff" stroke="#1f2430" stroke-width="1.4" opacity="1.0"/>
+<text x="238" y="64" font-family="Helvetica, Arial, sans-serif" font-size="13" text-anchor="start" font-weight="bold" fill="#1f2430">Tensix core</text>
+<text x="336" y="64" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">five &quot;baby&quot; RISC-V cores issue commands; the engines below do the work</text>
+<rect x="242" y="78" width="128" height="46" rx="5" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="1.2" opacity="1.0"/>
+<text x="306.0" y="98.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" text-anchor="middle" font-weight="bold" fill="#1f2430">BRISC</text>
+<text x="306.0" y="113.0" font-family="Helvetica, Arial, sans-serif" font-size="10.0" text-anchor="middle" font-weight="normal" fill="#5f6673">NoC 0: reader kernel</text>
+<rect x="378" y="78" width="128" height="46" rx="5" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="1.2" opacity="1.0"/>
+<text x="442.0" y="98.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" text-anchor="middle" font-weight="bold" fill="#1f2430">NCRISC</text>
+<text x="442.0" y="113.0" font-family="Helvetica, Arial, sans-serif" font-size="10.0" text-anchor="middle" font-weight="normal" fill="#5f6673">NoC 1: writer kernel</text>
+<rect x="514" y="78" width="128" height="46" rx="5" fill="#dff3e6" stroke="#3c9d6b" stroke-width="1.2" opacity="1.0"/>
+<text x="578.0" y="98.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" text-anchor="middle" font-weight="bold" fill="#1f2430">TRISC 0</text>
+<text x="578.0" y="113.0" font-family="Helvetica, Arial, sans-serif" font-size="10.0" text-anchor="middle" font-weight="normal" fill="#5f6673">unpack</text>
+<rect x="650" y="78" width="128" height="46" rx="5" fill="#dff3e6" stroke="#3c9d6b" stroke-width="1.2" opacity="1.0"/>
+<text x="714.0" y="98.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" text-anchor="middle" font-weight="bold" fill="#1f2430">TRISC 1</text>
+<text x="714.0" y="113.0" font-family="Helvetica, Arial, sans-serif" font-size="10.0" text-anchor="middle" font-weight="normal" fill="#5f6673">math</text>
+<rect x="786" y="78" width="128" height="46" rx="5" fill="#dff3e6" stroke="#3c9d6b" stroke-width="1.2" opacity="1.0"/>
+<text x="850.0" y="98.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" text-anchor="middle" font-weight="bold" fill="#1f2430">TRISC 2</text>
+<text x="850.0" y="113.0" font-family="Helvetica, Arial, sans-serif" font-size="10.0" text-anchor="middle" font-weight="normal" fill="#5f6673">pack</text>
+<line x1="514" y1="136" x2="914" y2="136" stroke="#5f6673" stroke-width="1"/>
+<line x1="514" y1="136" x2="514" y2="132" stroke="#5f6673" stroke-width="1"/>
+<line x1="914" y1="136" x2="914" y2="132" stroke="#5f6673" stroke-width="1"/>
+<text x="714.0" y="149" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" font-weight="normal" fill="#5f6673">compute kernel: one C++ source, compiled three times</text>
+<rect x="242" y="184" width="70" height="40" rx="5" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="1.2" opacity="1.0"/>
+<text x="277.0" y="208.0" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" font-weight="bold" fill="#1f2430">NoC 0</text>
+<rect x="242" y="240" width="70" height="40" rx="5" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="1.2" opacity="1.0"/>
+<text x="277.0" y="264.0" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" font-weight="bold" fill="#1f2430">NoC 1</text>
+<line x1="312" y1="260" x2="352" y2="260" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<text x="242" y="298" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">to / from DRAM</text>
+<text x="242" y="310" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">and other cores</text>
+<rect x="336" y="164" width="574" height="96" rx="6" fill="#eef2f7" stroke="#6b7a99" stroke-width="1.2" opacity="1.0"/>
+<text x="346" y="182" font-family="Helvetica, Arial, sans-serif" font-size="12" text-anchor="start" font-weight="bold" fill="#1f2430">L1 SRAM, 1.5 MB (about 1.41 MB usable by this op&#x27;s buffers)</text>
+<text x="346" y="198" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">no cache: bytes get here only by NoC transfer or by the packer</text>
+<text x="900" y="198" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="end" font-weight="normal" fill="#5f6673">32 circular-buffer slots c_0 .. c_31</text>
+<rect x="346.0" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<text x="354.0" y="227" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="7.5" text-anchor="middle" font-weight="normal" fill="#5f6673">0</text>
+<rect x="363.5" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<rect x="381.0" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<rect x="398.5" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<rect x="416.0" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<rect x="433.5" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<rect x="451.0" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<rect x="468.5" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<rect x="486.0" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<rect x="503.5" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<rect x="521.0" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<rect x="538.5" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<rect x="556.0" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<rect x="573.5" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<rect x="591.0" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<rect x="608.5" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<text x="616.5" y="227" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="7.5" text-anchor="middle" font-weight="normal" fill="#5f6673">15</text>
+<rect x="626.0" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<text x="634.0" y="227" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="7.5" text-anchor="middle" font-weight="normal" fill="#5f6673">16</text>
+<rect x="643.5" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<rect x="661.0" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<rect x="678.5" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<rect x="696.0" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<rect x="713.5" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<rect x="731.0" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<rect x="748.5" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<rect x="766.0" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<rect x="783.5" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<rect x="801.0" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<rect x="818.5" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<rect x="836.0" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<rect x="853.5" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<rect x="871.0" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<rect x="888.5" y="212" width="16" height="22" fill="#f7f2e4" stroke="#b08a3e" stroke-width="0.8"/>
+<text x="896.5" y="227" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="7.5" text-anchor="middle" font-weight="normal" fill="#5f6673">31</text>
+<line x1="312" y1="204" x2="336" y2="204" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="336" y="284" width="574" height="220" rx="6" fill="#ffffff" stroke="#8e94a0" stroke-width="1.2" opacity="1.0" stroke-dasharray="4 3"/>
+<text x="466" y="302" font-family="Helvetica, Arial, sans-serif" font-size="12" text-anchor="start" font-weight="bold" fill="#1f2430">compute engine (the three TRISCs drive it)</text>
+<rect x="350" y="328" width="110" height="44" rx="5" fill="#dff3e6" stroke="#3c9d6b" stroke-width="1.2" opacity="1.0"/>
+<text x="405.0" y="347.0" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" font-weight="bold" fill="#1f2430">Unpacker</text>
+<text x="405.0" y="362.0" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#5f6673">L1 -&gt; registers</text>
+<rect x="484" y="318" width="110" height="30" rx="5" fill="#dff3e6" stroke="#3c9d6b" stroke-width="1.2" opacity="1.0"/>
+<text x="539.0" y="330.0" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" font-weight="bold" fill="#1f2430">SrcA</text>
+<text x="539.0" y="345.0" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#5f6673">one tile</text>
+<rect x="484" y="354" width="110" height="30" rx="5" fill="#dff3e6" stroke="#3c9d6b" stroke-width="1.2" opacity="1.0"/>
+<text x="539.0" y="366.0" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" font-weight="bold" fill="#1f2430">SrcB</text>
+<text x="539.0" y="381.0" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#5f6673">one tile</text>
+<rect x="620" y="324" width="116" height="56" rx="5" fill="#dff3e6" stroke="#3c9d6b" stroke-width="1.2" opacity="1.0"/>
+<text x="678.0" y="349.0" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" font-weight="bold" fill="#1f2430">FPU</text>
+<text x="678.0" y="364.0" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#5f6673">matmul, reduce, mul, add</text>
+<rect x="764" y="318" width="126" height="68" rx="5" fill="#fbe1e1" stroke="#d64545" stroke-width="1.2" opacity="1.0"/>
+<text x="827.0" y="349.0" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" font-weight="bold" fill="#1f2430">DST</text>
+<text x="827.0" y="364.0" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#5f6673">16 x 16-bit / 8 x fp32 tiles</text>
+<rect x="620" y="414" width="116" height="56" rx="5" fill="#ece4fb" stroke="#8b5cf6" stroke-width="1.2" opacity="1.0"/>
+<text x="678.0" y="439.0" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" font-weight="bold" fill="#1f2430">SFPU</text>
+<text x="678.0" y="454.0" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#5f6673">vector unit: exp, recip, adds</text>
+<rect x="350" y="414" width="110" height="44" rx="5" fill="#dff3e6" stroke="#3c9d6b" stroke-width="1.2" opacity="1.0"/>
+<text x="405.0" y="433.0" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" font-weight="bold" fill="#1f2430">Packer</text>
+<text x="405.0" y="448.0" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#5f6673">DST -&gt; L1</text>
+<line x1="396" y1="260" x2="396" y2="328" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<text x="402" y="276" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">wait_front</text>
+<line x1="460" y1="344" x2="484" y2="333" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<line x1="460" y1="358" x2="484" y2="369" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<line x1="594" y1="333" x2="620" y2="344" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<line x1="594" y1="369" x2="620" y2="360" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<line x1="736" y1="352" x2="764" y2="352" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<path d="M 826,386 L 826,442 L 736,442" fill="none" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<path d="M 678,414 L 678,394 L 796,394 L 796,386" fill="none" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<text x="766" y="459" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">SFPU reads and writes DST in place</text>
+<path d="M 764,374 L 606,436 L 460,436" fill="none" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<text x="486" y="484" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">pack_tile: DST -&gt; a CB in L1 (push_back)</text>
+<path d="M 396,458 L 396,489 L 356,489 L 356,262" fill="none" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)" stroke-dasharray="3 3"/>
+<text x="14" y="550" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="start" font-weight="normal" fill="#5f6673" font-style="italic">Fig. A1. The reader and writer kernels move bytes between DRAM, other cores and L1 over the NoCs; the compute kernel moves tiles L1 -&gt; Src -&gt; FPU/SFPU -&gt; DST -&gt; L1.</text>
+</svg>

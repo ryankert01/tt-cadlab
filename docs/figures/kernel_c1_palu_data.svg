@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="940" height="400" viewBox="0 0 940 400" role="img" aria-label="What Palu changes in the data the decode kernel reads: a narrow latent plus per-head weights instead of the full K cache">
+<title>What Palu changes in the data the decode kernel reads: a narrow latent plus per-head weights instead of the full K cache</title>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#1f2430"/></marker></defs>
+<rect x="0" y="0" width="940" height="400" fill="#ffffff"/>
+<text x="14" y="24" font-family="Helvetica, Arial, sans-serif" font-size="15" text-anchor="start" font-weight="bold" fill="#1f2430">Stock K cache vs Palu K latent, per (batch row, KV head)</text>
+<text x="40" y="60" font-family="Helvetica, Arial, sans-serif" font-size="11.5" text-anchor="start" font-weight="bold" fill="#1f2430">stock: K cache S x 128, bfp8</text>
+<rect x="40" y="70" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="56" y="70" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="72" y="70" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="88" y="70" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="40" y="86" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="56" y="86" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="72" y="86" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="88" y="86" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="40" y="102" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="56" y="102" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="72" y="102" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="88" y="102" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="40" y="118" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="56" y="118" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="72" y="118" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="88" y="118" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="40" y="134" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="56" y="134" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="72" y="134" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="88" y="134" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="40" y="150" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="56" y="150" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="72" y="150" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="88" y="150" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="40" y="166" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="56" y="166" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="72" y="166" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="88" y="166" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="40" y="182" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="47.0" y="191.52" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="7" text-anchor="middle" font-weight="normal" fill="#1f2430">...</text>
+<rect x="56" y="182" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="72" y="182" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<rect x="88" y="182" width="14" height="14" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="0.8"/>
+<text x="112" y="100" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">136 B per position</text>
+<text x="112" y="114" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">already rotated (RoPE applied</text>
+<text x="112" y="128" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">when the token was written)</text>
+<text x="40" y="214" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">read per decode step per item: S x 136 B</text>
+<text x="330" y="60" font-family="Helvetica, Arial, sans-serif" font-size="11.5" text-anchor="start" font-weight="bold" fill="#1f2430">Palu: K latent S x r_k, bfp8</text>
+<rect x="330" y="70" width="14" height="14" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<rect x="330" y="86" width="14" height="14" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<rect x="330" y="102" width="14" height="14" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<rect x="330" y="118" width="14" height="14" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<rect x="330" y="134" width="14" height="14" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<rect x="330" y="150" width="14" height="14" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<rect x="330" y="166" width="14" height="14" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<rect x="330" y="182" width="14" height="14" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<text x="337.0" y="191.52" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="7" text-anchor="middle" font-weight="normal" fill="#1f2430">...</text>
+<text x="354" y="86" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">r_k = 32 / 64 / 96 = 1 / 2 / 3 tiles wide</text>
+<text x="354" y="100" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">34 / 68 / 102 B per position</text>
+<text x="354" y="114" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">unrotated: RoPE must be applied</text>
+<text x="354" y="128" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">after the up-projection</text>
+<text x="560" y="60" font-family="Helvetica, Arial, sans-serif" font-size="11.5" text-anchor="start" font-weight="bold" fill="#1f2430">per KV head, once per call: w_rot = [u_k | u_k T],  r_k x 256 bf16</text>
+<rect x="560" y="70" width="14" height="14" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<text x="567.0" y="79.52" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="7" text-anchor="middle" font-weight="normal" fill="#1f2430">A</text>
+<rect x="576" y="70" width="14" height="14" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<text x="583.0" y="79.52" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="7" text-anchor="middle" font-weight="normal" fill="#1f2430">A</text>
+<rect x="592" y="70" width="14" height="14" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<text x="599.0" y="79.52" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="7" text-anchor="middle" font-weight="normal" fill="#1f2430">A</text>
+<rect x="608" y="70" width="14" height="14" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<text x="615.0" y="79.52" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="7" text-anchor="middle" font-weight="normal" fill="#1f2430">A</text>
+<rect x="624" y="70" width="14" height="14" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<text x="631.0" y="79.52" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="7" text-anchor="middle" font-weight="normal" fill="#1f2430">B</text>
+<rect x="640" y="70" width="14" height="14" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<text x="647.0" y="79.52" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="7" text-anchor="middle" font-weight="normal" fill="#1f2430">B</text>
+<rect x="656" y="70" width="14" height="14" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<text x="663.0" y="79.52" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="7" text-anchor="middle" font-weight="normal" fill="#1f2430">B</text>
+<rect x="672" y="70" width="14" height="14" fill="#fde7d6" stroke="#e07b39" stroke-width="0.8"/>
+<text x="679.0" y="79.52" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="7" text-anchor="middle" font-weight="normal" fill="#1f2430">B</text>
+<text x="560" y="102" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">A columns: u_k (r_k x 128).  B columns: u_k T, where T is RoPE&#x27;s pair-swap matrix</text>
+<text x="560" y="116" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">so that (lat u_k) T = lat (u_k T): the rotated half comes out of the same matmul.</text>
+<text x="560" y="146" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">plus [cos | sin] rows (S x 256 bf16): Phase 1 streams the rows of each chunk,</text>
+<text x="560" y="160" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">Phase 2 keeps only rows 0 .. c-1 resident (Fig. C4).</text>
+<text x="560" y="186" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">V: the V latent S x r_v is used directly as V (its u_v is folded into</text>
+<text x="560" y="200" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">the output projection) for per-head Palu; for G-LRD it is rebuilt on core.</text>
+<rect x="40" y="250" width="870" height="110" rx="6" fill="#ffffff" stroke="#e07b39" stroke-width="1.2" opacity="1.0"/>
+<text x="52" y="270" font-family="Helvetica, Arial, sans-serif" font-size="11.5" text-anchor="start" font-weight="bold" fill="#1f2430">The identity the kernel implements, per K row tile i (32 positions) and column tile j (32 dims)</text>
+<text x="52" y="292" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">K_rot[i, j] = A[i, j] * cos[i, j] + B[i, j] * sin[i, j]       with  [A | B] = lat_i @ [u_k | u_k T]</text>
+<text x="52" y="309" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">= RoPE_p(lat_p u_k) for every position p in the tile, which is exactly what stage 1 computed as matmul + rotary_embedding_llama on the host side.</text>
+<text x="52" y="342" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">The stock QK matmul then reads K_rot from c_1 exactly as it reads a stock K chunk; nothing downstream of that point knows Palu exists.</text>
+<text x="14" y="390" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="start" font-weight="normal" fill="#5f6673" font-style="italic">Fig. C1. Bytes per position drop from 136 to 34-102, but every position now costs a small matmul and a rotation on the core that reads it.</text>
+</svg>
