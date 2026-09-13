@@ -56,7 +56,7 @@ BATCH = 32
 # and passed to every model/attention build below. ``--fused off`` (the default) reproduces the
 # stage-1 rows exactly -- ``build_model``'s own defaults are these same three values.
 FUSED = {"use_fused_k": False, "cs_recurrence": False, "fused_k_chunk": None, "group_heads": None,
-         "rot_mode": "legacy", "table_mcast": False, "latent_dtype": None}
+         "rot_mode": "legacy", "table_mcast": False, "latent_dtype": None, "latent_scale": "balanced"}
 
 # stage 2e/2f: tile format of the Palu latent K/V caches, selected by --latent-dtype.
 LATENT_DTYPES = {"bfp8": ttnn.bfloat8_b, "bfp4": ttnn.bfloat4_b}
@@ -176,7 +176,7 @@ def _attention_one(md, kind, palu_dir, ctx):
         cls = Attention
         if kind == "palu":
             args.palu = convert.add_palu_to_state_dict(sd, hf.snapshot_dir(), palu_dir, 1, args.n_heads,
-                                                       args.n_kv_heads, args.head_dim)
+                                                       args.n_kv_heads, args.head_dim, latent_scale=FUSED["latent_scale"])
             # ``build_model`` writes these from its keyword arguments; this path builds the layer by
             # hand, so the same runtime flags are set on the config here.
             args.palu.runtime.use_fused_k = FUSED["use_fused_k"]
@@ -383,6 +383,9 @@ def main():
                    help="stage-2e: multicast the Phase 2 angle table down each grid column (Phase 2 only).")
     p.add_argument("--latent-dtype", choices=["bfp8", "bfp4"], default="bfp8",
                    help="tile format of the Palu latent K/V caches (default bfp8, the model's KV cache format).")
+    p.add_argument("--latent-scale", choices=["balanced", "unit"], default="balanced",
+                   help="stage 2f: 'unit' moves the singular values into the up-projection so every latent "
+                        "component has unit variance (what bfp4 caches want); 'balanced' is Palu's split.")
     p.add_argument("--batch", type=int, default=32,
                    help="batch size for decode, attention and maxctx (default: 32). "
                         "tt_transformers accepts any value <= 32. prefill is single-user by "
@@ -398,7 +401,8 @@ def main():
         p.error("--batch must be between 1 and 32 (tt_transformers's cap)")
     FUSED.update(use_fused_k=a.fused != "off", cs_recurrence=a.fused == "p2", fused_k_chunk=a.fused_k_chunk,
                  group_heads=None if a.group_heads == "auto" else int(a.group_heads),
-                 rot_mode=a.rot_mode, table_mcast=a.table_mcast == "on", latent_dtype=LATENT_DTYPES[a.latent_dtype])
+                 rot_mode=a.rot_mode, table_mcast=a.table_mcast == "on", latent_dtype=LATENT_DTYPES[a.latent_dtype],
+                 latent_scale=a.latent_scale)
     BATCH = a.batch
     RAW.mkdir(parents=True, exist_ok=True)
     mesh = Mesh()
@@ -413,7 +417,8 @@ def main():
     r = {"row": a.row, "kind": a.kind, "palu_dir": a.palu_dir, "what": a.what,
          "fused": a.fused, "fused_k_chunk": a.fused_k_chunk, "group_heads": a.group_heads,
          "group_heads_per_layer": list(GROUP_HEADS), "batch": a.batch,
-         "rot_mode": a.rot_mode, "table_mcast": a.table_mcast, "latent_dtype": a.latent_dtype}
+         "rot_mode": a.rot_mode, "table_mcast": a.table_mcast, "latent_dtype": a.latent_dtype,
+         "latent_scale": a.latent_scale}
     if a.what in ("decode", "attention"):  # prefill/maxctx use their own fixed lengths, not CONTEXTS
         r["contexts"] = list(CONTEXTS)
     r["data"] = data

@@ -96,6 +96,9 @@ def main():
                         "kernel -- and therefore this flag -- does not affect the numbers here.")
     p.add_argument("--tasks", default=",".join(TASKS))
     p.add_argument("--limit", type=int, default=None)
+    p.add_argument("--latent-scale", choices=["balanced", "unit"], default="balanced",
+                   help="stage 2f: 'unit' moves the singular values into the up-projection so every latent "
+                        "component has unit variance (what bfp4 caches want); 'balanced' is Palu's split.")
     a = p.parse_args()
     from palu_tt import device as dev, model as pm
     RAW.mkdir(parents=True, exist_ok=True)
@@ -103,14 +106,15 @@ def main():
     try:
         args, model, _ = pm.build_model(md, a.kind, a.palu_dir, max_batch_size=1, max_seq_len=2048,
                                         use_fused_k=a.fused != "off", cs_recurrence=a.fused == "p2",
-                                        group_heads=None if a.group_heads == "auto" else int(a.group_heads))
+                                        group_heads=None if a.group_heads == "auto" else int(a.group_heads),
+                                        latent_scale=a.latent_scale)
         lm = lm_eval_tt.TTLM.for_device(args, model, hf.snapshot_dir())
         r = run(lm, [t for t in a.tasks.split(",") if t], a.limit)
     finally:
         dev.close(md)
     import importlib.metadata as m
     r.update({"row": a.row, "kind": a.kind, "palu_dir": a.palu_dir, "fused": a.fused,
-              "group_heads": a.group_heads, "limit": a.limit,
+              "group_heads": a.group_heads, "limit": a.limit, "latent_scale": a.latent_scale,
               "lm_eval_version": m.version("lm_eval")})
     (RAW / f"tasks_{a.row}.json").write_text(json.dumps(r, indent=1, default=str))
     print(json.dumps(r["tasks"]))

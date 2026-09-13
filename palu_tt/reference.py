@@ -71,7 +71,7 @@ class LowRankProj(nn.Module):
         return out.reshape(*x.shape[:-1], -1)
 
 
-def build_cpu_lowrank_llama(hf_dir: Path, palu_dir: Optional[Path]) -> LlamaForCausalLM:
+def build_cpu_lowrank_llama(hf_dir: Path, palu_dir: Optional[Path], latent_scale: str = "balanced") -> LlamaForCausalLM:
     torch.set_num_threads(12)
     model = LlamaForCausalLM.from_pretrained(str(hf_dir), torch_dtype=torch.float32).eval()
     cfg = model.config
@@ -79,7 +79,7 @@ def build_cpu_lowrank_llama(hf_dir: Path, palu_dir: Optional[Path]) -> LlamaForC
     # rank_multiple=1: no TT tile-alignment padding here (that's a device-path concern in
     # convert.add_palu_to_state_dict); the CPU reference should use the exact stored ranks.
     lrs = None if palu_dir is None else convert.load_palu_dir(
-        palu_dir, cfg.num_hidden_layers, cfg.num_key_value_heads, hd, rank_multiple=1)
+        palu_dir, cfg.num_hidden_layers, cfg.num_key_value_heads, hd, rank_multiple=1, latent_scale=latent_scale)
     for i, layer in enumerate(model.model.layers):
         attn = layer.self_attn
         w = {"q": attn.q_proj.weight.data, "k": attn.k_proj.weight.data, "v": attn.v_proj.weight.data, "o": attn.o_proj.weight.data}

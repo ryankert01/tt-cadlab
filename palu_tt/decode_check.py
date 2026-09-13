@@ -82,6 +82,9 @@ def main():
                    help="stage-2e: multicast the Phase 2 angle table down each grid column (Phase 2 only).")
     p.add_argument("--latent-dtype", choices=["bfp8", "bfp4"], default="bfp8",
                    help="tile format of the Palu latent K/V caches (default bfp8, the model's KV cache format).")
+    p.add_argument("--latent-scale", choices=["balanced", "unit"], default="balanced",
+                   help="stage 2f: 'unit' moves the singular values into the up-projection so every latent "
+                        "component has unit variance (what bfp4 caches want); 'balanced' is Palu's split.")
     p.add_argument("--steps", type=int, default=64)
     a = p.parse_args()
     RAW.mkdir(parents=True, exist_ok=True)
@@ -89,12 +92,13 @@ def main():
     try:
         args_tok = pm.ModelArgs(md, instruct=True, max_batch_size=1, max_seq_len=2048, cache_hf=False)
         ids = eval_ppl.wikitext2_ids(args_tok.tokenizer)
-        naive = _logits(md, a.palu_dir, ids, a.steps, latent_dtype=LATENT_DTYPES[a.latent_dtype])
+        naive = _logits(md, a.palu_dir, ids, a.steps, latent_dtype=LATENT_DTYPES[a.latent_dtype],
+                        latent_scale=a.latent_scale)
         fused_logits = _logits(md, a.palu_dir, ids, a.steps, use_fused_k=True, cs_recurrence=a.fused == "p2",
                         fused_k_chunk=a.fused_k_chunk,
                         group_heads=None if a.group_heads == "auto" else int(a.group_heads),
                         rot_mode=a.rot_mode, table_mcast=a.table_mcast == "on",
-                        latent_dtype=LATENT_DTYPES[a.latent_dtype])
+                        latent_dtype=LATENT_DTYPES[a.latent_dtype], latent_scale=a.latent_scale)
     finally:
         dev.close(md)
     # Index 0 of both stacks is the shared prefill logit (bit-identical on both paths, since the
@@ -104,6 +108,7 @@ def main():
     r = {"row": a.row, "palu_dir": a.palu_dir, "fused": a.fused, "fused_k_chunk": a.fused_k_chunk,
          "group_heads": a.group_heads, "group_heads_per_layer": list(GROUP_HEADS),
          "rot_mode": a.rot_mode, "table_mcast": a.table_mcast, "latent_dtype": a.latent_dtype,
+         "latent_scale": a.latent_scale,
          "steps": naive_decode.shape[0],
          "pcc_mean": sum(pccs) / len(pccs), "pcc_min": min(pccs),
          "argmax_agree": float((naive_decode.argmax(-1) == fused_decode.argmax(-1)).float().mean())}

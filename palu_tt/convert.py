@@ -67,6 +67,10 @@ class PaluConfig:
     # Palu head group size (1 = M-LRD per head, 4 = G-LRD one group per chip on the N300). rank_k/rank_v
     # are the per-layer *group* latent widths; at group size 1 those are the per-head ranks as before.
     group_size: int = 1
+    # stage 2f: which latent scale the factors were loaded with ("balanced" = Palu's split, "unit" =
+    # rescaled so every latent component has unit variance). Record-only; the rescale itself already
+    # happened in load_palu_dir before these tensors were built.
+    latent_scale: str = "balanced"
     # Device tensors shared by every layer of one model on the fused path (the [cos | sin] table,
     # the Phase-2 step constants and transformation tile), keyed by attention.py; never compared
     # or printed.
@@ -93,6 +97,30 @@ class LowRank:
     @property
     def r_v(self):
         return self.v_VT.shape[1]
+
+
+def unit_scale_lowrank(lr: LowRank) -> LowRank:
+    """Move each latent component's scale into the up-projection.
+
+    Palu's whitened decomposition splits the singular values evenly (U sqrt(S), sqrt(S) VT), so latent
+    component j has variance proportional to sigma_j over the whitening distribution. Scaling column j of
+    U by c_j = ||U[:, j]|| (the norm over the whole group's rows, = sqrt(sigma_j)) and row j of VT by 1/c_j
+    leaves U @ VT unchanged and makes every latent component unit variance -- what a block-floating-point
+    cache wants. Zero columns (rank padding) are left alone.
+    """
+    def scale(VT, U, gs):
+        n_kv = U.shape[0]
+        VT2, U2 = VT.clone(), U.clone()
+        for g in range(n_kv // gs):
+            heads = slice(g * gs, (g + 1) * gs)
+            c = torch.sqrt((U[heads] ** 2).sum(dim=(0, 1)))          # [r], over the group's gs*hd rows
+            c = torch.where(c > 0, c, torch.ones_like(c))
+            U2[heads] = U[heads] * c[None, None, :]
+            VT2[heads] = VT[heads] / c[None, :, None]
+        return VT2, U2
+    k_VT, k_U = scale(lr.k_VT, lr.k_U, lr.group_size)
+    v_VT, v_U = scale(lr.v_VT, lr.v_U, lr.group_size)
+    return LowRank(k_VT=k_VT, k_U=k_U, v_VT=v_VT, v_U=v_U, group_size=lr.group_size)
 
 
 def identity_lowrank(hf_attn: Dict[str, torch.Tensor], n_kv_heads: int, head_dim: int) -> LowRank:
@@ -131,9 +159,15 @@ def _read_palu_layer(tensors, ranks, layer, proj, n_kv_heads, head_dim, rank_mul
     return VT, U, gs
 
 
-def load_palu_dir(palu_dir: Path, n_layers: int, n_kv_heads: int, head_dim: int, rank_multiple: int = 32) -> Dict[int, LowRank]:
+def load_palu_dir(palu_dir: Path, n_layers: int, n_kv_heads: int, head_dim: int, rank_multiple: int = 32,
+                  latent_scale: str = "balanced") -> Dict[int, LowRank]:
     """Reads a factors-only file (palu_lowrank.safetensors) or a full Palu HF dump (same key names). Group
-    ranks are zero-padded to the layer max rounded up to rank_multiple, which changes nothing numerically."""
+    ranks are zero-padded to the layer max rounded up to rank_multiple, which changes nothing numerically.
+
+    latent_scale: "balanced" (Palu's split, default) or "unit" (stage 2f: rescaled so every latent
+    component has unit variance -- see unit_scale_lowrank).
+    """
+    assert latent_scale in ("balanced", "unit"), f"latent_scale must be 'balanced' or 'unit', got {latent_scale!r}"
     palu_dir = Path(palu_dir)
     ranks = json.loads((palu_dir / "config.json").read_text())["head_wise_ranks"]
     tensors = {}
@@ -147,7 +181,8 @@ def load_palu_dir(palu_dir: Path, n_layers: int, n_kv_heads: int, head_dim: int,
         k_VT, k_U, gs_k = _read_palu_layer(tensors, ranks, i, "k_proj", n_kv_heads, head_dim, rank_multiple)
         v_VT, v_U, gs_v = _read_palu_layer(tensors, ranks, i, "v_proj", n_kv_heads, head_dim, rank_multiple)
         assert gs_k == gs_v, f"layer {i}: K group size {gs_k} != V group size {gs_v}"
-        out[i] = LowRank(k_VT, k_U, v_VT, v_U, group_size=gs_k)
+        lr = LowRank(k_VT, k_U, v_VT, v_U, group_size=gs_k)
+        out[i] = unit_scale_lowrank(lr) if latent_scale == "unit" else lr
     return out
 
 
@@ -166,6 +201,14 @@ def palu_dir_cache_id(palu_dir: Path) -> str:
         h.update(f"{f.name}:{st.st_size}:{st.st_mtime_ns}\n".encode())
     name = re.sub(r"[^A-Za-z0-9._-]", "_", palu_dir.resolve().name)
     return f"{name}-{h.hexdigest()[:8]}"
+
+
+def palu_cache_id_for(palu_dir: Path, latent_scale: str) -> str:
+    """The weight-cache id for a dump under a latent scale: rescaled factors have the same shapes and
+    dtypes as the balanced ones, and the on-disk weight cache is keyed by name/shape/dtype only, so the
+    id has to differ (see the ttnn weight-cache note in the README)."""
+    base = palu_dir_cache_id(palu_dir)
+    return base if latent_scale == "balanced" else f"{base}-{latent_scale}"
 
 
 def palu_layer_tensors(hf_attn: Dict[str, torch.Tensor], lr: LowRank, n_heads: int, n_kv_heads: int, head_dim: int):
@@ -239,9 +282,9 @@ def hf_attn_weights(hf_dir: Path, layer: int) -> Dict[str, torch.Tensor]:
 
 
 def add_palu_to_state_dict(state_dict: dict, hf_dir: Path, palu_dir: Optional[Path], n_layers: int,
-                           n_heads: int, n_kv_heads: int, head_dim: int) -> PaluConfig:
+                           n_heads: int, n_kv_heads: int, head_dim: int, latent_scale: str = "balanced") -> PaluConfig:
     """palu_dir None -> identity factorisation (stock model through the Palu path)."""
-    lrs = None if palu_dir is None else load_palu_dir(palu_dir, n_layers, n_kv_heads, head_dim)
+    lrs = None if palu_dir is None else load_palu_dir(palu_dir, n_layers, n_kv_heads, head_dim, latent_scale=latent_scale)
     rank_k, rank_v = [], []
     for i in range(n_layers):
         w = hf_attn_weights(hf_dir, i)
@@ -250,7 +293,7 @@ def add_palu_to_state_dict(state_dict: dict, hf_dir: Path, palu_dir: Optional[Pa
             state_dict[f"layers.{i}.attention.palu.{name}"] = t
         rank_k.append(lr.r_k)
         rank_v.append(lr.r_v)
-    cache_id = "identity" if palu_dir is None else palu_dir_cache_id(palu_dir)
+    cache_id = "identity" if palu_dir is None else palu_cache_id_for(palu_dir, latent_scale)
     gs = {lr.group_size for lr in (lrs.values() if lrs else [])} or {1}
     assert len(gs) == 1, f"mixed group sizes across layers: {gs}"
-    return PaluConfig(rank_k=rank_k, rank_v=rank_v, cache_id=cache_id, group_size=gs.pop())
+    return PaluConfig(rank_k=rank_k, rank_v=rank_v, cache_id=cache_id, group_size=gs.pop(), latent_scale=latent_scale)

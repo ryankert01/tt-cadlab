@@ -423,3 +423,59 @@ def test_runtime_has_stage2e_switches_off_by_default():
     rt = PaluRuntime()
     assert rt.rot_mode == "legacy"
     assert rt.table_mcast is False
+
+
+def _balanced_factors(n_kv=2, hd=128, dim=256, r=64, seed=0):
+    """Palu's split on synthetic weights: L = U sqrt(S), R = sqrt(S) V, with decaying singular values."""
+    g = torch.Generator().manual_seed(seed)
+    VT, U = [], []
+    for _ in range(n_kv):
+        W = torch.randn(hd, dim, generator=g)
+        u, s, vt = torch.linalg.svd(W, full_matrices=False)
+        s = s[:r] * torch.logspace(0, -2, r)            # make the spectrum decay by 100x across the rank
+        VT.append(torch.sqrt(s)[:, None] * vt[:r])
+        U.append(u[:, :r] * torch.sqrt(s)[None, :])
+    return convert.LowRank(k_VT=torch.stack(VT), k_U=torch.stack(U), v_VT=torch.stack(VT).clone(),
+                           v_U=torch.stack(U).clone(), group_size=1)
+
+
+def test_unit_scale_keeps_the_product_and_flattens_the_latent_variance():
+    lr = _balanced_factors()
+    unit = convert.unit_scale_lowrank(lr)
+    for h in range(2):
+        assert torch.allclose(unit.k_U[h] @ unit.k_VT[h], lr.k_U[h] @ lr.k_VT[h], rtol=1e-4, atol=1e-5)
+    x = torch.randn(4096, 256)                          # whitened input: identity covariance
+    before = (x @ lr.k_VT[0].T).std(0)
+    after = (x @ unit.k_VT[0].T).std(0)
+    assert before.max() / before.min() > 5              # Palu's split: variance follows the singular values
+    assert after.max() / after.min() < 1.3              # unit scale: every component about the same size
+
+
+def test_unit_scale_leaves_rank_padding_alone():
+    lr = _balanced_factors(r=64)
+    lr.k_U[:, :, 48:] = 0                               # padded columns
+    lr.k_VT[:, 48:, :] = 0
+    unit = convert.unit_scale_lowrank(lr)
+    assert torch.equal(unit.k_U[:, :, 48:], lr.k_U[:, :, 48:])
+    assert torch.isfinite(unit.k_VT).all()
+
+
+def test_unit_scale_is_group_aware():
+    """With group size 4 the group's U is the four heads' hd-row slices stacked, so c_j is the norm over
+    all four slices and the (identical) group VT rows are divided by the same c_j on every head."""
+    lr = _balanced_factors(n_kv=4)
+    lr = convert.LowRank(k_VT=lr.k_VT[:1].repeat(4, 1, 1), k_U=lr.k_U, v_VT=lr.v_VT[:1].repeat(4, 1, 1),
+                         v_U=lr.v_U, group_size=4)
+    unit = convert.unit_scale_lowrank(lr)
+    assert torch.equal(unit.k_VT[0], unit.k_VT[3])
+    c = torch.sqrt((lr.k_U ** 2).sum(dim=(0, 1)))
+    assert torch.allclose(unit.k_U[2], lr.k_U[2] * c[None, :])
+
+
+def test_unit_scale_changes_the_cache_id(tmp_path):
+    d = tmp_path / "dump"
+    d.mkdir()
+    (d / "config.json").write_text('{"head_wise_ranks": {}}')
+    base = convert.palu_dir_cache_id(d)
+    assert convert.palu_cache_id_for(d, "balanced") == base
+    assert convert.palu_cache_id_for(d, "unit") == base + "-unit"
