@@ -13,12 +13,13 @@ def test_fit_reproduces_the_stage2d_table():
     """docs/results/stage2d.md section 4: stock 47.7 + 88.4 x chunks; fused r_k 32 / r_v 128
     118.1 + 114.3 x chunks; fused r_k 64 / r_v 128 129.5 + 123.1 x chunks (two significant figures).
 
-    The stock signature also picks up points from palu_full_50 (naive) and palu_full_70_fk2 (the
-    residual un-fused first chunk), which duplicates x=2/8 (and, since baseline has no 8192 JSON,
-    x=16 is covered only by those two rows). Stage 2d's write-up fit stock from a single point per
-    context; combining rows here shifts the fitted intercept from 47.7 to ~46.0 us, a ~1.7 us
-    difference from the duplicated points -- widened from the brief's 1.5 us to 2.0 us for fixed_us
-    only. per_chunk_us (88.8 vs 88.4) and both fused signatures already fit within 1.5/1.0 us."""
+    The stock signature also picks up points from palu_full_50 (naive; its SdpaDecode op is the stock
+    op, and the only source of a stock point at x=16 since baseline has no 8192 JSON) and from
+    palu_full_70_fk2 (the dump's uncompressed layers run the stock op: a count=1 signature, one noisy
+    layer per context). baseline + palu_full_50 alone reproduce 47.8 / 88.5; adding the count=1 points,
+    which the unweighted fit counts like any other, shifts the intercept to ~46.0 us. Hence 2.0 us of
+    tolerance on the stock fixed_us only; per_chunk_us (88.8 vs 88.4) and both fused signatures fit
+    within the brief's 1.5 / 1.0 us."""
     rows = profile_fit.fit_signatures(RAW, ["baseline", "palu_full_50", "palu_full_50_fk2", "palu_full_70_fk2"],
                                       [1024, 4096, 8192])
     s = _by_sig(rows)
