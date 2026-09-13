@@ -41,6 +41,24 @@ It stores 576 B per token per layer per chip, the same bytes as Palu ratio 0.5 i
 no reconstruction at all. If its quality is acceptable it beats every Palu row measured so far on
 this hardware, and the study has to say so.
 
+## 0b. Finding during stage 2e: the prefill-only instruments are blind to the cache format
+
+Stage 2e's first bfp4 row reproduced the bfp8 perplexity to fifteen digits (12.930530567327075, both), which
+is not a coincidence: `eval_ppl` and `eval_tasks` score prefill windows, and `PaluAttention`'s prefill
+reconstructs K and V from the *bf16* latent and only typecasts the copy that goes into the cache. The
+format of the latent cache never enters the score. (The stock path is different: tt-transformers' prefill
+typecasts K and V to the cache dtype before its SDPA, so a stock bfp4 KV cache *is* visible to prefill
+perplexity.) Only decode reads the caches, and the decode-side instrument, `decode_check`, compares the
+fused kernel against the naive path on the *same* cache, so it measures kernel fidelity, not format quality.
+
+The fix is to make prefill cache-faithful: round-trip the latents through the cache format before the
+in-flight reconstruction, so the window attends over exactly the values decode will read back (the cache
+write then re-quantises to the same values, block floating point being idempotent on aligned tiles). This
+is a `PaluRuntime` switch, `latent_quant_in_prefill`, on by default from stage 2f onward; it costs two
+typecasts per layer per prefill and shifts the existing bfp8 rows' perplexity by the (small) bfp8
+quantisation of the latent, which the report shows next to the old "blind" values. Every perplexity and
+task number in this stage is measured with it on, including a re-measurement of the bfp8 balanced cells.
+
 ## 1. Goal and success criteria
 
 Produce the quality-per-byte frontier over K rank, V rank and cache format for Llama-3.1-8B-Instruct
@@ -66,8 +84,8 @@ Stock is 1088 B (69.6 KB per token).
 
 **Grid A, the afternoon (existing dumps, no calibration).** `palu_full_50`, `palu_full_70`,
 `glrd_50_f256`, `glrd_70_f256` x cache format {bfp8, bfp4} x latent scale {balanced, unit}: 16
-cells, plus stock {bfp8, bfp4}: 18 cells. bfp8 balanced is the existing row for the four dumps and
-stock bfp8 is the existing baseline, so 13 new runs. This answers Q2 and Q3 and gives the first bfp4 points on the frontier. The
+cells, plus stock {bfp8, bfp4}: 18 cells. Stock bfp8 is the existing baseline; every Palu cell is
+re-measured with the cache-faithful prefill (section 0b), so 17 new runs. This answers Q2 and Q3 and gives the first bfp4 points on the frontier. The
 two bfp4 balanced cells of `palu_full_*` are stage 2e's L4 rows; whichever stage runs first records
 them and the other reuses the JSON.
 

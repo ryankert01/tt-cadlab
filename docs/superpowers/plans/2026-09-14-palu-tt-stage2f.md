@@ -261,6 +261,100 @@ git -c user.name=ryan -c user.email=ryankert01@gmail.com commit -m "Stage 2f: un
 
 ---
 
+### Task 1b: cache-faithful prefill (the prefill instruments must see the latent format)
+
+**Files:**
+- Modify: `palu_tt/convert.py` (`PaluRuntime.latent_quant_in_prefill: bool = True`), `palu_tt/attention.py:396-442` (the prefill reconstruction and cache write)
+- Test: `tests/test_attention_device.py`
+
+**Interfaces:**
+- Produces: `PaluRuntime.latent_quant_in_prefill` (default True); `build_model(..., latent_quant_in_prefill=True)`; when on, `PaluAttention` prefill round-trips each latent through its cache's dtype before the in-flight reconstruction, so `eval_ppl` and `eval_tasks` score what decode reads back.
+
+- [ ] **Step 1: Failing device test**
+
+Append to `tests/test_attention_device.py` (use its existing `_setup` / `_tt_attention` / `_to_torch` helpers and the `compressed/svd_r64` dump the file already uses; read the neighbouring `test_prefill_matches_reference` for the call shape):
+
+```python
+def test_prefill_sees_the_latent_cache_format(mesh_device):
+    """With the round trip on, a bfp4 latent cache changes the prefill output (the window attends over the
+    quantised latent); with it off, the latent format is invisible to prefill. Both stay close to the
+    reference. Layer 0, one 2048-token window, batch 1."""
+    import ttnn
+    from palu_tt import fused
+    outs = {}
+    for name, dtype, quant in (("bfp8", ttnn.bfloat8_b, True), ("bfp4", ttnn.bfloat4_b, True), ("bfp4_blind", ttnn.bfloat4_b, False)):
+        args, sd, rope, tt_ccl, x, ref = _setup(mesh_device, "compressed/svd_r64", 1, 2048)
+        args.palu.latent_dtype = dtype
+        args.palu.runtime.latent_quant_in_prefill = quant
+        attn = _tt_attention(PaluAttention, mesh_device, args, sd, rope, tt_ccl)
+        outs[name] = _to_torch(mesh_device, args, attn.forward_prefill(x, rope.get_rot_mats(...), user_id=0))
+    assert not torch.equal(outs["bfp8"], outs["bfp4"])           # the format is visible
+    assert torch.equal(outs["bfp8"], outs["bfp4_blind"])          # and invisible when the switch is off
+    for name in ("bfp8", "bfp4"):
+        ok, msg = comp_pcc(ref, outs[name], 0.99)
+        assert ok, f"{name}: {msg}"
+```
+
+(Adapt the helper calls to the file's real signatures; `_setup` returns what `test_prefill_matches_reference` unpacks. If the file's helpers construct the layer from a fresh `args` each time, set the two attributes on that `args.palu` before constructing.)
+
+Run: `scripts/run_device.sh python -m pytest tests/test_attention_device.py -q -k latent_cache_format`
+Expected: FAIL on the first assert (today the outputs are equal: the format is invisible).
+
+- [ ] **Step 2: Implement**
+
+`palu_tt/convert.py` `PaluRuntime`: add
+
+```python
+    # stage 2f: round-trip the prefill latents through the cache format before reconstructing K and V, so
+    # perplexity and task scores (prefill-only) see what decode will read back. Off = the stage 1..2e
+    # behaviour, where the cache format never entered a prefill score.
+    latent_quant_in_prefill: bool = True
+```
+
+`palu_tt/model.py` `build_model`: add `latent_quant_in_prefill: bool = True` and set `cfg.runtime.latent_quant_in_prefill = latent_quant_in_prefill`.
+
+`palu_tt/attention.py`, in the prefill path, before `k_pre = recon(...)`: obtain `keys, values = self.layer_past` here (move the assignment up from the cache loop) and add
+
+```python
+        def _roundtrip(t, dtype):
+            """t quantised to the cache format and back to bf16 (a new tensor; caller frees the old one)."""
+            if dtype == ttnn.bfloat16:
+                return t
+            q = ttnn.typecast(t, dtype=dtype)
+            out = ttnn.typecast(q, dtype=ttnn.bfloat16, memory_config=ttnn.DRAM_MEMORY_CONFIG)
+            ttnn.deallocate(q)
+            return out
+
+        if self.palu.runtime.latent_quant_in_prefill:
+            # stage 2f: attend over what decode will read back. The zero padding of the slots stays zero, and
+            # the cache write below re-quantises to the same values (block floating point is idempotent on
+            # aligned tiles), so prefill and decode see one latent.
+            if self.recon_k:
+                k_q = _roundtrip(k_slot, keys.dtype)
+                if k_q is not k_slot:
+                    <free the old slot exactly as the later deallocation code would: k_slot when gs > 1, else k_lat_pad; then alias both names to k_q so the later deallocations stay valid>
+            if self.recon_v:
+                <same for v_slot / v_lat_pad with values.dtype>
+```
+
+Write the freeing so that the existing deallocation lines after the cache loop (`ttnn.deallocate(k_slot)` for `gs > 1`, `ttnn.deallocate(k_lat_pad)` for `recon_k`, and the V counterparts) still free exactly one live tensor each: the simplest correct form is to deallocate the old tensor immediately and rebind both `k_slot` and `k_lat_pad` (they are the same object at `gs == 1`) to the new one. Do not round-trip the fast-path K (`recon_k` False: the cache holds rotated full K, and the SDPA already uses `k8` typecast to the cache dtype) nor a full-width V (`recon_v` False). Keep the cache-write loop unchanged: it typecasts the (already quantised) latent again, which is exact.
+
+- [ ] **Step 3: Run the prefill device tests**
+
+Run: `scripts/run_device.sh python -m pytest tests/test_attention_device.py -q -k "prefill or latent_cache_format"`
+Expected: PASS, including `test_identity_prefill_equals_stock_attention` (identity rows have `recon_k`/`recon_v` False, so nothing changes) and `test_prefill_matches_reference` on `svd_r64` (bfp8 round trip; PCC bar 0.99). Then `scripts/run_device.sh python -m pytest tests/test_attention_device.py -q -k "fused_decode_matches_naive"` (decode is untouched; a sanity check that the caches still hold what they held).
+
+- [ ] **Step 4: One perplexity to quantify the shift, then commit**
+
+`scripts/run_device.sh python -m palu_tt.eval_ppl --row palu_full_50_q --kind palu --palu-dir compressed/palu_full_0.5 --windows 40` (bfp8, faithful; about 3 minutes) and compare with the blind 12.93. Commit:
+
+```bash
+git add palu_tt/convert.py palu_tt/model.py palu_tt/attention.py tests/test_attention_device.py docs/results/raw/ppl_palu_full_50_q.json
+git -c user.name=ryan -c user.email=ryankert01@gmail.com commit -m "Stage 2f: cache-faithful prefill -- the latent is round-tripped through the cache format before reconstruction, so prefill perplexity and tasks see it" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01SEbH3ediiqrAP9zmP59kKs"
+```
+
+---
+
 ### Task 2: cache formats: split K/V latent dtypes and the stock bfp4 KV cache
 
 **Files:**
@@ -692,7 +786,6 @@ declare -A DIR=([palu_full_50]=compressed/palu_full_0.5 [palu_full_70]=compresse
 for dump in palu_full_50 palu_full_70 glrd_50_f256 glrd_70_f256; do
   for scale in balanced unit; do
     for fmt in bfp8 bfp4; do
-      [[ $scale == balanced && $fmt == bfp8 ]] && continue      # the existing full row
       row="$dump"; [[ $scale == unit ]] && row="${row}_u"; [[ $fmt == bfp4 ]] && row="${row}_l4"; row="${row}_w40"
       [[ -f docs/results/raw/ppl_${row}.json ]] && continue
       gate; python -m palu_tt.eval_ppl --row "$row" --kind palu --palu-dir "${DIR[$dump]}" --latent-scale "$scale" --latent-dtype "$fmt" --windows 40
@@ -703,7 +796,7 @@ done
 echo GRID A FINISHED
 ```
 
-Twelve screens plus the full stock bfp4 perplexity: about 50 minutes. (`palu_full_50_l4` and `palu_full_70_l4` at 141 windows may already exist from stage 2e Task 6; the screens are separate rows and still run, so balanced bfp4 has both a full and a 40-window value: a same-cell noise check.)
+Sixteen screens (the bfp8 balanced cells are re-measured under the cache-faithful prefill) plus the full stock bfp4 perplexity: about 60 minutes. (`palu_full_50_l4` and `palu_full_70_l4` at 141 windows may already exist from stage 2e Task 6; the screens are separate rows and still run, so balanced bfp4 has both a full and a 40-window value: a same-cell noise check.)
 
 - [ ] **Step 2: Run, render, commit**
 
