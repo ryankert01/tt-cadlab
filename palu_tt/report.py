@@ -42,6 +42,7 @@ OUT = Path("docs/results/stage1.md")
 OUT2 = Path("docs/results/stage2.md")
 OUT2B = Path("docs/results/stage2b.md")
 OUT2C = Path("docs/results/stage2c.md")
+OUT2E = Path("docs/results/stage2e.md")
 
 # row -> human label. Order is the render order of every table.
 ROWS = {
@@ -101,6 +102,29 @@ KERNEL_ROWS2C = ("baseline", "palu_full_50_fk2", "glrd_50_fk2", "glrd_50_fk2g",
 # the f256-calibrated dumps -- neither the calibration table nor the kernel table's rows cover the
 # latter, so they are loaded separately in ``_stage2c_lines``.
 DECODE_FIDELITY_ROWS2C = ("glrd_50_fk2g", "glrd_70_fk2g", "glrd_50_f256_fk2", "glrd_70_f256_fk2")
+# Stage 2e (Task 6/7/8): three rotation-kernel modes for the fused Phase 2 decode kernel's per-chunk
+# cos/sin angle table (legacy: table per core: pack: packed into the K tile; dst: read from a
+# separate DST buffer), each with and without multicasting that table instead of recomputing it per
+# core, plus bfp4 latent caches (L4). ``"r"`` is not a new kernel mode: it is ``legacy`` (empty
+# suffix) re-measured the same day as the five new variants, so it is a same-day noise reference
+# alongside stage 2d's own ``_fk2`` file (kept as-is, not overwritten). The suffix is appended
+# straight onto the stage 2c/2d ``_fk2`` row name; ``ROWS2E`` and the per-variant ablation table in
+# ``_stage2e_lines`` are both driven off this one list so they cannot drift apart.
+VARIANTS2E = [("", "legacy, table per core (stage 2 = 2d baseline)"),
+              ("r", "legacy, re-measured the same day as the variants"),
+              ("p", "pack"), ("d", "dst"),
+              ("m", "legacy + table multicast"), ("pm", "pack + multicast"), ("dm", "dst + multicast")]
+ROWS2E = {"baseline": "stock `tt_transformers` attention"}
+for _sfx, _label in VARIANTS2E:
+    ROWS2E[f"palu_full_50_fk2{_sfx}"] = f"Palu M-LRD ratio 0.5, fused Phase 2: {_label}"
+    ROWS2E[f"palu_full_70_fk2{_sfx}"] = f"Palu M-LRD ratio 0.7, fused Phase 2: {_label}"
+# bfp4 latents ("L4"): the M-LRD 0.5/0.7 dumps with the latent cache itself stored in bfp4 instead of
+# bfp8. Perplexity is a prefill-only measurement that reconstructs K/V from the bf16 latent and never
+# touches the stored cache dtype (see the caveat printed in ``_stage2e_lines``), so ``ppl_<base>`` /
+# ``ppl_<base>_l4`` are read directly rather than through ``_row_data``; ``decode_check``/
+# ``bench_decode`` are each variant's own files, bfp8 vs bfp4.
+L4_ROWS2E = (("palu_full_50", "palu_full_50_l4", "palu_full_50_fk2", "palu_full_50_fk2_l4"),
+             ("palu_full_70", "palu_full_70_l4", "palu_full_70_fk2", "palu_full_70_fk2_l4"))
 TASK_COLS = ("openbookqa", "piqa", "arc_easy", "arc_challenge", "winogrande")
 TASK_LABELS = {"openbookqa": "OBQA", "piqa": "PIQA", "arc_easy": "ARC-e",
                "arc_challenge": "ARC-c", "winogrande": "WinoGrande"}
@@ -480,8 +504,11 @@ def _latency_rows(rows, loaded, stock_dec, vs_stock):
             yield cells
 
 
-def main(raw=RAW, out=OUT, rows=ROWS):
-    """Render one stage's tables. ``rows`` is ``ROWS`` (stage 1) or ``ROWS2`` (stage 2).
+def main(raw=RAW, out=OUT, rows=ROWS, stage=None):
+    """Render one stage's tables. ``rows`` is ``ROWS`` (stage 1), ``ROWS2`` (stage 2), ``ROWS2B``,
+    ``ROWS2C`` or ``ROWS2E``. ``stage`` is normally inferred from ``rows`` by identity, matching the
+    older stages' own convention; pass it explicitly (``stage="2e"``) when calling with a ``rows``
+    dict that is not literally ``ROWS2E`` itself (e.g. a subset built for a test).
 
     Stage 2 adds the two decode-fidelity columns to the quality table and a ``vs stock`` column to
     the latency table; everything else -- the loaders, the KV arithmetic, the error cells and the
@@ -491,6 +518,7 @@ def main(raw=RAW, out=OUT, rows=ROWS):
     stage2 = rows is ROWS2
     stage2b = rows is ROWS2B
     stage2c = rows is ROWS2C
+    stage2e = stage == "2e" or rows is ROWS2E
     loaded = {row: _row_data(raw, row) for row in rows}
     # A raw directory with nothing in it renders every row as dashes -- and would then overwrite the
     # committed tables with that. That is exactly what a fresh clone or a mistyped --raw looks like,
@@ -514,6 +542,9 @@ def main(raw=RAW, out=OUT, rows=ROWS):
 
     if stage2c:
         return _finish(_stage2c_lines(raw, rows, loaded), out)
+
+    if stage2e:
+        return _finish(_stage2e_lines(raw, rows, loaded), out)
 
     if stage2:
         lines = [
@@ -910,13 +941,142 @@ def _stage2c_lines(raw, rows, loaded):
     return lines
 
 
+def _stage2e_lines(raw, rows, loaded):
+    """Stage 2e (Task 6/7): the three rotation-kernel modes (legacy/pack/dst), each with and without
+    angle-table multicast, plus bfp4 latent caches (L4) -- all on top of the stage 2d fused Phase 2
+    M-LRD kernel.
+
+    The measurement matrix (``VARIANTS2E`` x ratio, plus the L4 rows) can still be running when this
+    renders: a variant or row with no JSON yet is skipped with a one-line ``(not measured)`` note in
+    whichever table it would have appeared in, never a crash -- every lookup below goes through
+    ``_load``/``loaded``, both of which return ``None``/absent for a file that does not exist yet.
+    """
+    from palu_tt import profile_fit
+
+    lines = [
+        "# Stage 2e results: idle-resource kernel variants and bfp4 latents",
+        "",
+        f"Generated by `python -m palu_tt.report --stage 2e` from `docs/results/raw/*.json` at commit "
+        f"`{_commit()}`; tt-metal v0.78.0 plus the `palu-sdpa` submodule branch, TP=2 (one n300, two "
+        "chips), bfp8 weights, non-paged, untraced decode, on top of the stage 2d fused Phase 2 "
+        "M-LRD ratio-0.5/0.7 kernel. `legacy`/`pack`/`dst` are the three ways the rotation kernel "
+        "gets its per-chunk cos/sin angle table onto the compute core (table per core, packed into "
+        "the K tile, or read from a separate DST buffer); `multicast` broadcasts that table instead "
+        "of recomputing it per core. `r` is not a new kernel mode -- it is `legacy` re-measured the "
+        "same day as the five new variants, a same-day noise reference kept alongside stage 2d's own "
+        "`_fk2` file rather than overwriting it. `l4` (section 4) stores the latent cache itself, not "
+        "K/V, in bfp4 instead of bfp8.",
+        "",
+    ]
+
+    # 1. ablation: fixed + per-chunk cost per layer, per kernel variant (the fit from stage 2d
+    # section 4, repeated for each variant). ``sfx == ""`` (legacy) also shows the stock and
+    # naive-Palu reference signatures alongside its own fused one; every other variant shows only its
+    # own fused (``PaluSdpaDecode*``) signature, so the six later blocks do not just repeat the same
+    # two reference rows six times over.
+    lines += [
+        "## Kernel variants: fixed and per-chunk cost per layer (batch 32)",
+        "",
+        "| variant | signature | fixed us | per chunk us | per item per chunk us | points (chunks: us/layer) |",
+        "|---|---|---|---|---|---|",
+    ]
+    for sfx, label in VARIANTS2E:
+        fits = profile_fit.fit_signatures(
+            raw, ["baseline", "palu_full_50", f"palu_full_50_fk2{sfx}", f"palu_full_70_fk2{sfx}"],
+            [1024, 4096, 8192],
+        )
+        shown = [s for s in fits if sfx == "" or s["signature"].startswith("PaluSdpaDecode")]
+        if not shown:
+            lines.append(f"| {label} | (not measured) |")
+            continue
+        for s in shown:
+            pts = ", ".join(f"{x}: {y:.0f}" for x, y in s["points"])
+            lines.append(f"| {label} | {s['signature']} | {s['fixed_us']:.1f} | {s['per_chunk_us']:.1f} | "
+                         f"{s['per_item_per_chunk_us']:.1f} | {pts} |")
+    lines.append("")
+
+    # 2. whole step: decode min_ms at each context, vs stock, for every row in ROWS2E (in order).
+    stock_dec = loaded["baseline"][2] if "baseline" in loaded else None
+    lines += [
+        "## Decode step, batch 32 (min ms; `vs stock` = stock / row at the same context)",
+        "",
+        "| row | 1024 | 4096 | 8192 | vs stock 1k | vs stock 4k |",
+        "|---|---|---|---|---|---|",
+    ]
+    for row in rows:
+        dec = loaded[row][2] if row in loaded else None
+        if dec is None:
+            lines.append(f"| {row} | (not measured) |")
+            continue
+        cells = " | ".join(_min_only(_cell(dec, ctx)) for ctx in CONTEXTS)
+        vs = " | ".join(_vs_stock(stock_dec, dec, ctx) for ctx in CONTEXTS[:2])
+        lines.append(f"| {row} | {cells} | {vs} |")
+    lines.append("")
+
+    # 3. fidelity of every measured fk2* row (naive vs fused, teacher-forced decode_check).
+    lines += [
+        "## Decode fidelity (`decode_check`, teacher-forced)",
+        "",
+        "| row | PCC min / mean | argmax agree |",
+        "|---|---|---|",
+    ]
+    fid_rows = sorted(r for r in loaded if "fk2" in r and loaded[r][6] is not None)
+    if fid_rows:
+        for row in fid_rows:
+            pcc, agree = _fidelity(loaded[row][6])
+            lines.append(f"| {row} | {pcc} | {agree} |")
+    else:
+        lines.append("No row has a `decode_check_*` JSON yet.")
+    lines.append("")
+
+    # 4. bfp4 latents (L4): the same M-LRD dumps with the latent cache stored in bfp4 instead of
+    # bfp8. Perplexity is read directly from ``ppl_<base>``/``ppl_<base>_l4`` (not through ``loaded``
+    # or ``_row_data``) since it is a prefill-only measurement, not one of ``ROWS2E``'s own rows.
+    lines += [
+        "## bfp4 latents (L4): the same dumps with the latent cache stored in bfp4",
+        "",
+        "| dump | ppl (prefill-blind, see stage 2f) bfp8 | ppl (prefill-blind, see stage 2f) bfp4 | "
+        "KV B/token/layer/chip bfp8 -> bfp4 | decode PCC min bfp8 -> bfp4 | decode 4k ms bfp8 -> bfp4 |",
+        "|---|---|---|---|---|---|",
+    ]
+    for base, l4, fk2, fk2_l4 in L4_ROWS2E:
+        ppl8, ppl4 = _load(raw, f"ppl_{base}"), _load(raw, f"ppl_{l4}")
+        chk8, chk4 = _load(raw, f"decode_check_{fk2}"), _load(raw, f"decode_check_{fk2_l4}")
+        b8, b4 = _load(raw, f"bench_decode_{fk2}"), _load(raw, f"bench_decode_{fk2_l4}")
+        if not any([ppl8, ppl4, chk8, chk4, b8, b4]):
+            lines.append(f"| {base} | (not measured) |")
+            continue
+        kv8 = _kv_bytes([b8]) if b8 else None
+        kv4 = _kv_bytes([b4]) if b4 else None
+        pcc8 = chk8["pcc_min"] if chk8 else None
+        pcc4 = chk4["pcc_min"] if chk4 else None
+        lines.append(
+            f"| {base} | {_fmt(ppl8 and ppl8.get('ppl'), 3)} | {_fmt(ppl4 and ppl4.get('ppl'), 3)} | "
+            f"{kv8 if kv8 is not None else '-'} -> {kv4 if kv4 is not None else '-'} | "
+            f"{_fmt(pcc8, 4)} -> {_fmt(pcc4, 4)} | "
+            f"{_min_only(_cell(b8, '4096')) if b8 else '-'} -> {_min_only(_cell(b4, '4096')) if b4 else '-'} |"
+        )
+    lines += [
+        "",
+        "Perplexity here comes from a prefill-only instrument that reconstructs K/V from the bf16 "
+        "latent before the forward pass, so it is blind to the latent cache's on-device storage "
+        "format -- bfp4 and bfp8 perplexity are identical to 15 digits by construction, and this "
+        "column is not evidence about bfp4 quality. Stage 2f's cache-faithful prefill (which reads "
+        "K/V back out of the stored-format cache) supersedes it; the `decode_check` PCC / "
+        "argmax-agreement figures above are measured against the real on-device cache and are the "
+        "meaningful bfp4 evidence.",
+        "",
+    ]
+    return lines
+
+
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="Render docs/results/stage{1,2,2b,2c}.md from the raw JSONs.")
+    ap = argparse.ArgumentParser(description="Render docs/results/stage{1,2,2b,2c,2e}.md from the raw JSONs.")
     ap.add_argument("--raw", default=RAW, type=Path)
-    ap.add_argument("--stage", choices=("1", "2", "2b", "2c"), default="1")
+    ap.add_argument("--stage", choices=("1", "2", "2b", "2c", "2e"), default="1")
     ap.add_argument("--out", default=None, type=Path,
-                     help="default: stage1.md / stage2.md / stage2b.md / stage2c.md")
+                     help="default: stage1.md / stage2.md / stage2b.md / stage2c.md / stage2e.md")
     a = ap.parse_args()
-    _rows = {"1": ROWS, "2": ROWS2, "2b": ROWS2B, "2c": ROWS2C}[a.stage]
-    _default_out = {"1": OUT, "2": OUT2, "2b": OUT2B, "2c": OUT2C}[a.stage]
-    print(main(raw=a.raw, out=a.out or _default_out, rows=_rows))
+    _rows = {"1": ROWS, "2": ROWS2, "2b": ROWS2B, "2c": ROWS2C, "2e": ROWS2E}[a.stage]
+    _default_out = {"1": OUT, "2": OUT2, "2b": OUT2B, "2c": OUT2C, "2e": OUT2E}[a.stage]
+    print(main(raw=a.raw, out=a.out or _default_out, rows=_rows, stage=a.stage))

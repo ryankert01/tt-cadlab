@@ -6,6 +6,8 @@ Figures:
   profile_breakdown.png      one panel per context (1k / 4k / 8k): device time per decode step, stacked by
                              op category, one bar per row
   profile_attention_ctx.png  attention + K-reconstruction device time per step against context, per row
+  profile_attention_ctx_2e.png  attention device time per step against context, six stage 2e rotation-kernel
+                             variants (legacy/pack/dst x table multicast) of palu_full_50_fk2, vs stock
   profile_bridge_4k.png      how the ratio-0.5 rows differ from stock at 4k: stock -> naive (what the
                              reconstruction adds as separate device ops) -> fused (what the kernel removes)
   profile_top_ops_4k.png     the largest op signatures at 4k for stock and the two fused rows
@@ -126,6 +128,42 @@ def attention_ctx_figure(out_png):
     plt.close(fig)
 
 
+def attention_ctx_variants_figure(out_png, dump="palu_full_50"):
+    """Attention block per step against context for the six stage 2e rotation-kernel variants of one
+    dump (legacy/pack/dst, each with and without angle-table multicast), plus stock.
+
+    A variant whose profile JSONs are not there yet (the stage 2e measurement matrix can still be
+    running) is simply not plotted -- ``xs``/``ys`` come out empty and the ``if xs:`` guard skips it,
+    so a partial matrix renders a partial figure instead of crashing.
+    """
+    variants = [("", "legacy"), ("p", "pack"), ("d", "dst"), ("m", "legacy+mcast"), ("pm", "pack+mcast"),
+                ("dm", "dst+mcast")]
+    fig, ax = plt.subplots(figsize=(7.5, 4.6))
+    xs = [ctx // 1024 for ctx in CONTEXTS if _load("baseline", ctx)]
+    ys = [_cat_ms(_load("baseline", ctx), "attention") for ctx in CONTEXTS if _load("baseline", ctx)]
+    if xs:
+        ax.plot(xs, ys, marker="o", color=ROW_COLOR["baseline"], label="stock", linewidth=2)
+    for i, (sfx, label) in enumerate(variants):
+        row = f"{dump}_fk2{sfx}"
+        xs = [ctx // 1024 for ctx in CONTEXTS if _load(row, ctx)]
+        ys = [_cat_ms(_load(row, ctx), "attention") for ctx in CONTEXTS if _load(row, ctx)]
+        if xs:
+            ax.plot(xs, ys, marker="o", label=label, linewidth=1.6, linestyle="-" if "m" not in sfx else "--",
+                    color=plt.cm.viridis(i / 6))
+    ax.set_xticks([c // 1024 for c in CONTEXTS])
+    ax.set_xticklabels([f"{c // 1024}k" for c in CONTEXTS])
+    ax.set_ylabel("attention ms per decode step (device)")
+    ax.set_xlabel("context")
+    ax.set_title(f"{dump}: attention per step, six kernel variants vs stock")
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.grid(color="#e7eaef", linewidth=0.8)
+    ax.set_axisbelow(True)
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=150)
+    plt.close(fig)
+
+
 def bridge_figure(out_png, ctx=4096, ratio="50"):
     """Waterfall: stock -> naive (adds) -> fused (removes), by category, at one context."""
     st, nv, fu = _load("baseline", ctx), _load(f"palu_full_{ratio}", ctx), _load(f"palu_full_{ratio}_fk2", ctx)
@@ -215,6 +253,7 @@ def main():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     breakdown_figure(OUT_DIR / "profile_breakdown.png")
     attention_ctx_figure(OUT_DIR / "profile_attention_ctx.png")
+    attention_ctx_variants_figure(OUT_DIR / "profile_attention_ctx_2e.png")
     bridge_figure(OUT_DIR / "profile_bridge_4k.png")
     bridge_figure(OUT_DIR / "profile_bridge_4k_70.png", ratio="70")
     top_ops_figure(OUT_DIR / "profile_top_ops_4k.png")

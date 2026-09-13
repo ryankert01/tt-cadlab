@@ -59,3 +59,17 @@ def test_ctx_scaling_figure_skips_a_row_with_no_decode_json(tmp_path):
 
     assert result == out
     assert out.exists() and out.stat().st_size > 0
+
+
+def test_attention_ctx_variants_figure_renders_a_nonempty_png(tmp_path):
+    """Stage 2e's six rotation-kernel-variant figure, against the real docs/results/raw (like
+    palu_tt.profile_plots's other figures, it has no ``raw`` parameter of its own). Some variants
+    have no profile JSON yet while the stage 2e matrix is still running; the figure must still
+    render rather than crash."""
+    from palu_tt import profile_plots
+
+    out = tmp_path / "profile_attention_ctx_2e.png"
+
+    profile_plots.attention_ctx_variants_figure(out)
+
+    assert out.exists() and out.stat().st_size > 0

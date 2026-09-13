@@ -532,3 +532,29 @@ def test_stage2c_tables_have_matching_header_and_separator_widths(tmp_path):
     for i, line in enumerate(lines[:-1]):
         if line.startswith("| ") and lines[i + 1].startswith("|---"):
             assert line.count("|") == lines[i + 1].count("|"), (line, lines[i + 1])
+
+
+def test_stage2e_tables_render_from_the_raw_dir(tmp_path):
+    """Against the real ``docs/results/raw`` dir, as it stands while the stage 2e measurement matrix
+    is still running: only some of ``ROWS2E``'s rows have JSONs yet. The renderer must still produce
+    all four tables, with a row's or variant's absence rendered as a one-line note (never a crash),
+    and must still pass once every row shows up."""
+    from palu_tt import report
+    out = tmp_path / "stage2e.md"
+
+    text = report.main(raw=report.RAW, out=out, rows=report.ROWS2E, stage="2e")
+
+    assert out.read_text() == text
+    assert "| variant |" in text and "fixed us" in text          # the ablation table
+    assert "palu_full_50_fk2" in text and "baseline" in text     # whole-step table
+    assert "bfp4" in text                                        # the L4 table
+    # rows already measured at the time this test was written must render as real numbers, not dashes
+    # or "(not measured)" -- this is the tripwire that catches a wiring mistake even while most of the
+    # matrix is still absent.
+    baseline_line = next(l for l in text.splitlines() if l.startswith("| baseline | "))
+    assert "(not measured)" not in baseline_line and baseline_line.count("|") == 7
+    assert "| palu_full_50_fk2 | " in text
+    assert "palu_full_50_fk2 |" in text.split("## Decode fidelity", 1)[1].split("## bfp4", 1)[0]
+    assert "12.931" in text   # ppl_palu_full_50 / ppl_palu_full_50_l4 (12.930530...), identical to 3 dp
+    assert "ppl (prefill-blind, see stage 2f)" in text
+    assert "stage 2f" in text.split("## bfp4", 1)[1]              # the caveat sentence under the table
