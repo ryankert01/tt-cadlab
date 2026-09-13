@@ -55,7 +55,8 @@ BATCH = 32
 # Stage 2: the fused-kernel runtime flags for this process, set once by ``main`` from ``--fused``
 # and passed to every model/attention build below. ``--fused off`` (the default) reproduces the
 # stage-1 rows exactly -- ``build_model``'s own defaults are these same three values.
-FUSED = {"use_fused_k": False, "cs_recurrence": False, "fused_k_chunk": None, "group_heads": None}
+FUSED = {"use_fused_k": False, "cs_recurrence": False, "fused_k_chunk": None, "group_heads": None,
+         "rot_mode": "legacy", "table_mcast": False}
 # stage 2c: per-layer heads_per_core the last model/layer built actually ran with (after any allocator
 # fallback), so a row's timings can be read against the H that produced them. Empty for non-grouped rows.
 GROUP_HEADS = []
@@ -371,6 +372,10 @@ def main():
                    help="stage-2c group-shared mode: KV heads per core in the fused op. auto = the "
                         "largest that fits L1 per layer; 1 reproduces the stage 2b per-head kernel. "
                         "Grouped (G-LRD) Palu rows only.")
+    p.add_argument("--rot-mode", choices=["legacy", "pack", "dst"], default="legacy",
+                   help="stage-2e K rebuild mode in the fused op (see docs/superpowers/specs/2026-09-14-palu-tt-stage2e-design.md).")
+    p.add_argument("--table-mcast", choices=["off", "on"], default="off",
+                   help="stage-2e: multicast the Phase 2 angle table down each grid column (Phase 2 only).")
     p.add_argument("--batch", type=int, default=32,
                    help="batch size for decode, attention and maxctx (default: 32). "
                         "tt_transformers accepts any value <= 32. prefill is single-user by "
@@ -385,7 +390,8 @@ def main():
     if not 1 <= a.batch <= 32:
         p.error("--batch must be between 1 and 32 (tt_transformers's cap)")
     FUSED.update(use_fused_k=a.fused != "off", cs_recurrence=a.fused == "p2", fused_k_chunk=a.fused_k_chunk,
-                 group_heads=None if a.group_heads == "auto" else int(a.group_heads))
+                 group_heads=None if a.group_heads == "auto" else int(a.group_heads),
+                 rot_mode=a.rot_mode, table_mcast=a.table_mcast == "on")
     BATCH = a.batch
     RAW.mkdir(parents=True, exist_ok=True)
     mesh = Mesh()
@@ -399,7 +405,8 @@ def main():
         mesh.close()
     r = {"row": a.row, "kind": a.kind, "palu_dir": a.palu_dir, "what": a.what,
          "fused": a.fused, "fused_k_chunk": a.fused_k_chunk, "group_heads": a.group_heads,
-         "group_heads_per_layer": list(GROUP_HEADS), "batch": a.batch}
+         "group_heads_per_layer": list(GROUP_HEADS), "batch": a.batch,
+         "rot_mode": a.rot_mode, "table_mcast": a.table_mcast}
     if a.what in ("decode", "attention"):  # prefill/maxctx use their own fixed lengths, not CONTEXTS
         r["contexts"] = list(CONTEXTS)
     r["data"] = data

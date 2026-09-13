@@ -31,6 +31,10 @@ def main():
     p.add_argument("--fused", choices=["off", "p1", "p2"], default="off")
     p.add_argument("--fused-k-chunk", type=int, default=None)
     p.add_argument("--group-heads", choices=["auto", "1", "2", "4"], default="auto")
+    p.add_argument("--rot-mode", choices=["legacy", "pack", "dst"], default="legacy",
+                   help="stage-2e K rebuild mode in the fused op (see docs/superpowers/specs/2026-09-14-palu-tt-stage2e-design.md).")
+    p.add_argument("--table-mcast", choices=["off", "on"], default="off",
+                   help="stage-2e: multicast the Phase 2 angle table down each grid column (Phase 2 only).")
     p.add_argument("--ctx", type=int, required=True)
     p.add_argument("--steps", type=int, default=3)
     p.add_argument("--warmup", type=int, default=3)
@@ -38,7 +42,8 @@ def main():
     flags = {}
     if a.fused != "off":
         flags = dict(use_fused_k=True, cs_recurrence=a.fused == "p2", fused_k_chunk=a.fused_k_chunk,
-                     group_heads=None if a.group_heads == "auto" else int(a.group_heads))
+                     group_heads=None if a.group_heads == "auto" else int(a.group_heads),
+                     rot_mode=a.rot_mode, table_mcast=a.table_mcast == "on")
     md = dev.open_n300()
     try:
         args, model, cfg = pm.build_model(md, a.kind, a.palu_dir, max_batch_size=BATCH, max_seq_len=a.ctx, **flags)

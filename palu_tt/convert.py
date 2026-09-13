@@ -43,6 +43,12 @@ class PaluRuntime:
     # (fused.group_heads_per_core); 1 = the stage 2b per-head kernel with the stock work split. Only
     # meaningful with grouped latents (group_size > 1).
     group_heads_per_core: Optional[int] = None
+    # stage 2e: how the fused op rebuilds a K row tile. "legacy" = AB through c_10 and an SFPU add
+    # (stage 2); "pack" = the packer's L1 accumulate does the add, two column tiles per DST trip;
+    # "dst" = matmul straight into DST, dest-reuse multiplies, no AB scratch buffer.
+    rot_mode: str = "legacy"
+    # stage 2e: read the Phase 2 angle table once per grid column and multicast it to the column.
+    table_mcast: bool = False
 
 
 @dataclass

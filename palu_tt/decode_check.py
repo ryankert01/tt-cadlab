@@ -74,6 +74,10 @@ def main():
                         "every layer without the allocator fallback that 4 hits on most layers at "
                         "batch 1 (4 is a ceiling the run may fall back from). Pass 1 for the "
                         "per-head kernel on purpose, or auto to mirror what bench picks.")
+    p.add_argument("--rot-mode", choices=["legacy", "pack", "dst"], default="legacy",
+                   help="stage-2e K rebuild mode in the fused op (see docs/superpowers/specs/2026-09-14-palu-tt-stage2e-design.md).")
+    p.add_argument("--table-mcast", choices=["off", "on"], default="off",
+                   help="stage-2e: multicast the Phase 2 angle table down each grid column (Phase 2 only).")
     p.add_argument("--steps", type=int, default=64)
     a = p.parse_args()
     RAW.mkdir(parents=True, exist_ok=True)
@@ -84,7 +88,8 @@ def main():
         naive = _logits(md, a.palu_dir, ids, a.steps)
         fused_logits = _logits(md, a.palu_dir, ids, a.steps, use_fused_k=True, cs_recurrence=a.fused == "p2",
                         fused_k_chunk=a.fused_k_chunk,
-                        group_heads=None if a.group_heads == "auto" else int(a.group_heads))
+                        group_heads=None if a.group_heads == "auto" else int(a.group_heads),
+                        rot_mode=a.rot_mode, table_mcast=a.table_mcast == "on")
     finally:
         dev.close(md)
     # Index 0 of both stacks is the shared prefill logit (bit-identical on both paths, since the
@@ -93,6 +98,7 @@ def main():
     pccs = [_pcc(naive_decode[i], fused_decode[i]) for i in range(naive_decode.shape[0])]
     r = {"row": a.row, "palu_dir": a.palu_dir, "fused": a.fused, "fused_k_chunk": a.fused_k_chunk,
          "group_heads": a.group_heads, "group_heads_per_layer": list(GROUP_HEADS),
+         "rot_mode": a.rot_mode, "table_mcast": a.table_mcast,
          "steps": naive_decode.shape[0],
          "pcc_mean": sum(pccs) / len(pccs), "pcc_min": min(pccs),
          "argmax_agree": float((naive_decode.argmax(-1) == fused_decode.argmax(-1)).float().mean())}

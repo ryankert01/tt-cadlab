@@ -416,3 +416,10 @@ def test_convert_version_is_4_and_group_size_default_is_1():
     assert convert.CONVERT_VERSION == 4
     cfg = convert.PaluConfig(rank_k=[32], rank_v=[64], cache_id="x")
     assert cfg.group_size == 1
+
+
+def test_runtime_has_stage2e_switches_off_by_default():
+    from palu_tt.convert import PaluRuntime
+    rt = PaluRuntime()
+    assert rt.rot_mode == "legacy"
+    assert rt.table_mcast is False

@@ -65,7 +65,7 @@ def _stock_on_reconstructed_k(md, q, k_lat, u_k, v, pos, cos, sin, r_v, k_chunk)
     return _host(out)
 
 
-def _fused(md, q, k_lat, u_k, v, pos, cos, sin, r_v, k_chunk, phase2):
+def _fused(md, q, k_lat, u_k, v, pos, cos, sin, r_v, k_chunk, phase2, rot_mode="legacy", table_mcast=False):
     S = k_lat.shape[2]
     extra = {}
     if phase2:
@@ -74,7 +74,8 @@ def _fused(md, q, k_lat, u_k, v, pos, cos, sin, r_v, k_chunk, phase2):
                      trans_mat=_dev(md, fused.trans_mat_tile()))
     out = ttnn.transformer.palu_sdpa_decode(
         _dev(md, q), _dev(md, k_lat), _dev(md, fused.w_rot_from_u_k(u_k)[None]), _dev(md, fused.cs_table(cos, sin, S)[None, None]),
-        _dev(md, v), head_dim_v=r_v, cur_pos_tensor=_pos(md, pos), scale=HD ** -0.5, **extra, **_cfg(k_chunk))
+        _dev(md, v), head_dim_v=r_v, cur_pos_tensor=_pos(md, pos), scale=HD ** -0.5, rot_mode=rot_mode,
+        table_mcast=table_mcast, **extra, **_cfg(k_chunk))
     return _host(out)
 
 
@@ -131,6 +132,15 @@ def test_phase2_matches_reference_default_chunk(mesh_device, r_k, batch):
     _check(mesh_device, batch, 1024, r_k, 64, k_chunk=0, phase2=True)      # the op picks 512
 
 
+def test_rot_mode_legacy_is_the_default_and_bogus_is_rejected(mesh_device):
+    q, k_lat, u_k, v, pos, cos, sin = _inputs(32, 1024, 32, 128)
+    default = _fused(mesh_device, q, k_lat, u_k, v, pos, cos, sin, 128, 0, True)
+    legacy = _fused(mesh_device, q, k_lat, u_k, v, pos, cos, sin, 128, 0, True, rot_mode="legacy")
+    assert torch.equal(default, legacy)
+    with pytest.raises(RuntimeError, match="rot_mode must be"):
+        _fused(mesh_device, q, k_lat, u_k, v, pos, cos, sin, 128, 0, True, rot_mode="bogus")
+
+
 @pytest.mark.parametrize("k_chunk", [128, 512])
 def test_phase2_chunk_override(mesh_device, k_chunk):
     _check(mesh_device, 32, 1024, 64, 64, k_chunk=k_chunk, phase2=True)
@@ -183,7 +193,8 @@ def _stock_on_reconstructed_kv(md, q, k_full_rot, v_full, pos, k_chunk):
     return _host(out)
 
 
-def _fused_group(md, q, k_lat, u_k, v_lat, u_v, pos, cos, sin, k_chunk, phase2, heads_per_core=None, grid=(8, 8)):
+def _fused_group(md, q, k_lat, u_k, v_lat, u_v, pos, cos, sin, k_chunk, phase2, heads_per_core=None, grid=(8, 8),
+                  rot_mode="legacy", table_mcast=False):
     S = k_lat.shape[2]
     extra = dict(u_v=_dev(md, u_v[None]))
     if phase2:
@@ -195,7 +206,8 @@ def _fused_group(md, q, k_lat, u_k, v_lat, u_v, pos, cos, sin, k_chunk, phase2, 
         extra["heads_per_core"] = heads_per_core
     out = ttnn.transformer.palu_sdpa_decode(
         _dev(md, q), _dev(md, k_lat), _dev(md, fused.w_rot_from_u_k(u_k)[None]), _dev(md, fused.cs_table(cos, sin, S)[None, None]),
-        _dev(md, v_lat), head_dim_v=HD, cur_pos_tensor=_pos(md, pos), scale=HD ** -0.5, **extra, **_cfg(k_chunk, grid))
+        _dev(md, v_lat), head_dim_v=HD, cur_pos_tensor=_pos(md, pos), scale=HD ** -0.5, rot_mode=rot_mode,
+        table_mcast=table_mcast, **extra, **_cfg(k_chunk, grid))
     return _host(out)
 
 

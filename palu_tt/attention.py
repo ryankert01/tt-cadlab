@@ -289,6 +289,10 @@ class PaluAttention(LightweightModule):
             cfg = self.sdpa_decode_compute_kernel_cfg
             # Phase 2 keeps the rotated query in fp32 and needs an fp32 dest; the HiFi4 preset has it
             self.fused_compute_cfg = cfg if (not self.phase2 or cfg.fp32_dest_acc_en) else configuration.compute_kernel_config_hifi4
+            # stage 2e: the rebuild mode and the table multicast are per-run switches; multicast only
+            # exists in Phase 2 (Phase 1 streams the table per chunk).
+            self.rot_mode = rt.rot_mode
+            self.table_mcast = bool(rt.table_mcast and self.phase2)
             # Stage 2c: how many of the group's KV heads one core owns. With H > 1 the op runs its
             # group-shared program -- the core's H heads share one read of each latent chunk instead of
             # reading it once per head -- which costs H resident weight blocks and H flash states in L1,
@@ -572,6 +576,7 @@ class PaluAttention(LightweightModule):
                     q, keys, self.w_rot, self.cs_tab, values, self.head_dim if grouped else self.r_v, current_pos,
                     rot_step=self.rot_step, trans_mat=self.trans_mat, u_v=self.u_v_kernel if grouped else None,
                     scale=self.scale, heads_per_core=hpc if hpc > 1 else None,
+                    rot_mode=self.rot_mode, table_mcast=self.table_mcast,
                     program_config=self.fused_program_config, compute_kernel_config=self.fused_compute_cfg,
                     memory_config=ttnn.DRAM_MEMORY_CONFIG)                                    # [1, B, nh, r_v] or [1, B, nh, 128]
             while True:
