@@ -190,7 +190,9 @@ fused op accepts the tensor's dtype through its existing tile-size plumbing; the
 Measured for `palu_full_50` and `palu_full_70`: perplexity (141 windows), `decode_check` (63 steps,
 PCC and argmax agreement), KV bytes per token, and decode `min_ms` at 4k (expected unchanged: the
 op is not byte-bound). Reported next to the bfp8 rows. No kernel change; if the op refuses bfp4 at
-some check, the check is relaxed only where the format is genuinely irrelevant.
+some check, the check is relaxed only where the format is genuinely irrelevant. These two rows are
+also the first cells of stage 2f's Grid A (`2026-09-14-palu-tt-stage2f-design.md`), which owns the
+wider rank-and-format study; whichever stage runs first records them.
 
 ## 5. Host, harness, tests
 
