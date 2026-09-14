@@ -1279,14 +1279,18 @@ def _check_row_fields(row, d, stock, k_fmt, v_fmt, scale):
 
 # A frontier row's decode_4k/maxctx columns must only ever show the fused Phase 2 decode kernel's
 # own numbers, never the naive (reconstruct-then-attend) row's -- see ``_frontier_fused_bench``.
-# Preference order: the shipped-default multicast variant (stage 2e) first, then plain fused Phase 2.
-FRONTIER_FUSED_SUFFIXES = ("_fk2dm", "_fk2")
+# Preference order: the shipped-default rotation kernel (``rot_mode dst`` + ``table_mcast on``,
+# stage 2e) first -- ``_fk2dm`` for a per-head dump, ``_fk2gdm`` for the same defaults in
+# group-shared mode (a G-LRD dump) -- then plain fused Phase 2. A row only ever has one of the two
+# shipped-default spellings, since the dump decides whether the kernel runs per-head or
+# group-shared, so the order between them never arbitrates; it only fixes a deterministic scan.
+FRONTIER_FUSED_SUFFIXES = ("_fk2dm", "_fk2gdm", "_fk2")
 
 
 def _frontier_fused_bench(raw, what, row):
-    """``(data, suffix)`` for ``row``'s fused Phase 2 decode-kernel bench file, preferring
-    ``_fk2dm`` (the shipped-default rotation-kernel variant, stage 2e) over plain ``_fk2``; ``(None,
-    None)`` when neither exists.
+    """``(data, suffix)`` for ``row``'s fused Phase 2 decode-kernel bench file, preferring the
+    shipped-default rotation-kernel variants (stage 2e) ``_fk2dm`` (per-head) and ``_fk2gdm``
+    (group-shared) over plain ``_fk2``; ``(None, None)`` when none exists.
 
     ``bench_<what>_<row>.json`` (no suffix) is the naive, reconstruct-then-attend kernel for a
     ``palu_full_*``/``glrd_*`` dump -- multiple times slower than the fused kernel it stands in for

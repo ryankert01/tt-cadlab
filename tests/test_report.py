@@ -815,6 +815,35 @@ def test_frontier_decode_4k_and_maxctx_prefer_the_fused_bench_rows(tmp_path):
     assert "265.3" not in line
 
 
+def test_frontier_decode_4k_and_maxctx_read_the_group_shared_shipped_kernel(tmp_path):
+    """A G-LRD row's shipped-default fused kernel runs group-shared, so its bench files are spelled
+    ``_fk2gdm`` (as stage 2e's ``bench_decode_glrd_50_fk2gdm.json``) and never ``_fk2dm``. Both
+    frontier columns must read that spelling rather than the naive file or a dash."""
+    from palu_tt import report
+    raw = tmp_path
+    _write(raw, "ppl_glrd_70_f256_l4", {"ppl": 8.61, "windows": 141, "latent_scale": "balanced",
+                                        "k_latent_dtype": "bfp4", "v_latent_dtype": "bfp4",
+                                        "latent_quant_in_prefill": True})
+    # the naive (reconstruct-then-attend) file for the same row -- must never surface
+    _write(raw, "bench_decode_glrd_70_f256_l4", {"data": {"4096": {"min_ms": 999.9}}})
+    _write(raw, "bench_decode_glrd_70_f256_l4_fk2gdm", {
+        "data": {"4096": {"p50_ms": 61.2, "min_ms": 60.9, "iters": 10}}})
+    _write(raw, "bench_maxctx_glrd_70_f256_l4_fk2gdm", {"data": {"max_context_batch32": 16384}})
+
+    rows = {r["row"]: r for r in report.frontier_rows(raw, ranks={"glrd_70_f256": (234, 483, 1)})}
+    r = rows["glrd_70_f256_l4"]
+    assert r["decode_4k"] == "60.9"
+    assert r["decode_4k_suffix"] == "_fk2gdm"
+    assert r["maxctx"] == 16384
+    assert r["maxctx_suffix"] == "_fk2gdm"
+
+    out = tmp_path / "stage2f.md"
+    text = report.main(raw=raw, out=out, rows=report.ROWS2F, stage="2f")
+    line = next(l for l in text.splitlines() if l.startswith("| glrd_70_f256_l4 |"))
+    assert "60.9" in line and "16384" in line
+    assert "999.9" not in line
+
+
 def test_frontier_decode_4k_and_maxctx_are_a_dash_with_no_fused_bench_row(tmp_path):
     """A row with only the naive bench file (no ``_fk2``/``_fk2dm`` at all) must render a dash in
     both columns rather than falling back to the naive row's number."""
