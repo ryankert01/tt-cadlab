@@ -281,3 +281,102 @@ def test_frontier_figure_legend_names_the_screened_series(tmp_path, monkeypatch)
     assert "141-window measurement" in labels
     assert "40-window screen (not on the front)" in labels
     assert "Pareto front (141-window rows)" in labels
+
+
+def test_frontier_figure_labels_the_finalists_even_when_dominated(tmp_path, monkeypatch):
+    """2f final review, Important 2: the study's recommendation, ``palu_full_70_lv4``, is dominated
+    on the (bytes, perplexity) plane by ``glrd_70_f256_l4``, so it fell off the Pareto front and was
+    the one finalist with no label -- a reader could not find the recommendation on the figure.
+    ``plots.FINALISTS`` is unioned into the labelled set, so a dominated finalist keeps its name
+    while a dominated non-finalist (here ``palu_full_70_lk4_w40``) still has none."""
+    from palu_tt import plots
+
+    (tmp_path / "ppl_baseline.json").write_text('{"ppl": 7.254, "windows": 141}')
+    # bfp4 K and V: fewer bytes *and* lower perplexity, so it dominates the _lv4 row below.
+    (tmp_path / "ppl_palu_full_70_l4.json").write_text(
+        '{"ppl": 9.0, "windows": 141, "latent_quant_in_prefill": true}')
+    (tmp_path / "ppl_palu_full_70_lv4.json").write_text(
+        '{"ppl": 9.3, "windows": 141, "latent_quant_in_prefill": true}')
+    # two screens, so the leading edge of the screened cloud is the cheaper one and ``_lk4_w40``
+    # is dominated there too -- otherwise it would be labelled as a scan-front point, not as a
+    # finalist, and the negative half of this test would prove nothing.
+    (tmp_path / "ppl_palu_full_70_l4_w40.json").write_text(
+        '{"ppl": 9.4, "windows": 40, "latent_quant_in_prefill": true}')
+    (tmp_path / "ppl_palu_full_70_lk4_w40.json").write_text(
+        '{"ppl": 9.9, "windows": 40, "latent_quant_in_prefill": true}')
+    out = tmp_path / "frontier.png"
+
+    captured = {}
+    real_close = plots.plt.close
+    monkeypatch.setattr(plots.plt, "close", lambda fig: (captured.setdefault("fig", fig), real_close(fig)))
+
+    plots.frontier_figure(tmp_path, out, ranks={"palu_full_70": (58, 121)})
+
+    from palu_tt import report
+    rows = {r["row"]: r for r in report.frontier_rows(tmp_path, ranks={"palu_full_70": (58, 121)})}
+    assert rows["palu_full_70_lv4"]["kb_token"] > rows["palu_full_70_l4"]["kb_token"]
+    assert rows["palu_full_70_lv4"]["ppl"] > rows["palu_full_70_l4"]["ppl"]  # dominated: off the front
+    ax = captured["fig"].axes[0]
+    front = next(ln for ln in ax.lines if ln.get_linestyle() in ("--", (0, (6.4, 1.6))))
+    assert round(rows["palu_full_70_lv4"]["kb_token"], 3) not in {round(x, 3) for x in front.get_xdata()}
+
+    labels = {t.get_text() for t in ax.texts}
+    assert "palu_full_70_lv4" in labels
+    assert "palu_full_70_l4" in labels
+    assert not any(t.startswith("palu_full_70_lk4") for t in labels)
+
+
+def test_frontier_figure_keeps_every_label_inside_the_axes(tmp_path, monkeypatch):
+    """2f final review, Important 3 (carried Minor A): ``_place_labels`` clamped on the *anchor*
+    pixel, not on the text extent, so a long row name anchored well inside a spine still ran off the
+    axes -- four labels overflowed the shipped figure, the worst by 63 px into the y-tick column.
+    The two long-named rows below sit at the extreme low- and high-byte ends, which is exactly where
+    the anchor test cannot help."""
+    from palu_tt import plots
+
+    (tmp_path / "ppl_baseline.json").write_text('{"ppl": 7.254, "windows": 141}')
+    # a cheaper, short-named row holds the left spine, so the long-named one below is anchored ~110
+    # px *inside* the axes -- the case the anchor-only clamp cannot see.
+    (tmp_path / "ppl_palu_full_50_l4.json").write_text(
+        '{"ppl": 200.0, "windows": 141, "latent_quant_in_prefill": true}')
+    (tmp_path / "ppl_uni_rk32_rv64_u_l4_w40.json").write_text(
+        '{"ppl": 94.4, "windows": 40, "latent_quant_in_prefill": true}')
+    # two dominated (so unlabelled) cells just to its right at the same perplexity, which is what
+    # makes the side-choice send that label leftward -- the dense low-byte cluster's effect.
+    (tmp_path / "ppl_uni_rk32_rv96_u_l4_w40.json").write_text(
+        '{"ppl": 96.0, "windows": 40, "latent_quant_in_prefill": true}')
+    (tmp_path / "ppl_uni_rk64_rv64_u_l4_w40.json").write_text(
+        '{"ppl": 98.0, "windows": 40, "latent_quant_in_prefill": true}')
+    (tmp_path / "ppl_uni_rk96_rv128_u_w40.json").write_text('{"ppl": 7.7, "windows": 40}')
+    (tmp_path / "ppl_palu_full_70_l4.json").write_text(
+        '{"ppl": 9.0, "windows": 141, "latent_quant_in_prefill": true}')
+    out = tmp_path / "frontier.png"
+
+    captured = {}
+    real_close = plots.plt.close
+    monkeypatch.setattr(plots.plt, "close", lambda fig: (captured.setdefault("fig", fig), real_close(fig)))
+
+    ranks = {"uni_rk32_rv64": (32, 64), "uni_rk96_rv128": (96, 128), "palu_full_70": (58, 121),
+             "palu_full_50": (10, 10), "uni_rk32_rv96": (32, 96), "uni_rk64_rv64": (64, 64)}
+    plots.frontier_figure(tmp_path, out, ranks=ranks)
+
+    fig = captured["fig"]
+    ax = fig.axes[0]
+    rend = fig.canvas.get_renderer()
+    box = ax.get_window_extent(rend)
+    assert len(ax.texts) >= 5  # the long-named screens really are labelled, or this proves nothing
+    outside = [(t.get_text(), round(box.x0 - t.get_window_extent(rend).x0, 1),
+                round(t.get_window_extent(rend).x1 - box.x1, 1))
+               for t in ax.texts
+               if not box.contains(*t.get_window_extent(rend).p0)
+               or not box.contains(*t.get_window_extent(rend).p1)]
+    assert outside == [], f"labels outside the axes (label, left overflow px, right overflow px): {outside}"
+
+    # The same review finding measured three labels drawn on top of markers, one of them a
+    # finalist's; the placement scores candidates by the markers the text would actually cover.
+    from palu_tt import report
+    pts = [ax.transData.transform((r["kb_token"], r["ppl"]))
+           for r in report.frontier_rows(tmp_path, ranks=ranks) if not r["blind"]]
+    covered = [t.get_text() for t in ax.texts
+               if any(t.get_window_extent(rend).contains(qx, qy) for qx, qy in pts)]
+    assert covered == [], f"labels drawn over a marker: {covered}"

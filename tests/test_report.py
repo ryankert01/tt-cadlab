@@ -616,6 +616,13 @@ def test_stage2e_tables_render_from_a_fixture_raw_dir(tmp_path):
                                      "kind": "palu", "palu_dir": "compressed/palu_full_0.5"})
     _write(raw, "ppl_palu_full_50_l4", {"ppl": 12.930530567327075, "windows": 141, "row": "palu_full_50_l4",
                                         "kind": "palu", "palu_dir": "compressed/palu_full_0.5"})
+    # 2f final review, Important 6: one L4 row re-measured under the cache-faithful prefill, so the
+    # bfp4 column is mixed and each cell has to name its own instrument.
+    _write(raw, "ppl_palu_full_70", {"ppl": 9.0277, "windows": 141, "row": "palu_full_70",
+                                     "kind": "palu", "palu_dir": "compressed/palu_full_0.7"})
+    _write(raw, "ppl_palu_full_70_l4", {"ppl": 9.9234, "windows": 141, "row": "palu_full_70_l4",
+                                        "kind": "palu", "palu_dir": "compressed/palu_full_0.7",
+                                        "latent_quant_in_prefill": True})
 
     out = tmp_path / "stage2e.md"
 
@@ -658,12 +665,19 @@ def test_stage2e_tables_render_from_a_fixture_raw_dir(tmp_path):
     assert "| palu_full_50_fk2_l4 | 0.9935 / 0.9987 | 0.905 |" in fidelity
     assert "| glrd_50_fk2gdm | 0.9979 / 0.9991 | 0.937 |" in fidelity   # M9
 
-    # Minor 9: the bfp8/bfp4 perplexity cells are checked for equality, not against a hard-coded number.
+    # Minor 9: the bfp8/bfp4 perplexity cells are checked for equality, not against a hard-coded
+    # number. 2f final review, Important 6: the bfp4 cell also names the instrument that produced
+    # it, since one of these rows was re-measured under the cache-faithful prefill and the other
+    # never was -- a column-wide "prefill-blind" claim is false for the re-measured row.
     bfp4 = text.split("## bfp4 latents", 1)[1]
     ppl_row = next(l for l in bfp4.splitlines() if l.startswith("| palu_full_50 | "))
     cells = [c.strip() for c in ppl_row.split("|")]
     ppl8, ppl4 = cells[2], cells[3]
-    assert ppl8 == ppl4 and ppl8 != "-"
+    assert ppl4.endswith(" (blind)")              # no latent_quant_in_prefill -> blind
+    assert ppl8 == ppl4[: -len(" (blind)")] and ppl8 != "-"
+    faithful = next(l for l in bfp4.splitlines() if l.startswith("| palu_full_70 | "))
+    fcells = [c.strip() for c in faithful.split("|")]
+    assert (fcells[2], fcells[3]) == ("9.028", "9.923 (faithful)")   # latent_quant_in_prefill: true
     assert "ppl (prefill-blind, see stage 2f)" in text
     assert "stage 2f" in bfp4   # the caveat sentence under the table
 

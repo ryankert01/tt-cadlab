@@ -1159,21 +1159,30 @@ def _stage2e_lines(raw, rows, loaded, steps):
         kv4 = _kv_model_mean(_kv_bytes([b4]), [b4]) if b4 else None
         pcc8 = chk8["pcc_min"] if chk8 else None
         pcc4 = chk4["pcc_min"] if chk4 else None
+        # The bfp4 column is mixed since 2f Task 7 re-measured one of these rows under the
+        # cache-faithful prefill, so each cell has to say which instrument produced it -- the
+        # column used to be wholly blind, and the prose below used to say so for every row (2f
+        # final review, Important 6). ``_row_is_blind`` is the same rule the 2f frontier applies,
+        # with ``has_bfp4_latent_suffix`` true because every row here is an ``_l4`` row.
+        ppl4_cell = _fmt(ppl4 and ppl4.get("ppl"), 3)
+        if ppl4 and ppl4.get("ppl") is not None:
+            ppl4_cell += " (blind)" if _row_is_blind(ppl4, True) else " (faithful)"
         lines.append(
-            f"| {base} | {_fmt(ppl8 and ppl8.get('ppl'), 3)} | {_fmt(ppl4 and ppl4.get('ppl'), 3)} | "
+            f"| {base} | {_fmt(ppl8 and ppl8.get('ppl'), 3)} | {ppl4_cell} | "
             f"{_fmt(kv8, 1)} -> {_fmt(kv4, 1)} | "
             f"{_fmt(pcc8, 4)} -> {_fmt(pcc4, 4)} | "
             f"{_min_only(_cell(b8, '4096')) if b8 else '-'} -> {_min_only(_cell(b4, '4096')) if b4 else '-'} |"
         )
     lines += [
         "",
-        "Perplexity here comes from a prefill-only instrument that reconstructs K/V from the bf16 "
-        "latent before the forward pass, so it is blind to the latent cache's on-device storage "
-        "format -- bfp4 and bfp8 perplexity are identical to 15 digits by construction, and this "
-        "column is not evidence about bfp4 quality. Stage 2f's cache-faithful prefill (which reads "
-        "K/V back out of the stored-format cache) supersedes it; the `decode_check` PCC / "
-        "argmax-agreement figures above are measured against the real on-device cache and are the "
-        "meaningful bfp4 evidence.",
+        "The bfp4 column is mixed, so each cell names its own instrument. A `(blind)` cell comes "
+        "from the prefill-only instrument the header names: it reconstructs K/V from the bf16 "
+        "latent before the forward pass, so it never sees the latent cache's on-device storage "
+        "format and is identical to that row's bfp8 cell to 15 digits by construction -- it is not "
+        "evidence about bfp4 quality. A `(faithful)` cell was re-measured under stage 2f's "
+        "cache-faithful prefill (which reads K/V back out of the stored-format cache), which "
+        "supersedes the blind instrument on the rows that carry it. The `decode_check` PCC / "
+        "argmax-agreement figures above are measured against the real on-device cache either way.",
         "",
     ]
     return lines

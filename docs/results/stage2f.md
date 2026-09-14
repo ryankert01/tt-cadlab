@@ -72,29 +72,29 @@ Pre-2f bfp8 rows render as numbers, not `blind`, even though they were blind too
 <!-- everything below this line is hand-written and preserved by palu_tt.report -->
 ## Findings
 
-**Q1 frontier — met.** Every §2 cell is in the table and `frontier_2f.png`, stock bfp8 and bfp4
-marked, front drawn. Stretch missed: the finalists' five-task accuracy is in the `avg5` column, not
-on the figure.
+**Q1 frontier — met.** Every §2 cell is in the table and `frontier_2f.png`, stock bfp8/bfp4 marked,
+front drawn. Stretch missed: the finalists' `avg5` is in the table, not on the figure.
 **Q2 unit-scale hypothesis — met** (numbers below).
 **Q3 format-only baseline — met.** `baseline_kv4` in full: 36.00 KB/token, ppl 9.764, avg5 60.52,
 decode 35.1 / 45.3 / 60.6 ms, max context 13312 at batch 32.
-**Q4 recommendation — must met, stretch missed.** Exactly one cell sits inside the box (ppl ≤ 9.1 at
+**Q4 recommendation — must met, stretch missed.** One cell sits inside the box (ppl ≤ 9.1 at
 ≤ 37 KB/token): `glrd_70_f256_l4`, **8.918 at 25.21 KB**. Nothing under 37 KB reaches the 8.3 stretch.
-**Q5 time — met.** Worst deviation from the stage 2d/2e prediction is **2.5 %**, against a 10 % bar.
+**Q5 time — met.** Worst deviation from the re-fitted prediction is **2.5 %**, bar 10 %.
 
 ### The recommendation: `palu_full_70_lv4`
 
 M-LRD ratio 0.7, K latent bfp8, V latent bfp4, balanced scale. 518.8 B/token/layer/chip =
-**32.42 KB/token** (2.10x off stock), ppl **9.237**, avg5 **61.08**, decode **56.6 ms** at 4k, max
-context **14336** at batch 32; `decode_check` PCC_min 0.9957, argmax 0.9683 over 63 steps.
+**32.42 KB/token** (2.10x off stock), ppl **9.237** (just outside Q4's 9.1 bar), avg5 **61.08**,
+decode **56.6 ms** at 4k, max context **14336** at batch 32; `decode_check` PCC_min 0.9957,
+argmax 0.9683 over 63 steps.
 
 - **vs stock** (68.00 KB, 7.254, 65.44, 55.4 ms, 4096): 2.10x fewer KV bytes and **3.5x the context**
-  at 1.02x the decode step, costing +1.983 ppl and 4.36 accuracy points.
-- **vs `palu_full_70`** (47.55 KB, 9.028, 61.50, 56.9 ms): the same dump with V moved to bfp4 — **32 %
-  fewer bytes at 0.99x the decode step** for +0.209 ppl and 0.42 points. bfp4 on V is nearly free.
-- `glrd_70_f256_l4` is the Q4-box cell and the best quality per byte measured (25.21 KB, 8.918,
-  62.65), but its group-shared kernel needs **109.2 ms** at 4k — 1.97x stock — so it wins only where
-  capacity, not latency, binds.
+  at 1.02x the decode step, for +1.983 ppl and 4.36 accuracy points.
+- **vs `palu_full_70`** (47.55 KB, 9.028, 61.50, 56.9 ms): V moved to bfp4 — **32 % fewer bytes at
+  0.99x the decode step** for +0.209 ppl and 0.42 points. bfp4 on V is nearly free.
+- `glrd_70_f256_l4` is the Q4-box cell, best quality per byte (25.21 KB, 8.918, 62.65), but its
+  group-shared kernel needs **109.2 ms** at 4k — 1.97x stock — so it wins where capacity, not
+  latency, binds.
 
 ### Q2: did unit scaling matter
 
@@ -102,62 +102,63 @@ At bfp8, no: the four matched 40-window pairs move −0.010, −0.003, −0.029 
 (`palu_full_50`, `palu_full_70`, `glrd_50_f256`, `glrd_70_f256`) — inside the ~±0.05 screening
 noise. At bfp4 it is **catastrophic on the M-LRD dumps** (`palu_full_50` 16.883 → 38.590,
 **+21.707**; `palu_full_70` 9.438 → 29.364, **+19.926**) and merely bad on G-LRD (`glrd_50_f256`
-11.909 → 13.339, +1.430; `glrd_70_f256` 8.519 → 9.641, +1.122). Balanced is the right default, and
-unit scale must never be combined with a bfp4 latent.
+11.909 → 13.339, +1.430; `glrd_70_f256` 8.519 → 9.641, +1.122). Balanced is the right default;
+never combine unit scale with a bfp4 latent.
 
 ### Stock bfp4 against Palu at equal bytes
 
 `baseline_kv4` (36.00 KB, 9.764, 60.52) against `palu_full_50` (35.86 KB, 12.931, 55.84): at the same
-bytes, **format-only compression of the stock cache wins by 3.167 perplexity and 4.68 accuracy
-points**, and decodes 45.3 ms against 55.5. Palu overtakes it only by spending rank differently:
+bytes, **format-only compression of the stock cache wins by 3.167 perplexity and 4.68
+points**, decoding 45.3 ms against 55.5. Palu overtakes it only by spending rank differently:
 `palu_full_70_lv4` is 0.527 ppl and 0.56 points better with 10 % fewer bytes and more context, but
 25 % slower to decode; `glrd_70_f256_l4` is 0.846 ppl and 2.13 points better at 30 % fewer bytes, at
-2.4x the decode time. On this hardware format-only compression is a strong competitor: Palu beats it
-on bytes and quality, never on decode latency.
+2.4x the decode time. Palu beats it on bytes and quality, never on decode latency. Against stock
+bfp8 the format-only cache is **0.82x the decode step** (45.3 against 55.4 ms at 4k) and **3.25x the
+context** (13312 against 4096) for +2.510 ppl and 4.92 points; `palu_full_70` buys back 0.736 ppl
+and 0.98 points for 32 % more bytes and 26 % more decode.
 
 ### The factorial read and the split-budget trigger
 
-At equal bytes perplexity is far more sensitive to `r_v` than to `r_k`: `uni_rk32_rv64` 27.057 against
-`uni_rk64_rv32` 61.156 (**34.10** towards V), `uni_rk64_rv96` 9.746 against `uni_rk96_rv64` 12.767
-(**3.02** towards V); seven of eight equal-byte pairs favour V. It saturates — at total rank 160,
-(32, 128) 11.553 is 1.81 *worse* than (64, 96) — so good cells lie near `r_v ≈ 1.5 r_k`. **The
-trigger fired**, towards V. The split-budget search gives `split_k50_v75` 9.472 against uniform
-(64, 96) 9.746 at byte-identical 680.0 B (per-layer allocation is worth **0.274**), and `split_k25_v75` 11.684 against `palu_full_50` 12.366 at byte-identical
-573.8 B. The **format** axis points the other way: V-only bfp4 strictly dominates K-only bfp4 —
-`palu_full_70` 8.578 → `_lk4` 8.972 (+0.394 for 116 B) → `_lv4` 8.790 (+0.212 for 242 B), and
-`palu_full_50` 12.366 → 14.476 (+2.110 for 66 B) → 13.605 (+1.239 for 204 B). V wants more
-components; K wants more mantissa in each.
+At equal bytes `r_v` beats `r_k`: `uni_rk32_rv64` 27.057 against `uni_rk64_rv32` 61.156
+(**34.10** towards V), `uni_rk64_rv96` 9.746 against `uni_rk96_rv64` 12.767 (**3.02**); seven of
+eight equal-byte pairs favour V. It saturates: at total rank 160, (32, 128) 11.553 is 1.81 *worse*
+than (64, 96), so good cells sit near `r_v ≈ 1.5 r_k`. **The trigger fired**: `split_k50_v75` 9.472
+against uniform (64, 96) 9.746, byte-identical at 680.0 B (**0.274** for per-layer allocation), and
+`split_k25_v75` 11.684 against `palu_full_50_w40` 12.366 at 573.8 B. **Format** points the other
+way, V-only bfp4 dominating K-only: `palu_full_70_w40` 8.578 → `_lk4` 8.972 (+0.394 for 116 B) →
+`_lv4` 8.790 (+0.212 for 242 B); `palu_full_50_w40` 12.366 → 14.476 (+2.110 for 66 B) → 13.605
+(+1.239 for 204 B). V wants components; K wants mantissa.
 
-### Q5: decode against the stage 2d prediction
+### Q5: decode against the (stage 2e re-fitted) cost model
 
-The stage 2e op fit (µs per layer, batch 32; chunks c = context/512) is 47.8 + 88.5c stock, and
+The stage 2e op fit (µs per layer, batch 32; chunks c = context/512) is 47.8 + 88.5c stock,
 57.1 + 85.8c / 68.4 + 92.9c for the fused `dst`+multicast op at `r_k` 32 / 64. The stock row leaves a
 non-attention remainder of 38.00 − 32(47.8 + 88.5·2)/1000 = 30.81 ms at 1k and 31.20 at 4k, so the
-predicted step is 31.0 + 32(fixed + per_chunk·c)/1000.
+predicted step is 31.0 + 32(fixed + per_chunk·c)/1000. Stage 2e replaced the kernel stage 2d's fit
+described, so Q5 checks against the re-fit; against stage 2d's own 130 + 123c the finalists run
+16–19 % *faster* than predicted.
 
 | row | 1k | 4k | 8k | 16k |
 |---|---|---|---|---|
 | predicted (`r_k` 64) | 39.1 | 57.0 | 80.8 | 128.3 |
 | `palu_full_70_l4_fk2dm` | 38.9 (−0.7 %) | 56.0 (−1.7 %) | 79.1 (−2.1 %) | 125.1 (−2.5 %) |
-| `palu_full_70_lv4_fk2dm` | 39.1 (−0.0 %) | 56.6 (−0.7 %) | 79.9 (−1.0 %) | — |
+| `palu_full_70_lv4_fk2dm` | 39.1 (+0.0 %) | 56.6 (−0.7 %) | 79.9 (−1.0 %) | — |
 
-Format-independence is the sharpest test, only the cache format differing: bfp4 is **1.1–2.0 %
-faster** than its bfp8 sibling on the same dump (`glrd_50_f256_l4` 50.5 / 93.7 / 151.5 against
+Format-independence is the sharpest test: bfp4 is **1.5–2.0 % faster** than its bfp8 sibling on
+the same dump (`glrd_50_f256_l4` 50.5 / 93.7 / 151.5 against
 `glrd_50_fk2gdm` 51.3 / 95.6 / 154.6), V-only bfp4 0.4–0.7 % faster. Format enters time only through
-cache traffic, in the helpful direction. The G-LRD kernel has no fit-table entry; its bfp8 sibling is
-its reference.
+cache traffic, helpfully. G-LRD has no fit-table entry; its bfp8 sibling is its reference.
 
 ### Caveats
 
-Uniform ranks are not Fisher ranks, which the split-budget dumps bound but do not remove. Wikitext
+Uniform ranks are not Fisher ranks (the split-budget dumps bound, not remove, that gap). Wikitext
 perplexity is not task accuracy (stage 2c: tasks moved four times more than perplexity). The
 40-window screens carry ~±0.05 noise **and sit about 0.5 ppl below the 141-window instrument**
-(`palu_full_50` 12.366 at 40 against 12.931 at 141); the two are never mixed here — only 141-window
-rows (the finalists, `baseline` 7.254, `baseline_kv4` 9.764) are compared. bfp4 rounding happens at
-cache-write time on device, so the CPU reference is not a bfp4 reference and `decode_check` measures
-kernel fidelity on a bfp4 cache, not the format's quality. The pre-2f bfp8 141-window rows
+(`palu_full_50` 12.366 at 40 against 12.931 at 141); the two are never mixed: only 141-window
+rows (the finalists, `baseline` 7.254, `baseline_kv4` 9.764) are compared. bfp4 rounds at cache-write
+time on device, so the CPU reference is not a bfp4 reference: `decode_check` measures kernel
+fidelity on a bfp4 cache, not the format's quality. The pre-2f bfp8 141-window rows
 (`palu_full_50` 12.931, `palu_full_70` 9.028, `glrd_50_f256` 10.561, `glrd_70_f256` 8.135) were
 measured before the cache-faithful prefill; the shift is −0.033 at 40 windows, inside noise. The
-dashed front in `frontier_2f.png` is drawn through 141-window rows only — `glrd_50_f256_l4`,
-`palu_full_70_l4`, `glrd_70_f256_l4`, `glrd_70_f256` and `baseline` — with the 40-window screens
-plotted faint behind it.
+dashed front in `frontier_2f.png` runs through 141-window rows only (`glrd_50_f256_l4`,
+`palu_full_70_l4`, `glrd_70_f256_l4`, `glrd_70_f256`, `baseline`); the screens plot faint behind.

@@ -134,12 +134,15 @@ def main():
     import importlib.metadata as m
     # --kind stock has no latent cache (Minor 5): null the per-cache fields there -- and
     # latent_quant_in_prefill with them, since a stock row never round-trips through a latent cache --
-    # same "null, not absent" rule R1 already applies to eval_ppl's --cpu rows. kv_dtype (the whole KV
-    # cache) still applies and is kept either way.
+    # same "null, not absent" rule R1 already applies to eval_ppl's --cpu rows. latent_scale is one of
+    # them (2f final review, Minor 6): it names how a *latent* dump's singular values were split, so on
+    # a stock row it described a cache that does not exist. kv_dtype (the whole KV cache) still applies
+    # and is kept either way.
     k_name, v_name = (None, None) if a.kind == "stock" else \
         pm.resolve_latent_dtype_names(a.latent_dtype, a.k_latent_dtype, a.v_latent_dtype)
     r.update({"row": a.row, "kind": a.kind, "palu_dir": a.palu_dir, "fused": a.fused,
-              "group_heads": a.group_heads, "limit": a.limit, "latent_scale": a.latent_scale,
+              "group_heads": a.group_heads, "limit": a.limit,
+              "latent_scale": None if a.kind == "stock" else a.latent_scale,
               "latent_dtype": None if a.kind == "stock" else a.latent_dtype,
               # the *resolved* per-cache formats, so a row says what each cache held
               "k_latent_dtype": k_name, "v_latent_dtype": v_name, "kv_dtype": a.kv_dtype,

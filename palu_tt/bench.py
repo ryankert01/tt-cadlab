@@ -282,11 +282,19 @@ MODEL_MAX_CTX = 131072
 
 
 def _maxctx_probe(mesh, kind, palu_dir, ctx):
-    """One build-and-teardown at ``max_seq_len=ctx``. ``(ok, kv_bytes, err_dict_or_None)``."""
+    """One build-and-teardown at ``max_seq_len=ctx``. ``(ok, kv_bytes, err_dict_or_None)``.
+
+    A successful probe also records the layout it built with in ``GROUP_HEADS`` (2f final review,
+    Minor 4): a maxctx row is read against the decode row for the same dump, and without this the
+    maxctx JSONs carried an empty ``group_heads_per_layer`` and so did not say which kernel layout
+    produced the capacity they report. Only successes write it, so it tracks ``ok_kv``: after the
+    scan and the bisection both, it is the layout of the build at ``max_context``.
+    """
     try:
-        args, model, _ = pm.build_model(mesh.md, kind, palu_dir, max_batch_size=BATCH, max_seq_len=ctx, **FUSED)
+        args, model, cfg = pm.build_model(mesh.md, kind, palu_dir, max_batch_size=BATCH, max_seq_len=ctx, **FUSED)
         kv = pm.kv_bytes_per_token_per_layer(model, args)
-        del model, args
+        GROUP_HEADS[:] = fused.group_heads_used(cfg)
+        del model, args, cfg
         gc.collect()
         return True, kv, None
     except Exception as e:

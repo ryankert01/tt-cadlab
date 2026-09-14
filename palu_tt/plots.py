@@ -134,6 +134,16 @@ FRONTIER_COLOR = {"baseline": "#333333", "palu_full_50": "#2f6fdb", "palu_full_7
 # so a front drawn through both would track window count rather than rank or format.
 FRONT_WINDOWS = 141
 
+# The stage 2f finalists (Task 7): the five rows measured in full at FRONT_WINDOWS windows, and the
+# only rows the write-up names. They are labelled on the frontier figure whether or not they land on
+# the Pareto front -- ``palu_full_70_lv4``, the study's recommendation, is dominated on the (bytes,
+# perplexity) plane by ``glrd_70_f256_l4`` and so carried no label at all until this set was unioned
+# in (2f final review, Important 2), leaving the reader unable to find the recommendation on the
+# study's own figure. A finalist absent from the raw dir simply never plots, so listing one costs
+# nothing.
+FINALISTS = frozenset({"glrd_70_f256_l4", "glrd_50_f256_l4", "palu_full_70_l4",
+                       "palu_full_70_lv4", "baseline_kv4"})
+
 
 def _scan_front(rows):
     """Scanning up in bytes, every row strictly better in perplexity than everything cheaper."""
@@ -162,6 +172,7 @@ def _pareto_front(rows):
 # (a dense low-byte cluster puts several rows within a few pixels of each other on either axis).
 _LABEL_NEIGHBOR_PX = 55  # display pixels (at the figure's own dpi) inside which a point counts as clutter
 _LABEL_DX_PT, _LABEL_DY_PT = 8, 14  # offset magnitude, in points, once a direction is chosen
+_LABEL_FONT_PT = 6  # annotation fontsize, in points; also the vertical extent estimate per line
 
 
 def _place_labels(ax, rows, labelled):
@@ -180,63 +191,94 @@ def _place_labels(ax, rows, labelled):
     # toward the plot instead of off it (the neighbor-repulsion below has no notion of "off the
     # edge of the figure" on its own -- the single most extreme point has no neighbor further out).
     (x_lo, y_lo), (x_hi, y_hi) = ax.transData.transform(list(zip(*[ax.get_xlim(), ax.get_ylim()])))
-    edge_margin = 22
     dpi_scale = ax.figure.dpi / 72.0  # points -> display pixels, at this figure's own dpi
+    dx_px, dy_px = _LABEL_DX_PT * dpi_scale, _LABEL_DY_PT * dpi_scale
+    text_h = _LABEL_FONT_PT * dpi_scale  # one line, va="baseline": the text sits above the anchor
     fallback_up = True
+    placed = []  # boxes already annotated, so a later label can be steered off an earlier one
     for i, (r, (px, py)) in enumerate(pts):
         if r["row"] not in labelled:
             continue
         others = [(qx, qy) for j, (_, (qx, qy)) in enumerate(pts) if j != i]
+        text = r["row"] + (f" ({r['windows']}w)" if r.get("windows") != FRONT_WINDOWS else "")
+        text_w = 3.6 * len(text) * dpi_scale  # ~3.6 pt per character at this font size
+
+        def _box(sx, sy, k, px=px, py=py, text_w=text_w):
+            """``((x0, x1), (y0, y1))`` the text would occupy, in display pixels, for one candidate.
+
+            ha='left' text extends rightward from its anchor by roughly its own width; ha='right'
+            extends leftward the same way. ``k`` scales the vertical offset: a second, further row
+            for a label whose near row is already taken.
+            """
+            x = px + (dx_px if sx >= 0 else -dx_px)
+            y = py + k * (dy_px if sy >= 0 else -dy_px)
+            return (x, x + text_w) if sx >= 0 else (x - text_w, x), (y, y + text_h)
+
+        def _off_axes(box):
+            (x0, x1), (y0, y1) = box
+            return not (x0 >= x_lo and x1 <= x_hi and y0 >= y_lo and y1 <= y_hi)
+
+        def _covers(box):
+            """Markers the text box would be drawn on top of (2 px of slack around the glyphs)."""
+            (x0, x1), (y0, y1) = box
+            return sum(1 for qx, qy in others if x0 - 2 <= qx <= x1 + 2 and y0 - 2 <= qy <= y1 + 2)
+
+        def _collides(box):
+            """Already-placed labels this box would overlap."""
+            (x0, x1), (y0, y1) = box
+            return sum(1 for (a0, a1), (b0, b1) in placed if x0 <= a1 and a0 <= x1 and y0 <= b1 and b0 <= y1)
+
+        # Preferred vertical side: away from the nearest neighbor, else alternating.
         nearest = min((math.hypot(px - qx, py - qy) for qx, qy in others), default=float("inf"))
         if nearest < _LABEL_NEIGHBOR_PX:
             qx, qy = min(others, key=lambda q: math.hypot(px - q[0], py - q[1]))
-            vy = 1.0 if py >= qy else -1.0
+            wy = 1.0 if py >= qy else -1.0
         else:
-            vy = 1.0 if fallback_up else -1.0
+            wy = 1.0 if fallback_up else -1.0
             fallback_up = not fallback_up
-
-        # ha='left' text extends rightward from the anchor by roughly its own width; ha='right'
-        # extends leftward the same way. Pick whichever side the text would sweep over fewer other
-        # points at roughly its own height -- clearing the single nearest neighbor is not enough
-        # when a third point sits further along the text's own span (2f Task 6 review, Important 3).
-        text = r["row"] + (f" ({r['windows']}w)" if r.get("windows") != FRONT_WINDOWS else "")
-        text_w = 3.6 * len(text) * dpi_scale
+        # Preferred horizontal side: whichever side the text would sweep over fewer points at
+        # roughly its own height -- clearing the single nearest neighbor is not enough when a third
+        # point sits further along the text's own span (2f Task 6 review, Important 3).
         band = 9 * dpi_scale
         right_hits = sum(1 for qx, qy in others if px <= qx <= px + text_w and abs(qy - py) < band)
         left_hits = sum(1 for qx, qy in others if px - text_w <= qx <= px and abs(qy - py) < band)
-        vx = 1.0 if right_hits <= left_hits else -1.0
+        wx = 1.0 if right_hits <= left_hits else -1.0
 
-        if py > y_hi - edge_margin:
-            vy = -1.0
-        elif py < y_lo + edge_margin:
-            vy = 1.0
-        if px > x_hi - edge_margin:
-            vx = -1.0
-        elif px < x_lo + edge_margin:
-            vx = 1.0
+        # Both preferences above are computed from *anchor* positions, which is why they could still
+        # put a label off the axes or on top of a marker: the review measured four labels outside the
+        # axes (worst 63 px, into the y-tick column) and `glrd_50_f256_l4_w40`'s label covering the
+        # `palu_full_70_l4` finalist marker (2f final review, Important 3 / carried Minor A). Score
+        # the candidate placements by where the text actually lands -- inside the axes first, then
+        # markers covered, then labels already placed -- and fall back to the near row and the
+        # preferred corner on a tie, so everything the clutter heuristics above used to decide, they
+        # still decide.
+        vx, vy, vk = min((_off_axes(_box(sx, sy, k)), _covers(_box(sx, sy, k)), _collides(_box(sx, sy, k)),
+                          k != 1.0, sx != wx, sy != wy, sx, sy, k)
+                         for sx in (1.0, -1.0) for sy in (1.0, -1.0) for k in (1.0, 2.0))[-3:]
+        placed.append(_box(vx, vy, vk))
 
         dx = _LABEL_DX_PT if vx >= 0 else -_LABEL_DX_PT
-        dy = _LABEL_DY_PT if vy >= 0 else -_LABEL_DY_PT
+        dy = vk * (_LABEL_DY_PT if vy >= 0 else -_LABEL_DY_PT)
         screen = r.get("windows") != FRONT_WINDOWS
         c = FRONTIER_COLOR.get(r["dump"], "#3c9d6b")
         ax.annotate(text, (r["kb_token"], r["ppl"]), textcoords="offset points", xytext=(dx, dy),
-                    ha="left" if dx > 0 else "right", fontsize=6, color=c,
+                    ha="left" if dx > 0 else "right", fontsize=_LABEL_FONT_PT, color=c,
                     alpha=0.55 if screen else 1.0)
 
 
-def frontier_figure(raw_dir, out_png, ranks=None):
+def frontier_figure(raw_dir, out_png, ranks=None, finalists=FINALISTS):
     """Perplexity against KB per token for every stage 2f cell (``report.frontier_rows``): marker
     shape is K format, fill is V format, colour is dump family, with the Pareto front (lowest
     perplexity at each byte budget) drawn through the points.
 
-    Only the Pareto-front points and the stock rows carry a text label. Every point used to be
-    labelled, which was unreadable in the dense low-byte cluster (a whole grid of cells lands on a
-    handful of byte budgets, so their labels sat on top of each other); the front and stock are the
-    points a reader actually looks up by name, and the full cell-by-cell listing is the table in
-    ``docs/results/stage2f.md``. The surviving labels are still offset away from their point (see
-    ``_place_labels``), now steered away from whichever point -- labelled or not -- sits nearest to
-    it on screen, since a fixed alternating offset can still collide when two labelled points, or a
-    label and an unrelated marker, happen to land close together.
+    The Pareto-front points, the stock rows and the ``finalists`` (default ``FINALISTS``) carry a
+    text label. Every point used to be labelled, which was unreadable in the dense low-byte cluster
+    (a whole grid of cells lands on a handful of byte budgets, so their labels sat on top of each
+    other); the front, stock and the finalists are the points a reader actually looks up by name,
+    and the full cell-by-cell listing is the table in ``docs/results/stage2f.md``. The surviving
+    labels are still offset away from their point (see ``_place_labels``), on whichever side keeps
+    them inside the axes and off the other points, since a fixed alternating offset collides
+    whenever two labelled points, or a label and an unrelated marker, land close together.
 
     The dashed front is drawn through ``FRONT_WINDOWS``-window rows only (see ``_pareto_front``).
     Rows screened at fewer windows are plotted faint, behind the rest, and get their own legend
@@ -253,7 +295,7 @@ def frontier_figure(raw_dir, out_png, ranks=None):
     front = _pareto_front(rows)
     screens = [r for r in rows if r.get("windows") != FRONT_WINDOWS]
     labelled = ({r["row"] for r in front} | {r["row"] for r in rows if r["dump"] == "baseline"}
-                | {r["row"] for r in _scan_front(screens)})
+                | {r["row"] for r in _scan_front(screens)} | set(finalists))
     fig, ax = plt.subplots(figsize=(8, 5))
     for r in rows:
         c = FRONTIER_COLOR.get(r["dump"], "#3c9d6b")

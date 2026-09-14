@@ -246,7 +246,7 @@
  "fused": "off",
  "group_heads": "auto",
  "limit": null,
- "latent_scale": "balanced",
+ "latent_scale": null,
  "latent_dtype": null,
  "k_latent_dtype": null,
  "v_latent_dtype": null,

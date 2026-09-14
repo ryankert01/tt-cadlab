@@ -129,7 +129,8 @@ def main():
     # reference is built with it too, so it is recorded on both. A --kind stock row has no latent cache
     # either (only kv_dtype -- the whole KV cache -- applies to it), so the latent fields are null there
     # too even on a device row -- including latent_quant_in_prefill, which describes a round trip
-    # through a latent cache that a stock row never performs.
+    # through a latent cache that a stock row never performs, and latent_scale, which names how a
+    # latent dump's singular values were split (2f final review, Minor 6).
     formats = {"latent_dtype": None, "k_latent_dtype": None, "v_latent_dtype": None, "kv_dtype": None,
                "latent_quant_in_prefill": None}
     if not a.cpu:
@@ -141,7 +142,7 @@ def main():
                    "k_latent_dtype": k_name, "v_latent_dtype": v_name, "kv_dtype": a.kv_dtype,
                    "latent_quant_in_prefill": None if a.kind == "stock" else bool(a.latent_quant_in_prefill)}
     r.update({"row": a.row, "kind": a.kind, "palu_dir": a.palu_dir,
-              "latent_scale": a.latent_scale, **formats})
+              "latent_scale": None if a.kind == "stock" else a.latent_scale, **formats})
     out.write_text(json.dumps(r, indent=1))
     print(json.dumps(r))
 

@@ -7,7 +7,7 @@
  "row": "baseline_kv4",
  "kind": "stock",
  "palu_dir": null,
- "latent_scale": "balanced",
+ "latent_scale": null,
  "latent_dtype": null,
  "k_latent_dtype": null,
  "v_latent_dtype": null,
