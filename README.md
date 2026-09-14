@@ -45,7 +45,10 @@ The fused K-reconstruction decode op lives in the tt-metal submodule on branch `
 `ryankert01/tt-metal` exists and the pointer is pushed there, a fresh clone cannot fetch the
 submodule commit -- the working environment on the shared box has it. After editing host-side
 C++ (program factory, op, bindings) run `scripts/build_ttnn.sh`; kernel-only edits are picked up
-at the next op run (JIT).
+at the next op run (JIT). tt-metal keys that JIT cache on the kernel's *path*, defines and
+compile-time args -- never on the source bytes -- so an edited kernel would otherwise keep running
+from the stale binary; `scripts/run_device.sh` hashes the palu kernel sources on every device run and
+purges the palu entries of `~/.cache/tt-metal-cache` whenever that hash changes (stage 2e finding).
 
 ## Producing the weight sets
 
@@ -224,7 +227,8 @@ and `--table-mcast` are also on `profile_decode`), all added in stage 2e:
   the `lat @ [u_k | u_k T]` block goes to L1 (`c_10`) and an SFPU add sums `A cos + B sin`. `pack`
   keeps that block but rotates two column tiles per DST trip and lets the packer's L1 accumulate do
   the add. `dst` matmuls straight into DST, multiplies in place with `mul_reuse_dest_tiles` and
-  accumulates in the packer, so the `c_10` block disappears. **Default `dst`** (the shipped variant):
+  accumulates in the packer, so the `c_10` block shrinks to the statistics peel scratch (`PNHt` tiles
+  instead of `2 * Wt`). **Default `dst`** (the shipped variant):
   85.6 us per chunk per layer against `legacy`'s 114.4 at `r_k` 32 / `r_v` 128.
 - `--table-mcast {off,on}` reads the Phase 2 angle table once per grid *column* and multicasts it
   down the column instead of every core reading it from DRAM. Phase 2 only (Phase 1 streams the table

@@ -30,9 +30,10 @@ from models.tt_transformers.tt.rope import RotarySetup
 
 from palu_tt import convert, device as dev, fused, hf, model as pm
 from palu_tt.attention import PaluAttention
-# LATENT_DTYPES / resolve_latent_dtypes(_names) live in palu_tt.model (imported by all four CLIs
-# already); re-exported here so this module's own tests keep working.
-from palu_tt.model import LATENT_DTYPES, resolve_latent_dtype_names, resolve_latent_dtypes
+# LATENT_DTYPES / resolve_latent_dtypes(_names) / resolve_rot_switches live in palu_tt.model
+# (imported by all four CLIs already); re-exported here so this module's own tests keep working.
+from palu_tt.model import (LATENT_DTYPES, resolve_latent_dtype_names, resolve_latent_dtypes,
+                           resolve_rot_switches)
 
 RAW = Path("docs/results/raw")
 
@@ -447,10 +448,13 @@ def main():
         # row says what each cache actually held rather than which flags were typed
         k_name, v_name = resolve_latent_dtype_names(a.latent_dtype, a.k_latent_dtype, a.v_latent_dtype)
         latent_fields = {"latent_dtype": a.latent_dtype, "k_latent_dtype": k_name, "v_latent_dtype": v_name}
+    # the *effective* stage 2e switches (not the flags): --fused off has no K rebuild mode at all and
+    # the multicast is folded away outside Phase 2, so a row says what the op ran with
+    rot_mode, table_mcast = resolve_rot_switches(a.fused, a.rot_mode, a.table_mcast)
     r = {"row": a.row, "kind": a.kind, "palu_dir": a.palu_dir, "what": a.what,
          "fused": a.fused, "fused_k_chunk": a.fused_k_chunk, "group_heads": a.group_heads,
          "group_heads_per_layer": list(GROUP_HEADS), "batch": a.batch,
-         "rot_mode": a.rot_mode, "table_mcast": a.table_mcast, **latent_fields, "kv_dtype": a.kv_dtype,
+         "rot_mode": rot_mode, "table_mcast": table_mcast, **latent_fields, "kv_dtype": a.kv_dtype,
          "latent_scale": a.latent_scale}
     if a.what in ("decode", "attention"):  # prefill/maxctx use their own fixed lengths, not CONTEXTS
         r["contexts"] = list(CONTEXTS)

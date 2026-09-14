@@ -114,7 +114,10 @@ def test_phase1_r_v_full_width(mesh_device):
 
 def test_envelope_is_enforced(mesh_device):
     q, k_lat, u_k, v, pos, cos, sin = _inputs(1, 256, 64, 64)
-    good = dict(head_dim_v=64, cur_pos_tensor=_pos(mesh_device, pos), scale=HD ** -0.5, **_cfg(128))
+    # rot_mode is named, not defaulted, so this envelope's coverage does not follow the op's default
+    # (Task 9 review, M8); the validation messages below are mode-independent.
+    good = dict(head_dim_v=64, cur_pos_tensor=_pos(mesh_device, pos), scale=HD ** -0.5, rot_mode="dst",
+                **_cfg(128))
     w = _dev(mesh_device, fused.w_rot_from_u_k(u_k)[None])
     cs = _dev(mesh_device, fused.cs_table(cos, sin, 256)[None, None])
     with pytest.raises(RuntimeError, match="r_k"):
@@ -136,6 +139,10 @@ def test_envelope_is_enforced(mesh_device):
 
 
 ROT_MODES = ["legacy", "pack", "dst"]
+# The table multicast is orthogonal to the K rebuild, so its bit-identity test sweeps the two modes at
+# the ends of stage 2e -- the pre-2e "legacy" and the shipped "dst" -- rather than all three: "pack"
+# shares "dst"'s packer-accumulate tail and adds device time to a test that already runs five layouts.
+ROT_MODES_MCAST = ["legacy", "dst"]
 
 
 @pytest.mark.parametrize("rot_mode", ROT_MODES)
@@ -291,7 +298,8 @@ def test_group_envelope_is_enforced(mesh_device):
     q, k_lat, u_k, v_lat, u_v, pos, cos, sin = _inputs_group(1, 256, 128, 128, 4)
     w = _dev(mesh_device, fused.w_rot_from_u_k(u_k)[None])
     cs = _dev(mesh_device, fused.cs_table(cos, sin, 256)[None, None])
-    good = dict(head_dim_v=HD, cur_pos_tensor=_pos(mesh_device, pos), scale=HD ** -0.5, **_cfg(128))
+    good = dict(head_dim_v=HD, cur_pos_tensor=_pos(mesh_device, pos), scale=HD ** -0.5, rot_mode="dst",
+                **_cfg(128))
     with pytest.raises(RuntimeError, match="heads_per_group"):      # 3 latent heads do not divide 4 KV heads
         ttnn.transformer.palu_sdpa_decode(_dev(mesh_device, q), _dev(mesh_device, torch.randn(1, 3, 256, 128)), w, cs,
                                           _dev(mesh_device, v_lat), u_v=_dev(mesh_device, u_v[None]), **good)
@@ -379,7 +387,7 @@ def test_group_shared_envelope_is_enforced(mesh_device):
     w = _dev(mesh_device, fused.w_rot_from_u_k(u_k)[None])
     cs = _dev(mesh_device, fused.cs_table(cos, sin, 256)[None, None])
     good = dict(head_dim_v=HD, cur_pos_tensor=_pos(mesh_device, pos), u_v=_dev(mesh_device, u_v[None]),
-                scale=HD ** -0.5, **_cfg(128))
+                scale=HD ** -0.5, rot_mode="dst", **_cfg(128))
     with pytest.raises(RuntimeError, match="heads_per_core"):      # 3 does not divide heads_per_group 4
         ttnn.transformer.palu_sdpa_decode(_dev(mesh_device, q), _dev(mesh_device, k_lat), w, cs,
                                           _dev(mesh_device, v_lat), heads_per_core=3, **good)
@@ -455,7 +463,7 @@ def test_group_shared_phase_b_envelope_is_enforced(mesh_device):
     w = _dev(mesh_device, fused.w_rot_from_u_k(u_k)[None])
     cs = _dev(mesh_device, fused.cs_table(cos, sin, 256)[None, None])
     good = dict(head_dim_v=HD, cur_pos_tensor=_pos(mesh_device, pos), u_v=_dev(mesh_device, u_v[None]),
-                scale=HD ** -0.5, **_cfg(128))
+                scale=HD ** -0.5, rot_mode="dst", **_cfg(128))
     with pytest.raises(RuntimeError, match="KV head count"):        # 8 > the 4 KV heads
         ttnn.transformer.palu_sdpa_decode(_dev(mesh_device, q), _dev(mesh_device, k_lat), w, cs,
                                           _dev(mesh_device, v_lat), heads_per_core=8, **good)
@@ -481,7 +489,7 @@ def test_pinned_heads_per_core_that_does_not_fit_the_grid_is_rejected(mesh_devic
     tiny["program_config"] = ttnn.SDPAProgramConfig(compute_with_storage_grid_size=(2, 2), q_chunk_size=0,
                                                     k_chunk_size=128, exp_approx_mode=False)
     good = dict(head_dim_v=HD, cur_pos_tensor=_pos(mesh_device, pos), u_v=_dev(mesh_device, u_v[None]),
-                scale=HD ** -0.5, **tiny)
+                scale=HD ** -0.5, rot_mode="dst", **tiny)
     w = _dev(mesh_device, fused.w_rot_from_u_k(u_k)[None])
     cs = _dev(mesh_device, fused.cs_table(cos, sin, 256)[None, None])
     with pytest.raises(RuntimeError, match="only 4 available"):
@@ -504,13 +512,20 @@ def test_per_head_reduction_is_accurate_under_fp32_dest_acc(mesh_device):
     assert ok, f"per-head tree reduction under fp32 dest accumulate: {msg}"
 
 
+@pytest.mark.parametrize("rot_mode", ROT_MODES_MCAST)
 @pytest.mark.parametrize("batch,S,grid", [(32, 2048, (8, 8)), (8, 2048, (8, 8)), (1, 2048, (8, 8)),
                                           (32, 2048, (8, 6)), (5, 512, (8, 8))],
                          ids=["b32_full", "b8_split", "b1_split16", "b32_partial_columns", "b5_idle_leader"])
-def test_table_mcast_is_bit_identical(mesh_device, batch, S, grid):
+def test_table_mcast_is_bit_identical(mesh_device, batch, S, grid, rot_mode):
     """One leader per grid column reads the Phase 2 table and multicasts it; every layout (full columns,
     sequence splits, and an 8x6 grid at batch 32 where 32 of 48 cores are active so columns are partial)
     must produce exactly the output of the per-core read.
+
+    ``rot_mode`` is passed explicitly and swept over both the pre-2e mode and the shipped one: the
+    multicast only changes how the angle table *reaches* `c_13`/`c_14`, so it must be bit-identical
+    whichever way the kernel then rebuilds the K row tile. Before the stage 2e Task 9 default flip this
+    test named no mode and so ran ``legacy``; leaving it unnamed would have silently moved its coverage
+    to ``dst`` and dropped ``legacy`` + multicast altogether (Task 9 review, M8).
 
     b5_idle_leader is the layout that pins where the multicast has to sit in the reader: batch 5 is 3
     cores per (batch, KV head), a 512-row cache is one chunk, so only the first core of each triple has
@@ -525,7 +540,8 @@ def test_table_mcast_is_bit_identical(mesh_device, batch, S, grid):
         out = ttnn.transformer.palu_sdpa_decode(
             _dev(mesh_device, q), _dev(mesh_device, k_lat), _dev(mesh_device, fused.w_rot_from_u_k(u_k)[None]),
             _dev(mesh_device, fused.cs_table(cos, sin, S)[None, None]), _dev(mesh_device, v), head_dim_v=128,
-            cur_pos_tensor=_pos(mesh_device, pos), scale=HD ** -0.5, table_mcast=mcast, **extra, **_cfg(0, grid))
+            cur_pos_tensor=_pos(mesh_device, pos), scale=HD ** -0.5, rot_mode=rot_mode, table_mcast=mcast,
+            **extra, **_cfg(0, grid))
         return _host(out)
     # Multicast run FIRST: the per-core read would otherwise leave the correct table in every core's c_13 /
     # c_14 at the same L1 address, and a multicast that silently did nothing would still read as correct.
@@ -535,14 +551,17 @@ def test_table_mcast_is_bit_identical(mesh_device, batch, S, grid):
 
 def test_bfp4_latents_are_accepted_and_close(mesh_device):
     """bfp4 K and V latents (stage 2e L4 / stage 2f): the op must accept the format and the output must
-    still track the fp32 reference, though at a looser bar than bfp8 (4-bit mantissas)."""
+    still track the fp32 reference, though at a looser bar than bfp8 (4-bit mantissas).
+
+    ``rot_mode`` is named rather than defaulted so this bar measures a fixed rebuild mode -- the shipped
+    ``dst`` -- instead of following whatever the op's default happens to be (Task 9 review, M8)."""
     q, k_lat, u_k, v, pos, cos, sin = _inputs(32, 1024, 64, 128)
     S = 1024
     c = fused.chunk_size(S)
     out = ttnn.transformer.palu_sdpa_decode(
         _dev(mesh_device, q), _dev(mesh_device, k_lat, ttnn.bfloat4_b), _dev(mesh_device, fused.w_rot_from_u_k(u_k)[None]),
         _dev(mesh_device, fused.cs_table(cos, sin, S)[None, None]), _dev(mesh_device, v, ttnn.bfloat4_b), head_dim_v=128,
-        cur_pos_tensor=_pos(mesh_device, pos), scale=HD ** -0.5,
+        cur_pos_tensor=_pos(mesh_device, pos), scale=HD ** -0.5, rot_mode="dst",
         rot_step=_dev(mesh_device, fused.rot_step_table(cos, sin, c)[None, None], ttnn.float32),
         trans_mat=_dev(mesh_device, fused.trans_mat_tile()), **_cfg(0))
     ref = fused.reference_decode(q, k_lat, u_k, v, pos, cos, sin, HD ** -0.5)

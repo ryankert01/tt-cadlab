@@ -404,6 +404,30 @@ separate pack disappear. It is the shipped default: 85.6 us per chunk per layer 
 `r_k` 32 / `r_v` 128 (`docs/results/stage2e.md`), the same second rounding as `pack`, and measured PCC 0.999+
 against `legacy` at every calibrated rank.
 
+### C3.5. The angle table is multicast down each grid column (stage 2e)
+
+`table_mcast` is the other half of the shipped default, and the larger win of the two: it moves the fused op's
+fixed cost from 118.7 to 57.4 us per layer (`docs/results/stage2e.md` §1), because in Phase 2 all 64 active
+cores were reading the same chunk-relative `[cos | sin]` table out of DRAM.
+
+The roles come from the active-core list alone (`palu_sdpa_decode_program_factory.cpp`, "Stage 2e: table
+multicast leaders"): for each grid column the active cores are counted and their `y` range measured, and the
+**topmost active core of that column** is the leader, which reads the table once and multicasts it to the
+`k - 1` cores below it. The destination is a solid row span (`y_min + 1 .. y_max`), so a column whose active
+cores are not contiguous is rejected by a `TT_FATAL` rather than written into an idle core's L1 -- in practice
+active cores fill the grid row-major, so a column's active set is a prefix from the top and the leader is
+`y == 0`. The leader borrows the reader's K-multicast runtime args (`do_k_mcast`, `mcast_x`, `mcast_y0/y1`,
+`num_dests`), which are free in the Palu envelope because the K multicast never runs there; column-major group
+indexing (`q_heads_parallel_factor > 1`) already owns those args, so the two are mutually exclusive and the
+factory fatals if both are asked for. In the reader the multicast sits above every early exit but the
+idle-core one, so **a leader that owns no chunk of its own still reads and broadcasts the table**: a skipped
+batch (`cur_pos == -1`) and a sequence split that leaves a core no chunk both return before the K/V loop, and
+a leader that took one of those exits would leave its column waiting on the semaphore forever (the
+`b5_idle_leader` case of `test_table_mcast_is_bit_identical`). A genuinely idle core returns earlier still and
+is in no column's active set, so no leader ever multicasts to one. The table is chunk-relative, so its height
+is the pinned K chunk -- a per-core dynamic chunk would make the leader and its receivers disagree on tile
+counts, which is why the multicast asserts a nonzero `Sk_chunk_t`.
+
 ### C4. Where the angles come from: Phase 1 and Phase 2
 
 ![Fig. C4](figures/kernel_c4_phase2.svg)

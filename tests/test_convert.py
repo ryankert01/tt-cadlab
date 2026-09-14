@@ -419,9 +419,11 @@ def test_convert_version_is_4_and_group_size_default_is_1():
 
 
 def test_runtime_ships_the_stage2e_dst_rebuild_and_table_multicast():
-    """Stage 2e Task 9: `dst` + `table_mcast` is the shipped variant (39.1 / 55.6 / 77.4 ms at
-    1k / 4k / 8k on palu_full_50 against legacy's 43.0 / 65.0 / 94.5), so it is what a runtime built
-    from nothing but the dataclass runs. The other two modes stay reachable through --rot-mode."""
+    """Stage 2e Task 9: `dst` + `table_mcast` is the shipped variant (whole-step decode `min_ms`
+    39.0 / 55.5 / 77.4 at 1k / 4k / 8k on palu_full_50 against legacy's 42.8 / 65.0 / 94.5 -- the
+    basis the spec's S4 bars and `docs/results/stage2e.md`'s tables use), so it is what a runtime
+    built from nothing but the dataclass runs. The other two modes stay reachable through
+    --rot-mode."""
     from palu_tt.convert import PaluRuntime
     rt = PaluRuntime()
     assert rt.rot_mode == "dst"

@@ -30,6 +30,25 @@ def resolve_latent_dtypes(latent, k_latent, v_latent):
     return LATENT_DTYPES[k], LATENT_DTYPES[v]
 
 
+def resolve_rot_switches(fused, rot_mode, table_mcast):
+    """The stage 2e switches a run *actually had*, from the three CLI flags, for its result JSON.
+
+    ``--fused off`` runs no fused op, so there is no K rebuild mode: ``None``, not an echo of an
+    argparse default the run never reached. ``table_mcast`` is Phase 2 only and is folded away
+    everywhere else -- the op computes ``table_mcast && rot_step.has_value()``, the program factory
+    ``table_mcast && phase2`` and ``PaluAttention`` ``rt.table_mcast and self.phase2`` -- so anything
+    but ``--fused p2`` records ``"off"``. Written once here because ``bench`` and ``decode_check``
+    both echo the pair: with the stage 2e Task 9 defaults (``dst``/``on``) echoing the flags instead
+    of the switches would have a ``--fused p1`` or ``--fused off`` row describe a multicast that
+    never ran (Task 9 review, I3).
+
+    ``rot_mode`` is *not* folded for Phase 1: Phase 1 rebuilds K through the same
+    ``palu_build_k_chunk``, so the mode is live there and is recorded as passed.
+    """
+    return (rot_mode if fused != "off" else None,
+            table_mcast if fused == "p2" else "off")
+
+
 def build_model(mesh_device, kind: str, palu_dir: Optional[str] = None, max_batch_size: int = 1, max_seq_len: int = 2048,
                 n_layers: Optional[int] = None, dtype=ttnn.bfloat8_b, latent_dtype=None,
                 k_latent_dtype=None, v_latent_dtype=None, kv_cache_dtype=None,
@@ -46,9 +65,10 @@ def build_model(mesh_device, kind: str, palu_dir: Optional[str] = None, max_batc
     group-shared mode (None = pick the largest that fits L1 per layer, 1 = the stage 2b per-head
     kernel). rot_mode / table_mcast: stage 2e, how the fused op rebuilds a K row tile ("legacy" /
     "pack" / "dst") and whether one core per grid column reads the Phase 2 angle table and multicasts
-    it; the shipped defaults are "dst" and True (stage 2e Task 9 -- 39.1 / 55.6 / 77.4 ms at 1k / 4k /
-    8k on palu_full_50 against legacy's 43.0 / 65.0 / 94.5). Only meaningful with use_fused_k, and the
-    multicast only in Phase 2. latent_scale: stage 2f, "balanced" (Palu's split, default) or "unit" (every latent
+    it; the shipped defaults are "dst" and True (stage 2e Task 9 -- whole-step decode min_ms
+    39.0 / 55.5 / 77.4 at 1k / 4k / 8k on palu_full_50 against legacy's 42.8 / 65.0 / 94.5). Only
+    meaningful with use_fused_k, and the multicast only in Phase 2. latent_scale: stage 2f,
+    "balanced" (Palu's split, default) or "unit" (every latent
     component rescaled to unit variance -- see convert.unit_scale_lowrank). latent_quant_in_prefill:
     stage 2f, round-trip the prefill latents through the cache format before reconstructing K and V, so
     the prefill-only instruments (eval_ppl, eval_tasks) score what decode reads back; False restores the

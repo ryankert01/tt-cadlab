@@ -169,6 +169,20 @@ def test_latent_dtype_flags_resolve_to_ttnn_formats():
     assert resolve_latent_dtypes("bfp4", None, "bfp8") == (ttnn.bfloat4_b, ttnn.bfloat8_b)
 
 
+def test_rot_switches_recorded_are_the_effective_ones_not_the_flags():
+    """Stage 2e Task 9 review (I3): with the shipped defaults (``dst`` / ``on``) a result JSON that
+    echoed the argparse flags would claim a K rebuild mode for a run with no fused op at all, and a
+    multicast for a Phase 1 run where the op folds it away (``table_mcast && rot_step.has_value()``).
+    The recorded pair is the effective one; ``rot_mode`` is *not* folded, because Phase 1 rebuilds K
+    through the same ``palu_build_k_chunk``."""
+    from palu_tt.bench import resolve_rot_switches
+    assert resolve_rot_switches("p2", "dst", "on") == ("dst", "on")
+    assert resolve_rot_switches("p2", "legacy", "off") == ("legacy", "off")
+    assert resolve_rot_switches("p1", "dst", "on") == ("dst", "off")     # multicast is Phase 2 only
+    assert resolve_rot_switches("off", "dst", "on") == (None, "off")     # no fused op ran at all
+    assert resolve_rot_switches("off", "legacy", "off") == (None, "off")
+
+
 def test_kv_dtype_default_is_a_no_op_and_bfp4_only_moves_the_kv_cache():
     """Review finding (Important 1): the no-op guard in ``set_kv_cache_dtype`` is the single thing
     keeping every stage 2/2c/2d/2e row byte-identical under the new ``--kv-dtype`` default (bfp8) --

@@ -593,6 +593,21 @@ def test_stage2e_tables_render_from_a_fixture_raw_dir(tmp_path):
                  "8192": {"p50_ms": 97.7, "min_ms": 97.7}},
     })
 
+    # Task 9's G-LRD S1 rows (review finding M9): the shipped group-shared cell and the same-dump
+    # legacy reference it is measured against are in ROWS2E, so they must reach the whole-step and
+    # fidelity tables instead of living only in the hand-written S1 bullet.
+    _write(raw, "bench_decode_glrd_50_f256_fk2", {
+        "row": "glrd_50_f256_fk2", "kind": "palu", "palu_dir": "/z", "what": "decode",
+        "data": {"1024": {"p50_ms": 54.3, "min_ms": 54.2}, "4096": {"p50_ms": 106.0, "min_ms": 105.8},
+                 "8192": {"p50_ms": 174.9, "min_ms": 174.8}},
+    })
+    _write(raw, "bench_decode_glrd_50_fk2gdm", {
+        "row": "glrd_50_fk2gdm", "kind": "palu", "palu_dir": "/z", "what": "decode",
+        "data": {"1024": {"p50_ms": 51.3, "min_ms": 51.3}, "4096": {"p50_ms": 95.6, "min_ms": 95.5},
+                 "8192": {"p50_ms": 154.7, "min_ms": 154.6}},
+    })
+    _write(raw, "decode_check_glrd_50_fk2gdm", _decode_check(0.9979, 0.9991, 0.937))
+
     _write(raw, "decode_check_palu_full_50_fk2", _decode_check(0.9980, 0.9994, 0.921))
     _write(raw, "decode_check_palu_full_70_fk2", _decode_check(0.9988, 0.9993, 0.984))
     _write(raw, "decode_check_palu_full_50_fk2_l4", _decode_check(0.9935, 0.9987, 0.905))
@@ -629,6 +644,9 @@ def test_stage2e_tables_render_from_a_fixture_raw_dir(tmp_path):
 
     # whole-step table: both real rows render as numbers, not "(not measured)".
     assert "| palu_full_50_fk2 | 42.9 | 65.0 | 94.5 |" in text
+    # M9: the two G-LRD rows are in ROWS2E, so they render here too.
+    assert "| glrd_50_fk2gdm | 51.3 | 95.5 | 154.6 |" in text
+    assert "| glrd_50_f256_fk2 | 54.2 | 105.8 | 174.8 |" in text
     assert "| baseline | " in text and "(not measured)" not in next(
         l for l in text.splitlines() if l.startswith("| baseline | "))
 
@@ -638,6 +656,7 @@ def test_stage2e_tables_render_from_a_fixture_raw_dir(tmp_path):
     fidelity = text.split("## Decode fidelity", 1)[1].split("## bfp4", 1)[0]
     assert "| palu_full_50_fk2 | 0.9980 / 0.9994 | 0.921 |" in fidelity
     assert "| palu_full_50_fk2_l4 | 0.9935 / 0.9987 | 0.905 |" in fidelity
+    assert "| glrd_50_fk2gdm | 0.9979 / 0.9991 | 0.937 |" in fidelity   # M9
 
     # Minor 9: the bfp8/bfp4 perplexity cells are checked for equality, not against a hard-coded number.
     bfp4 = text.split("## bfp4 latents", 1)[1]

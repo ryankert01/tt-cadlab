@@ -119,9 +119,12 @@ def main():
     pccs = [_pcc(naive_decode[i], fused_decode[i]) for i in range(naive_decode.shape[0])]
     # the *resolved* per-cache formats, so a row says what each cache held
     k_name, v_name = pm.resolve_latent_dtype_names(a.latent_dtype, a.k_latent_dtype, a.v_latent_dtype)
+    # the *effective* stage 2e switches: the multicast is Phase 2 only and is folded away in Phase 1,
+    # so a --fused p1 row must not echo "on" for a multicast that never ran
+    rot_mode, table_mcast = pm.resolve_rot_switches(a.fused, a.rot_mode, a.table_mcast)
     r = {"row": a.row, "palu_dir": a.palu_dir, "fused": a.fused, "fused_k_chunk": a.fused_k_chunk,
          "group_heads": a.group_heads, "group_heads_per_layer": list(GROUP_HEADS),
-         "rot_mode": a.rot_mode, "table_mcast": a.table_mcast, "latent_dtype": a.latent_dtype,
+         "rot_mode": rot_mode, "table_mcast": table_mcast, "latent_dtype": a.latent_dtype,
          "k_latent_dtype": k_name, "v_latent_dtype": v_name, "kv_dtype": a.kv_dtype,
          "latent_scale": a.latent_scale,
          "steps": naive_decode.shape[0],
