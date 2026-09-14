@@ -202,6 +202,11 @@ def test_frontier_figure_labels_only_the_front_and_the_stock_rows(tmp_path, monk
     assert "baseline" in labels
     assert not any(t.startswith("uni_rk64_rv96_u_w40") for t in labels)
 
+    # Important 3 (2f Task 6 review): a linear y-axis put the whole decision-relevant 7-16 ppl band
+    # into the bottom ~5% of the plot once Grid B's ~270-ppl bfp4/unit cells were added. Log scale
+    # separates them again.
+    assert captured["fig"].axes[0].get_yscale() == "log"
+
 
 def test_pareto_front_ignores_rows_screened_at_fewer_windows(tmp_path):
     """I-7 (stage 2e final review): 40-window perplexity is ~0.5 easier than the 141-window

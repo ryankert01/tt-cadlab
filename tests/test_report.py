@@ -713,21 +713,27 @@ def test_frontier_rows_warns_when_a_rows_own_fields_disagree_with_its_name(tmp_p
     v_latent_dtype/kv_dtype/latent_scale), a disagreement must not pass silently."""
     from palu_tt import report
     raw = tmp_path
+    # Covers every dump this test ever writes into `raw`, not just the one each call is checking:
+    # frontier_rows globs every ppl_*.json under raw on every call, so a dump written by an earlier
+    # call in this test is still present (and still needs its ranks) on every later call -- passing
+    # only the newly-added dump's ranks would make a later call fall through to _dump_ranks' real
+    # `compressed/palu_full_0.5` lookup and fail hermeticity (review Minor 7).
+    ranks = {"palu_full_50": (33, 102), "uni_rk64_rv32": (64, 32)}
     (raw / "ppl_palu_full_50_l4.json").write_text(
         '{"ppl": 13.0, "windows": 40, "k_latent_dtype": "bfp8", "v_latent_dtype": "bfp8"}')
     with pytest.warns(UserWarning):
-        report.frontier_rows(raw, ranks={"palu_full_50": (33, 102)})
+        report.frontier_rows(raw, ranks=ranks)
 
     (raw / "ppl_baseline_kv4.json").write_text('{"ppl": 7.9, "windows": 141, "kv_dtype": "bfp8"}')
     with pytest.warns(UserWarning):
-        report.frontier_rows(raw)
+        report.frontier_rows(raw, ranks=ranks)
 
     # latent_scale alone, with the two dtype fields absent entirely -- isolates the latent_scale
     # check from the k_latent_dtype/v_latent_dtype ones above (a "_u" row whose own JSON says its
     # latent was "balanced" is exactly the kind of disagreement that must not pass silently).
     (raw / "ppl_uni_rk64_rv32_u.json").write_text('{"ppl": 8.0, "windows": 141, "latent_scale": "balanced"}')
     with pytest.warns(UserWarning):
-        report.frontier_rows(raw, ranks={"uni_rk64_rv32": (64, 32)})
+        report.frontier_rows(raw, ranks=ranks)
 
     # A row whose fields agree with its name must not warn.
     raw2 = tmp_path / "agree"
@@ -783,12 +789,21 @@ def test_frontier_rows_bytes_use_the_dumps_own_groups_per_chip(tmp_path):
     assert rows2["glrd_50_f256"]["bytes_layer_chip"] == pytest.approx(4 * (113 + 400) * report.BPE["bfp8"])
 
 
-def test_frontier_decode_4k_and_maxctx_prefer_the_fused_bench_rows(tmp_path):
+def test_frontier_decode_4k_and_maxctx_prefer_the_fused_bench_rows(tmp_path, monkeypatch):
     """decode_4k/maxctx must read the fused Phase 2 kernel's own bench file (``_fk2dm`` preferred
     over plain ``_fk2``), never the row's own naive (reconstruct-then-attend) bench file -- even
     though the naive file exists and is loadable."""
     from palu_tt import report
     raw = tmp_path
+    # report.main(stage="2f") renders through _stage2f_lines, which calls frontier_rows(raw) with
+    # no ranks override at all -- so the ranks= passed to the direct frontier_rows() call below does
+    # not reach the later report.main() call, and palu_full_50's rank lookup falls through to the
+    # real compressed/palu_full_0.5/config.json unless one exists under the cwd (review Minor 7).
+    # monkeypatch.chdir + a synthetic recipe dir keeps this hermetic without touching report.main's
+    # signature (which tests/test_frontier_rows_parse_and_read_a_split_budget_dump already relies on
+    # for the same reason via _palu_recipe_dir).
+    monkeypatch.chdir(tmp_path)
+    _palu_recipe_dir(tmp_path / "compressed" / "palu_full_0.5", [(33, 102)])
     _write(raw, "ppl_palu_full_50", {"ppl": 12.931, "windows": 141})
     # the naive row's own bench files -- must never surface in decode_4k/maxctx
     _write(raw, "bench_decode_palu_full_50", {

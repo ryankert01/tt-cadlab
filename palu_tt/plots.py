@@ -26,6 +26,7 @@ import matplotlib
 matplotlib.use("Agg")  # headless: no display on this host
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
+from matplotlib.ticker import FixedLocator, FuncFormatter, NullFormatter
 
 from palu_tt.report import SCALING_BATCHES, SCALING_CONTEXTS, SCALING_ROWS
 
@@ -155,6 +156,74 @@ def _pareto_front(rows):
     return _scan_front([r for r in rows if r.get("windows") == FRONT_WINDOWS])
 
 
+# Label placement (2f Task 6 review, Important 3): a fixed alternating (above, below) offset still
+# let two labels -- or a label and an unrelated marker -- collide whenever they happened to land
+# close together on screen, which the review caught at two spots even after the log-axis fix
+# (a dense low-byte cluster puts several rows within a few pixels of each other on either axis).
+_LABEL_NEIGHBOR_PX = 55  # display pixels (at the figure's own dpi) inside which a point counts as clutter
+_LABEL_DX_PT, _LABEL_DY_PT = 8, 14  # offset magnitude, in points, once a direction is chosen
+
+
+def _place_labels(ax, rows, labelled):
+    """Annotate every row in ``labelled`` with its name, steered away from whichever other point
+    (labelled or not) sits nearest to it on screen -- and, since a label's own text can be much
+    wider than the gap between two markers, away from whichever side (left or right) has more
+    points for the text to sweep over -- rather than by a fixed alternating pattern.
+
+    Must run after the axes' final scale and view limits are set (``ax.transData`` -- the pixel
+    positions below -- depends on both), which is why ``frontier_figure`` calls this after
+    ``ax.set_yscale("log")`` and ``ax.autoscale_view()``, before the cosmetic calls (legend, axis
+    labels, title) that don't affect the transform.
+    """
+    pts = [(r, ax.transData.transform((r["kb_token"], r["ppl"]))) for r in rows]
+    # Axes bounding box in the same display-pixel space, so a label near an edge is pushed back
+    # toward the plot instead of off it (the neighbor-repulsion below has no notion of "off the
+    # edge of the figure" on its own -- the single most extreme point has no neighbor further out).
+    (x_lo, y_lo), (x_hi, y_hi) = ax.transData.transform(list(zip(*[ax.get_xlim(), ax.get_ylim()])))
+    edge_margin = 22
+    dpi_scale = ax.figure.dpi / 72.0  # points -> display pixels, at this figure's own dpi
+    fallback_up = True
+    for i, (r, (px, py)) in enumerate(pts):
+        if r["row"] not in labelled:
+            continue
+        others = [(qx, qy) for j, (_, (qx, qy)) in enumerate(pts) if j != i]
+        nearest = min((math.hypot(px - qx, py - qy) for qx, qy in others), default=float("inf"))
+        if nearest < _LABEL_NEIGHBOR_PX:
+            qx, qy = min(others, key=lambda q: math.hypot(px - q[0], py - q[1]))
+            vy = 1.0 if py >= qy else -1.0
+        else:
+            vy = 1.0 if fallback_up else -1.0
+            fallback_up = not fallback_up
+
+        # ha='left' text extends rightward from the anchor by roughly its own width; ha='right'
+        # extends leftward the same way. Pick whichever side the text would sweep over fewer other
+        # points at roughly its own height -- clearing the single nearest neighbor is not enough
+        # when a third point sits further along the text's own span (2f Task 6 review, Important 3).
+        text = r["row"] + (f" ({r['windows']}w)" if r.get("windows") != FRONT_WINDOWS else "")
+        text_w = 3.6 * len(text) * dpi_scale
+        band = 9 * dpi_scale
+        right_hits = sum(1 for qx, qy in others if px <= qx <= px + text_w and abs(qy - py) < band)
+        left_hits = sum(1 for qx, qy in others if px - text_w <= qx <= px and abs(qy - py) < band)
+        vx = 1.0 if right_hits <= left_hits else -1.0
+
+        if py > y_hi - edge_margin:
+            vy = -1.0
+        elif py < y_lo + edge_margin:
+            vy = 1.0
+        if px > x_hi - edge_margin:
+            vx = -1.0
+        elif px < x_lo + edge_margin:
+            vx = 1.0
+
+        dx = _LABEL_DX_PT if vx >= 0 else -_LABEL_DX_PT
+        dy = _LABEL_DY_PT if vy >= 0 else -_LABEL_DY_PT
+        screen = r.get("windows") != FRONT_WINDOWS
+        c = FRONTIER_COLOR.get(r["dump"], "#3c9d6b")
+        ax.annotate(text, (r["kb_token"], r["ppl"]), textcoords="offset points", xytext=(dx, dy),
+                    ha="left" if dx > 0 else "right", fontsize=6, color=c,
+                    alpha=0.55 if screen else 1.0)
+
+
 def frontier_figure(raw_dir, out_png, ranks=None):
     """Perplexity against KB per token for every stage 2f cell (``report.frontier_rows``): marker
     shape is K format, fill is V format, colour is dump family, with the Pareto front (lowest
@@ -164,8 +233,10 @@ def frontier_figure(raw_dir, out_png, ranks=None):
     labelled, which was unreadable in the dense low-byte cluster (a whole grid of cells lands on a
     handful of byte budgets, so their labels sat on top of each other); the front and stock are the
     points a reader actually looks up by name, and the full cell-by-cell listing is the table in
-    ``docs/results/stage2f.md``. The surviving labels are offset alternately above and below their
-    point, since consecutive front points can still be close together.
+    ``docs/results/stage2f.md``. The surviving labels are still offset away from their point (see
+    ``_place_labels``), now steered away from whichever point -- labelled or not -- sits nearest to
+    it on screen, since a fixed alternating offset can still collide when two labelled points, or a
+    label and an unrelated marker, happen to land close together.
 
     The dashed front is drawn through ``FRONT_WINDOWS``-window rows only (see ``_pareto_front``).
     Rows screened at fewer windows are plotted faint, behind the rest, and get their own legend
@@ -184,7 +255,6 @@ def frontier_figure(raw_dir, out_png, ranks=None):
     labelled = ({r["row"] for r in front} | {r["row"] for r in rows if r["dump"] == "baseline"}
                 | {r["row"] for r in _scan_front(screens)})
     fig, ax = plt.subplots(figsize=(8, 5))
-    n_labelled = 0
     for r in rows:
         c = FRONTIER_COLOR.get(r["dump"], "#3c9d6b")
         marker = "s" if r["k_fmt"] == "bfp4" else "o"
@@ -193,12 +263,13 @@ def frontier_figure(raw_dir, out_png, ranks=None):
         ax.scatter(r["kb_token"], r["ppl"], marker=marker, s=32 if screen else 48, facecolors=face,
                    edgecolors=c, linewidths=0.8 if screen else 1.5, alpha=0.35 if screen else 1.0,
                    zorder=2 if screen else 3)
-        if r["row"] in labelled:
-            dy = 4 if n_labelled % 2 == 0 else -10
-            ax.annotate(r["row"] + (f" ({r['windows']}w)" if screen else ""),
-                        (r["kb_token"], r["ppl"]), textcoords="offset points", xytext=(5, dy),
-                        fontsize=6, color=c, alpha=0.55 if screen else 1.0)
-            n_labelled += 1
+    # Log scale (and view limits) must be settled before pixel positions are usable for the
+    # collision-aware label placement below -- see _place_labels. NOT ax.relim(): it recomputes
+    # dataLim from registered lines/patches only and ignores scatter's PathCollections, which would
+    # discard the extents scatter() already accumulated and collapse the axes to a near-empty view.
+    ax.set_yscale("log")
+    ax.autoscale_view()
+    _place_labels(ax, rows, labelled)
     if len(front) > 1:
         ax.plot([r["kb_token"] for r in front], [r["ppl"] for r in front], color="#999999", linewidth=1,
                  linestyle="--", zorder=4)
@@ -219,6 +290,15 @@ def frontier_figure(raw_dir, out_png, ranks=None):
         ax.legend(handles=handles, loc="upper right", frameon=False, fontsize=7)
     ax.set_xlabel("KV cache, KB per token (whole model, both chips)")
     ax.set_ylabel("wikitext-2 perplexity")
+    # Log axis (set above, before label placement): Grid B's worst cells (bfp4, unit scale,
+    # ~270 ppl) and the decision-relevant band (baseline through the split dumps, 7-16 ppl) span
+    # almost 1.5 decades. On a linear axis the latter is squashed into the bottom ~5% of the plot;
+    # log spreads both out and separates the split family's own purple from Grid B's dense
+    # low-byte cluster. Ticks are plain numbers (not powers of ten) since the reader compares
+    # perplexity values, not orders of magnitude.
+    ax.yaxis.set_major_locator(FixedLocator([7, 10, 20, 50, 100, 200]))
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f"{y:g}"))
+    ax.yaxis.set_minor_formatter(NullFormatter())
     ax.set_title("quality per byte: rank x format (filled = bfp8 V, hollow = bfp4 V; square = bfp4 K)")
     fig.tight_layout()
     out_png = Path(out_png)

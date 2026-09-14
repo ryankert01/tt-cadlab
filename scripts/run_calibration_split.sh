@@ -57,5 +57,9 @@ for f in d.glob("model*.safetensors"):
     os.remove(f)
 print("kept", len(tensors), "low-rank tensors, removed the full dump")
 PY
+# The mirror-image hazard to the third_party/palu guard above: mv into an existing
+# compressed/<name> nests the new dump inside the old one instead of replacing it, so the old
+# factors stay in place under this dump's name and cache id and the next screen silently reads them.
+[[ -e "../../compressed/${name}" ]] && { echo "refusing: compressed/${name} already exists" >&2; exit 1; }
 mv "$out" "../../compressed/${name}"
 echo "done -> compressed/${name}"

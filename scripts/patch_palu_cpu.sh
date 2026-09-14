@@ -169,81 +169,10 @@ grep -n "ranks_json" compress.py >/dev/null || { echo "ranks_json patch missing"
 # allocation still add anything on top of the uniform ranks? So the allocation runs once per matrix
 # family, each restricted to its own module set with its own total rank, its own Fisher sum and its
 # own ratio. With neither flag set there is exactly one pass over both families at
-# --param_ratio_target and the arithmetic is upstream's, unchanged.
-python3 - <<'PY'
-import pathlib
-p = pathlib.Path("palu/rank_search.py"); s = p.read_text()
-# Anchors: the fisher_uniform branch is the only one that calls get_kv_info with
-# num_key_value_heads (the "fisher"/"uniform" branches pass args.head_group_size) and the only one
-# that calls split_values, so this pair brackets its allocation block and nothing else.
-head = "        info = target_model_class.get_kv_info(model, model.config.num_key_value_heads)\n"
-tail = "        select_result = split_values(select_result, model.config.num_key_value_heads//args.head_group_size)\n"
-assert s.count(head) == 1, "anchor missing/ambiguous: fisher_uniform get_kv_info"
-assert s.count(tail) == 1, "anchor missing/ambiguous: fisher_uniform split_values"
-new = '''        info = target_model_class.get_kv_info(model, model.config.num_key_value_heads)
-
-        k_ratio = getattr(args, "k_ratio_target", None)
-        v_ratio = getattr(args, "v_ratio_target", None)
-        if k_ratio is None and v_ratio is None:
-            passes = [(("k_proj", "v_proj"), args.param_ratio_target)]
-        else:
-            passes = [(("k_proj",), args.param_ratio_target if k_ratio is None else k_ratio),
-                      (("v_proj",), args.param_ratio_target if v_ratio is None else v_ratio)]
-
-        for matrices, ratio in passes:
-            pass_total_rank = 0
-            fisher_sum = 0.0
-            fisher_info_dict = {}
-            for name, module in model.named_modules():
-                if any(m in name for m in matrices):
-                    module_rank = info.num_lr_groups * info.lr_group_dims
-                    pass_total_rank += module_rank
-                    total_rank += module_rank
-
-                    select_result.update({name: [info.lr_group_dims] * info.num_lr_groups})
-                    fisher = module.fisher_info.reshape(info.num_lr_groups, -1, module.in_features)
-
-                    fisher_list = [torch.mean(fisher[i]).item() for i in range(info.num_lr_groups)]
-                    fisher_info_dict.update({name: fisher_list})
-                    fisher_sum += sum(fisher_list)
-
-            target_rank = pass_total_rank * ratio
-
-            indexes = []
-            select_result_float = {}
-
-            for name, fisher in fisher_info_dict.items():
-                ranks = []
-                for i in range(len(fisher)):
-                    rank_float = target_rank * fisher[i] / fisher_sum
-                    ranks.append(rank_float)
-                    indexes.append((name, i))
-                    select_result[name][i] = min(select_result[name][i], math.floor(rank_float))
-
-                select_result_float.update({name: ranks})
-
-            indexes = sorted(indexes, key=lambda x: select_result_float[x[0]][x[1]] - select_result[x[0]][x[1]])
-            # this pass's modules only -- select_result also holds the previous pass's entries
-            dif = target_rank - sum(sum(select_result[name]) for name in fisher_info_dict)
-
-            while dif > 0:
-                for i in range(len(indexes)):
-                    if select_result[indexes[i][0]][indexes[i][1]] == info.lr_group_dims:
-                        continue
-                    select_result[indexes[i][0]][indexes[i][1]] += 1
-                    dif -= 1
-
-                    if dif == 0:
-                        break
-
-            logger.info(f"[Rank Search] {'/'.join(matrices)} target ratio {ratio}: "
-                        f"{sum(sum(select_result[name]) for name in fisher_info_dict)} "
-                        f"of {pass_total_rank} rank")
-
-'''
-i, j = s.index(head), s.index(tail)
-p.write_text(s[:i] + new + s[j:])
-PY
+# --param_ratio_target and the arithmetic is upstream's, unchanged. The transform itself lives in
+# scripts/patch_rank_search_split.py (factored out so tests/test_patch_palu_cpu.py can import and
+# exec it against a pristine copy of rank_search.py without touching this submodule tree).
+python3 "$(cd "$(dirname "$0")" && pwd)/patch_rank_search_split.py"
 grep -n "k_ratio_target" palu/rank_search.py >/dev/null || { echo "split-budget rank_search patch missing"; exit 1; }
 
 python3 - <<'PY'
