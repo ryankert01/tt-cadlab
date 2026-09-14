@@ -1,0 +1,16 @@
+{
+ "ppl": 11.553055451525863,
+ "nll": 200356.26135253906,
+ "tokens": 81880,
+ "windows": 40,
+ "seq_len": 2048,
+ "row": "uni_rk32_rv128_u_w40",
+ "kind": "palu",
+ "palu_dir": "compressed/uni_rk32_rv128",
+ "latent_scale": "unit",
+ "latent_dtype": "bfp8",
+ "k_latent_dtype": "bfp8",
+ "v_latent_dtype": "bfp8",
+ "kv_dtype": "bfp8",
+ "latent_quant_in_prefill": true
+}

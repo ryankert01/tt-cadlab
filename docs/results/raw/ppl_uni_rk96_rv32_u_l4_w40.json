@@ -1,0 +1,16 @@
+{
+ "ppl": 198.88597785753225,
+ "nll": 433368.8703613281,
+ "tokens": 81880,
+ "windows": 40,
+ "seq_len": 2048,
+ "row": "uni_rk96_rv32_u_l4_w40",
+ "kind": "palu",
+ "palu_dir": "compressed/uni_rk96_rv32",
+ "latent_scale": "unit",
+ "latent_dtype": "bfp4",
+ "k_latent_dtype": "bfp4",
+ "v_latent_dtype": "bfp4",
+ "kv_dtype": "bfp8",
+ "latent_quant_in_prefill": true
+}

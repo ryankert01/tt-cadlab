@@ -175,3 +175,27 @@ def test_frontier_figure_skips_a_blind_row_with_no_field_at_all(tmp_path, monkey
     assert rows["uni_rk64_rv32"]["blind"] is False and rows["uni_rk64_rv32_l4"]["blind"] is True
     assert round(rows["uni_rk64_rv32"]["kb_token"], 3) in plotted_x
     assert round(rows["uni_rk64_rv32_l4"]["kb_token"], 3) not in plotted_x
+
+
+def test_frontier_figure_labels_only_the_front_and_the_stock_rows(tmp_path, monkeypatch):
+    """Carried review finding (stage 2f): every point used to carry its row name, which was
+    unreadable where a dozen cells share a byte budget. Only Pareto-front points and the stock rows
+    are labelled now -- here ``uni_rk64_rv96`` (dominated: more bytes *and* worse perplexity than
+    ``uni_rk32_rv96``) must have no label, while the front point and ``baseline`` must."""
+    from palu_tt import plots
+
+    (tmp_path / "ppl_baseline.json").write_text('{"ppl": 7.254, "windows": 141}')
+    (tmp_path / "ppl_uni_rk32_rv96_u_w40.json").write_text('{"ppl": 8.5, "windows": 40}')
+    (tmp_path / "ppl_uni_rk64_rv96_u_w40.json").write_text('{"ppl": 9.9, "windows": 40}')
+    out = tmp_path / "frontier.png"
+
+    captured = {}
+    real_close = plots.plt.close
+    monkeypatch.setattr(plots.plt, "close", lambda fig: (captured.setdefault("fig", fig), real_close(fig)))
+
+    plots.frontier_figure(tmp_path, out, ranks={"uni_rk32_rv96": (32, 96), "uni_rk64_rv96": (64, 96)})
+
+    labels = {t.get_text() for t in captured["fig"].axes[0].texts}
+    assert "uni_rk32_rv96_u_w40" in labels
+    assert "baseline" in labels
+    assert "uni_rk64_rv96_u_w40" not in labels

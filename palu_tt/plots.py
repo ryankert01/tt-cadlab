@@ -121,10 +121,28 @@ FRONTIER_COLOR = {"baseline": "#333333", "palu_full_50": "#2f6fdb", "palu_full_7
                    "glrd_50_f256": "#e07b39", "glrd_70_f256": "#f0a06a"}
 
 
+def _pareto_front(rows):
+    """The Pareto front of ``rows`` by (bytes, perplexity): scanning up in bytes, every row that is
+    strictly better than everything cheaper than it."""
+    front, best = [], float("inf")
+    for r in sorted(rows, key=lambda r: r["kb_token"]):
+        if r["ppl"] < best:
+            best = r["ppl"]
+            front.append(r)
+    return front
+
+
 def frontier_figure(raw_dir, out_png, ranks=None):
     """Perplexity against KB per token for every stage 2f cell (``report.frontier_rows``): marker
     shape is K format, fill is V format, colour is dump family, with the Pareto front (lowest
     perplexity at each byte budget) drawn through the points.
+
+    Only the Pareto-front points and the stock rows carry a text label. Every point used to be
+    labelled, which was unreadable in the dense low-byte cluster (a whole grid of cells lands on a
+    handful of byte budgets, so their labels sat on top of each other); the front and stock are the
+    points a reader actually looks up by name, and the full cell-by-cell listing is the table in
+    ``docs/results/stage2f.md``. The surviving labels are offset alternately above and below their
+    point, since consecutive front points can still be close together.
 
     A row measured before the cache-faithful prefill (``report.frontier_rows``' ``blind`` flag --
     see its docstring) is excluded: its perplexity is its bfp8 sibling's by construction, so it would
@@ -133,18 +151,20 @@ def frontier_figure(raw_dir, out_png, ranks=None):
     """
     from palu_tt import report
     rows = [r for r in report.frontier_rows(raw_dir, ranks=ranks) if not r["blind"]]
+    front = _pareto_front(rows)
+    labelled = {r["row"] for r in front} | {r["row"] for r in rows if r["dump"] == "baseline"}
     fig, ax = plt.subplots(figsize=(8, 5))
+    n_labelled = 0
     for r in rows:
         c = FRONTIER_COLOR.get(r["dump"], "#3c9d6b")
         marker = "s" if r["k_fmt"] == "bfp4" else "o"
         face = c if r["v_fmt"] == "bfp8" else "white"
         ax.scatter(r["kb_token"], r["ppl"], marker=marker, s=48, facecolors=face, edgecolors=c, linewidths=1.5)
-        ax.annotate(r["row"], (r["kb_token"], r["ppl"]), textcoords="offset points", xytext=(4, 3), fontsize=6)
-    front, best = [], float("inf")
-    for r in sorted(rows, key=lambda r: r["kb_token"]):
-        if r["ppl"] < best:
-            best = r["ppl"]
-            front.append(r)
+        if r["row"] in labelled:
+            dy = 4 if n_labelled % 2 == 0 else -10
+            ax.annotate(r["row"], (r["kb_token"], r["ppl"]), textcoords="offset points", xytext=(5, dy),
+                        fontsize=6, color=c)
+            n_labelled += 1
     if len(front) > 1:
         ax.plot([r["kb_token"] for r in front], [r["ppl"] for r in front], color="#999999", linewidth=1,
                  linestyle="--")
