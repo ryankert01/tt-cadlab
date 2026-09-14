@@ -1,0 +1,46 @@
+{
+ "row": "baseline_kv4",
+ "kind": "stock",
+ "palu_dir": null,
+ "what": "decode",
+ "fused": "off",
+ "fused_k_chunk": null,
+ "group_heads": "auto",
+ "group_heads_per_layer": [],
+ "batch": 32,
+ "rot_mode": null,
+ "table_mcast": "off",
+ "latent_dtype": null,
+ "k_latent_dtype": null,
+ "v_latent_dtype": null,
+ "kv_dtype": "bfp4",
+ "latent_scale": "balanced",
+ "contexts": [
+  1024,
+  4096,
+  8192
+ ],
+ "data": {
+  "1024": {
+   "p50_ms": 35.25307646486908,
+   "min_ms": 35.10240907780826,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 576.0,
+   "mesh_reopened_first": false
+  },
+  "4096": {
+   "p50_ms": 45.410652994178236,
+   "min_ms": 45.33396614715457,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 576.0,
+   "mesh_reopened_first": false
+  },
+  "8192": {
+   "p50_ms": 60.714352992363274,
+   "min_ms": 60.63950899988413,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 576.0,
+   "mesh_reopened_first": false
+  }
+ }
+}

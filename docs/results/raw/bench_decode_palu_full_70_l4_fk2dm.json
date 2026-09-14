@@ -1,0 +1,54 @@
+{
+ "row": "palu_full_70_l4_fk2dm",
+ "kind": "palu",
+ "palu_dir": "compressed/palu_full_0.7",
+ "what": "decode",
+ "fused": "p2",
+ "fused_k_chunk": null,
+ "group_heads": "auto",
+ "group_heads_per_layer": [],
+ "batch": 32,
+ "rot_mode": "dst",
+ "table_mcast": "on",
+ "latent_dtype": "bfp4",
+ "k_latent_dtype": "bfp4",
+ "v_latent_dtype": "bfp4",
+ "kv_dtype": "bfp8",
+ "latent_scale": "balanced",
+ "contexts": [
+  1024,
+  4096,
+  8192,
+  16384
+ ],
+ "data": {
+  "1024": {
+   "p50_ms": 38.92405750229955,
+   "min_ms": 38.87037397362292,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 360.0,
+   "mesh_reopened_first": false
+  },
+  "4096": {
+   "p50_ms": 56.09024700243026,
+   "min_ms": 56.00927886553109,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 360.0,
+   "mesh_reopened_first": false
+  },
+  "8192": {
+   "p50_ms": 79.16086353361607,
+   "min_ms": 79.09841695800424,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 360.0,
+   "mesh_reopened_first": false
+  },
+  "16384": {
+   "p50_ms": 125.13025011867285,
+   "min_ms": 125.07733120582998,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 360.0,
+   "mesh_reopened_first": false
+  }
+ }
+}

@@ -830,12 +830,21 @@ def test_frontier_decode_4k_and_maxctx_prefer_the_fused_bench_rows(tmp_path, mon
     assert "265.3" not in line
 
 
-def test_frontier_decode_4k_and_maxctx_read_the_group_shared_shipped_kernel(tmp_path):
+def test_frontier_decode_4k_and_maxctx_read_the_group_shared_shipped_kernel(tmp_path, monkeypatch):
     """A G-LRD row's shipped-default fused kernel runs group-shared, so its bench files are spelled
     ``_fk2gdm`` (as stage 2e's ``bench_decode_glrd_50_fk2gdm.json``) and never ``_fk2dm``. Both
-    frontier columns must read that spelling rather than the naive file or a dash."""
-    from palu_tt import report
-    raw = tmp_path
+    frontier columns must read that spelling rather than the naive file or a dash.
+
+    Hermetic: ``chdir`` into ``tmp_path`` and build the dump where ``_dump_ranks``' table says this
+    one lives, because the full render calls ``frontier_rows`` without a ``ranks`` override and
+    would otherwise read the repository's real ``compressed/glrd_0.7_f256``. With ``NKV`` 2 the
+    fixture's rank lists are two entries long, which is what a G-LRD dump looks like to
+    ``_config_groups_per_layer`` -- one latent group per chip, the accounting asserted below.
+    """
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    monkeypatch.chdir(tmp_path)
+    _palu_recipe_dir(tmp_path / "compressed" / "glrd_0.7_f256", [(224, 480), (256, 512)])
     _write(raw, "ppl_glrd_70_f256_l4", {"ppl": 8.61, "windows": 141, "latent_scale": "balanced",
                                         "k_latent_dtype": "bfp4", "v_latent_dtype": "bfp4",
                                         "latent_quant_in_prefill": True})
@@ -845,12 +854,14 @@ def test_frontier_decode_4k_and_maxctx_read_the_group_shared_shipped_kernel(tmp_
         "data": {"4096": {"p50_ms": 61.2, "min_ms": 60.9, "iters": 10}}})
     _write(raw, "bench_maxctx_glrd_70_f256_l4_fk2gdm", {"data": {"max_context_batch32": 16384}})
 
-    rows = {r["row"]: r for r in report.frontier_rows(raw, ranks={"glrd_70_f256": (234, 483, 1)})}
+    rows = {r["row"]: r for r in report.frontier_rows(raw)}
     r = rows["glrd_70_f256_l4"]
     assert r["decode_4k"] == "60.9"
     assert r["decode_4k_suffix"] == "_fk2gdm"
     assert r["maxctx"] == 16384
     assert r["maxctx_suffix"] == "_fk2gdm"
+    # one group per chip, not four: a G-LRD dump shares one latent across its whole group
+    assert r["bytes_layer_chip"] == pytest.approx(240 * report.BPE["bfp4"] + 496 * report.BPE["bfp4"])
 
     out = tmp_path / "stage2f.md"
     text = report.main(raw=raw, out=out, rows=report.ROWS2F, stage="2f")

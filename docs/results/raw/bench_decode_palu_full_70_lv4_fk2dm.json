@@ -1,0 +1,46 @@
+{
+ "row": "palu_full_70_lv4_fk2dm",
+ "kind": "palu",
+ "palu_dir": "compressed/palu_full_0.7",
+ "what": "decode",
+ "fused": "p2",
+ "fused_k_chunk": null,
+ "group_heads": "auto",
+ "group_heads_per_layer": [],
+ "batch": 32,
+ "rot_mode": "dst",
+ "table_mcast": "on",
+ "latent_dtype": "bfp8",
+ "k_latent_dtype": "bfp8",
+ "v_latent_dtype": "bfp4",
+ "kv_dtype": "bfp8",
+ "latent_scale": "balanced",
+ "contexts": [
+  1024,
+  4096,
+  8192
+ ],
+ "data": {
+  "1024": {
+   "p50_ms": 39.19918101746589,
+   "min_ms": 39.13745493628085,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 424.0,
+   "mesh_reopened_first": false
+  },
+  "4096": {
+   "p50_ms": 56.666439049877226,
+   "min_ms": 56.60145403817296,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 424.0,
+   "mesh_reopened_first": false
+  },
+  "8192": {
+   "p50_ms": 80.08362492546439,
+   "min_ms": 79.92180599831045,
+   "iters": 10,
+   "kv_bytes_per_token_per_layer_per_chip": 424.0,
+   "mesh_reopened_first": false
+  }
+ }
+}

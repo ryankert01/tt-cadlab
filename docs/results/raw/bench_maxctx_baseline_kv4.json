@@ -1,0 +1,63 @@
+{
+ "row": "baseline_kv4",
+ "kind": "stock",
+ "palu_dir": null,
+ "what": "maxctx",
+ "fused": "off",
+ "fused_k_chunk": null,
+ "group_heads": "auto",
+ "group_heads_per_layer": [],
+ "batch": 32,
+ "rot_mode": null,
+ "table_mcast": "off",
+ "latent_dtype": null,
+ "k_latent_dtype": null,
+ "v_latent_dtype": null,
+ "kv_dtype": "bfp4",
+ "latent_scale": "balanced",
+ "data": {
+  "max_context": 13312,
+  "batch": 32,
+  "limit": "oom",
+  "failed_at": 14336,
+  "error": "TT_FATAL @ /home/user01/tt-cadlab/.claude/worktrees/bright-elm-xum9/third_party/tt-metal/tt_metal/impl/allocator/bank_manager.cpp:462: false\ninfo:\nOut of Memory: Not enough space to allocate 187170816",
+  "phase": "build",
+  "exc": "RuntimeError",
+  "kv_bytes_per_token_per_layer_per_chip": 576.0,
+  "probes": [
+   [
+    1024,
+    true
+   ],
+   [
+    2048,
+    true
+   ],
+   [
+    4096,
+    true
+   ],
+   [
+    8192,
+    true
+   ],
+   [
+    16384,
+    false
+   ],
+   [
+    12288,
+    true
+   ],
+   [
+    14336,
+    false
+   ],
+   [
+    13312,
+    true
+   ]
+  ],
+  "max_context_batch32": 13312
+ }
+}
