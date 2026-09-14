@@ -923,3 +923,35 @@ def test_frontier_stock_rows_read_their_plain_bench_files(tmp_path):
     r = {x["row"]: x for x in report.frontier_rows(raw)}["baseline"]
     assert r["decode_4k"] == "55.3" and r["maxctx"] == 4096
     assert r["decode_4k_suffix"] == "" and r["maxctx_suffix"] == ""
+
+
+def test_frontier_rows_parse_and_read_a_split_budget_dump(tmp_path, monkeypatch):
+    """Task 6's conditional third grid. A ``split_k<K>_v<V>`` row must parse (the name carries the
+    two per-matrix *target ratios* as whole percentages, not ranks) and its ranks must be read from
+    the dump's own ``config.json`` -- and its directory is ``compressed/<dump>``, spelled exactly
+    like the dump, unlike the ``palu_full_*``/``glrd_*`` rows whose directories are spelled
+    differently and are looked up in a table. The per-layer ranks here are deliberately non-uniform,
+    which is the whole point of the split search: the target ratio is fixed and Fisher varies the
+    allocation around it across layers.
+    """
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    monkeypatch.chdir(tmp_path)
+    _palu_recipe_dir(tmp_path / "compressed" / "split_k25_v75", [(32, 96), (32, 128), (64, 64)])
+    _write(raw, "ppl_split_k25_v75_w40", {"ppl": 13.5, "windows": 40})
+    _write(raw, "ppl_split_k25_v75_lv4_w40", {"ppl": 14.2, "windows": 40})
+
+    rows = {r["row"]: r for r in report.frontier_rows(raw)}
+
+    r = rows["split_k25_v75_w40"]
+    assert r["dump"] == "split_k25_v75"
+    assert (r["k_fmt"], r["v_fmt"], r["scale"]) == ("bfp8", "bfp8", "balanced")
+    assert r["r_k_mean"] == pytest.approx((32 + 32 + 64) / 3)
+    assert r["r_v_mean"] == pytest.approx((96 + 128 + 64) / 3)
+    groups_per_chip = NKV // report.CHIPS   # the fixture's own head count, as ``_dump_ranks`` reads it
+    assert r["bytes_layer_chip"] == pytest.approx(
+        groups_per_chip * (r["r_k_mean"] + r["r_v_mean"]) * report.BPE["bfp8"])
+    v4 = rows["split_k25_v75_lv4_w40"]
+    assert (v4["k_fmt"], v4["v_fmt"]) == ("bfp8", "bfp4")
+    assert v4["bytes_layer_chip"] == pytest.approx(
+        groups_per_chip * (r["r_k_mean"] * report.BPE["bfp8"] + r["r_v_mean"] * report.BPE["bfp4"]))

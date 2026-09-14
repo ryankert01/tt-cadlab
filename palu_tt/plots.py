@@ -117,8 +117,13 @@ def ctx_scaling_figure(raw_dir, batch, out_png, rows=SCALING_ROWS):
     return out_png
 
 
+# Colour is the dump *family*, with the lighter shade of a pair being the higher-ratio member.
+# Anything not listed (Grid B's twelve ``uni_rk*_rv*`` dumps) falls back to one shared green, since
+# the grid is read as a grid; the two Task 6 split-budget dumps get their own hue so they do not
+# disappear into it.
 FRONTIER_COLOR = {"baseline": "#333333", "palu_full_50": "#2f6fdb", "palu_full_70": "#7fa8f2",
-                   "glrd_50_f256": "#e07b39", "glrd_70_f256": "#f0a06a"}
+                   "glrd_50_f256": "#e07b39", "glrd_70_f256": "#f0a06a",
+                   "split_k25_v75": "#7a4fd6", "split_k50_v75": "#a98ae8"}
 
 
 def _pareto_front(rows):

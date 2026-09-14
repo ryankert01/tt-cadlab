@@ -1163,13 +1163,17 @@ def _stage2e_lines(raw, rows, loaded, steps):
 
 # Stage 2f (Task 4): the rank/format frontier.
 #
-# Row naming (the 2f spec): ``<dump>[_kv4][_u][_lk4|_lv4|_l4][_w40]`` -- ``_kv4`` only on ``baseline``
+# Row naming (the 2f spec): ``<dump>[_kv4][_u][_lk4|_lv4|_l4][_w40]``. ``<dump>`` is a stock or
+# calibrated-recipe name, a Grid B uniform-rank dump ``uni_rk<K>_rv<V>`` (ranks in the name), or a
+# Task 6 split-budget Fisher dump ``split_k<K>_v<V>`` (the two per-matrix target ratios as whole
+# percentages, ranks read from the dump); ``_kv4`` only on ``baseline``
 # (stock's whole KV cache in bfp4, the format-only competitor); ``_u`` is unit-variance latent scale;
 # ``_lk4``/``_lv4``/``_l4`` put the K/V/both latent caches in bfp4 (default bfp8); ``_w40`` is a
 # 40-window perplexity screen (default 141 windows). ``FRONTIER_RE`` is anchored on both ends so a
 # row that does not fit the scheme (an unrelated ``ppl_*.json``, e.g. a stage 1/2 row) is quietly
 # skipped rather than mis-parsed.
-FRONTIER_RE = _re.compile(r"^(?P<dump>baseline|palu_full_50|palu_full_70|glrd_50_f256|glrd_70_f256|uni_rk\d+_rv\d+)"
+FRONTIER_RE = _re.compile(r"^(?P<dump>baseline|palu_full_50|palu_full_70|glrd_50_f256|glrd_70_f256"
+                          r"|uni_rk\d+_rv\d+|split_k\d+_v\d+)"
                           r"(?P<kv4>_kv4)?(?P<u>_u)?(?P<fmt>_lk4|_lv4|_l4)?(?P<w40>_w40)?$")
 BPE = {"bfp8": 1.0625, "bfp4": 0.5625}  # bytes per tile element (spec sec 2)
 # Stock is 4 KV heads per chip (8 heads / 2 chips), group size 1 -- one latent group per head, so
@@ -1201,8 +1205,10 @@ def _dump_ranks(dump, ranks):
     ranks are in its own name, also 4 (per-head, group size 1) heads per chip; every other dump is a
     Palu/G-LRD recipe whose per-layer ranks are read the same way ``_ranks`` reads them for stage
     1/2/2b/2c -- via ``convert.load_palu_dir`` against its ``config.json``, since a calibrated dump's
-    per-head ranks are not uniform and only that reader gives the exact per-layer allocation the
-    device builds caches for. Its groups-per-chip is derived from that same ``config.json`` (see
+    per-head ranks are not uniform (a ``split_k<K>_v<V>`` dump included: its name carries the two
+    *target ratios*, not ranks, and Fisher's per-layer allocation around them is only in the dump)
+    and only that reader gives the exact per-layer allocation the device builds caches for. Its
+    groups-per-chip is derived from that same ``config.json`` (see
     ``_config_groups_per_layer``): 4 for a per-head (M-LRD) dump, 1 for a group-shared (G-LRD, group
     size 4) one, since the 8 KV heads are split evenly across the n300's two chips either way. Every
     one of these rank sources is either the caller's override, the row name, or a fixed path under
@@ -1222,8 +1228,9 @@ def _dump_ranks(dump, ranks):
     if dump.startswith("uni_"):
         m = _re.match(r"uni_rk(\d+)_rv(\d+)", dump)
         return int(m.group(1)), int(m.group(2)), 4
-    palu_dir = {"palu_full_50": "compressed/palu_full_0.5", "palu_full_70": "compressed/palu_full_0.7",
-                "glrd_50_f256": "compressed/glrd_0.5_f256", "glrd_70_f256": "compressed/glrd_0.7_f256"}[dump]
+    palu_dir = (f"compressed/{dump}" if dump.startswith("split_") else
+                {"palu_full_50": "compressed/palu_full_0.5", "palu_full_70": "compressed/palu_full_0.7",
+                 "glrd_50_f256": "compressed/glrd_0.5_f256", "glrd_70_f256": "compressed/glrd_0.7_f256"}[dump])
     cfg = json.loads((Path(palu_dir) / "config.json").read_text())
     rk, rv = _per_layer_ranks(Path(palu_dir), cfg)
     groups_per_chip = _config_groups_per_layer(cfg) // CHIPS
