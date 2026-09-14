@@ -173,11 +173,17 @@ def test_rot_mode_dst_and_table_mcast_are_the_defaults_and_bogus_is_rejected(mes
 @pytest.mark.parametrize("rot_mode", ["pack", "dst"])
 def test_rot_mode_tracks_legacy_closely(mesh_device, rot_mode):
     """The new modes round K_rot twice (bf16 pack, then the accumulating pack); against legacy's single
-    rounding the outputs must still agree to PCC 0.999 at every calibrated rank."""
+    rounding the outputs must still agree to PCC 0.999 at every calibrated rank.
+
+    The inequality is asserted too: it is what makes the PCC meaningful (a double rounding that
+    changed nothing would not need bounding), and it fails loudly if ``rot_mode`` ever stops
+    separating the two programs -- e.g. if it were dropped from the op's hashed parameters and the
+    second call silently reused the first program."""
     for r_k in (32, 64, 96):
         q, k_lat, u_k, v, pos, cos, sin = _inputs(32, 2048, r_k, 128)
         a = _fused(mesh_device, q, k_lat, u_k, v, pos, cos, sin, 128, 0, True, rot_mode="legacy")
         b = _fused(mesh_device, q, k_lat, u_k, v, pos, cos, sin, 128, 0, True, rot_mode=rot_mode)
+        assert not torch.equal(a, b), f"r_k={r_k}: {rot_mode} is bit-identical to legacy"
         ok, msg = comp_pcc(a, b, 0.999)
         assert ok, f"r_k={r_k} {rot_mode} vs legacy: {msg}"
 

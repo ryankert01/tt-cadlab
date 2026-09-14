@@ -68,8 +68,9 @@ class PaluConfig:
     # producer must say which weights it built.
     cache_id: str
     runtime: PaluRuntime = field(default_factory=PaluRuntime)
-    # Optional ttnn dtype override for the latent K/V caches (default: the model's KV_CACHE dtype,
-    # bfp8). Kept as a plain object so this module stays ttnn-free.
+    # Optional ttnn dtype override for the latent K/V caches. None = a literal bfp8 (attention.py's
+    # fallback), independent of the model's KV_CACHE dtype. Kept as a plain object so this module
+    # stays ttnn-free.
     latent_dtype: Optional[object] = None
     # stage 2f: per-cache overrides of ``latent_dtype`` -- the K and V latent caches may take different
     # block-float formats (the rank/format frontier sweeps bfp8 against bfp4 on each side on its own).

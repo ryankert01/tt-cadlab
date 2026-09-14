@@ -196,6 +196,83 @@ def test_frontier_figure_labels_only_the_front_and_the_stock_rows(tmp_path, monk
     plots.frontier_figure(tmp_path, out, ranks={"uni_rk32_rv96": (32, 96), "uni_rk64_rv96": (64, 96)})
 
     labels = {t.get_text() for t in captured["fig"].axes[0].texts}
-    assert "uni_rk32_rv96_u_w40" in labels
+    # 40-window rows are labelled with their window count appended (see the window-count tests
+    # below): the leading edge of the screened cloud, never the dominated cell behind it.
+    assert "uni_rk32_rv96_u_w40 (40w)" in labels
     assert "baseline" in labels
-    assert "uni_rk64_rv96_u_w40" not in labels
+    assert not any(t.startswith("uni_rk64_rv96_u_w40") for t in labels)
+
+
+def test_pareto_front_ignores_rows_screened_at_fewer_windows(tmp_path):
+    """I-7 (stage 2e final review): 40-window perplexity is ~0.5 easier than the 141-window
+    references on the same row and format, so a front through both would rank points by how much
+    text they were scored over. ``_pareto_front`` drops them before the scan -- here the 40-window
+    row is both cheaper *and* lower-perplexity than the only 141-window row, i.e. it would dominate
+    the front outright if window count were ignored, and it must still not appear on it."""
+    from palu_tt import plots
+
+    rows = [{"row": "cheap_w40", "kb_token": 10.0, "ppl": 8.0, "windows": 40},
+            {"row": "full", "kb_token": 20.0, "ppl": 9.0, "windows": 141}]
+    assert [r["row"] for r in plots._pareto_front(rows)] == ["full"]
+    # the unfiltered scan is what the screened cloud's own leading edge is drawn from
+    assert [r["row"] for r in plots._scan_front(rows)] == ["cheap_w40"]
+
+
+def test_frontier_figure_draws_the_front_through_full_length_rows_only(tmp_path, monkeypatch):
+    """The dashed line itself: with a 40-window screen sitting below and left of every 141-window
+    row, the polyline must still connect only the 141-window points, and the screen must be drawn
+    faint and behind them rather than dropped."""
+    from palu_tt import plots
+
+    (tmp_path / "ppl_baseline.json").write_text('{"ppl": 7.254, "windows": 141}')
+    (tmp_path / "ppl_palu_full_50.json").write_text(
+        '{"ppl": 12.93, "windows": 141, "palu_dir": "compressed/palu_full_0.5"}')
+    (tmp_path / "ppl_uni_rk32_rv32_u_w40.json").write_text('{"ppl": 6.0, "windows": 40}')
+    out = tmp_path / "frontier.png"
+
+    captured = {}
+    real_close = plots.plt.close
+    monkeypatch.setattr(plots.plt, "close", lambda fig: (captured.setdefault("fig", fig), real_close(fig)))
+
+    plots.frontier_figure(tmp_path, out, ranks={"palu_full_50": (33, 102), "uni_rk32_rv32": (32, 32)})
+
+    from palu_tt import report
+    rows = {r["row"]: r for r in report.frontier_rows(
+        tmp_path, ranks={"palu_full_50": (33, 102), "uni_rk32_rv32": (32, 32)})}
+    ax = captured["fig"].axes[0]
+    line = next(ln for ln in ax.lines if ln.get_linestyle() in ("--", (0, (6.4, 1.6))))
+    on_front = {round(x, 3) for x in line.get_xdata()}
+    assert round(rows["baseline"]["kb_token"], 3) in on_front
+    assert round(rows["palu_full_50"]["kb_token"], 3) in on_front
+    assert round(rows["uni_rk32_rv32_u_w40"]["kb_token"], 3) not in on_front
+
+    # the screen is still plotted, faint and behind the full-length points
+    by_x = {round(c.get_offsets()[0][0], 3): c for c in ax.collections}
+    screen = by_x[round(rows["uni_rk32_rv32_u_w40"]["kb_token"], 3)]
+    full = by_x[round(rows["baseline"]["kb_token"], 3)]
+    assert screen.get_alpha() < 1.0 and (full.get_alpha() or 1.0) == 1.0
+    assert screen.get_zorder() < full.get_zorder()
+
+
+def test_frontier_figure_legend_names_the_screened_series(tmp_path, monkeypatch):
+    """The faint cloud gets its own legend entry naming the window count, so a reader is told the
+    screens are a different series rather than left to infer it from the shading."""
+    from palu_tt import plots
+
+    (tmp_path / "ppl_baseline.json").write_text('{"ppl": 7.254, "windows": 141}')
+    (tmp_path / "ppl_palu_full_50.json").write_text(
+        '{"ppl": 12.93, "windows": 141, "palu_dir": "compressed/palu_full_0.5"}')
+    (tmp_path / "ppl_uni_rk32_rv32_u_w40.json").write_text('{"ppl": 9.0, "windows": 40}')
+    out = tmp_path / "frontier.png"
+
+    captured = {}
+    real_close = plots.plt.close
+    monkeypatch.setattr(plots.plt, "close", lambda fig: (captured.setdefault("fig", fig), real_close(fig)))
+
+    plots.frontier_figure(tmp_path, out, ranks={"palu_full_50": (33, 102), "uni_rk32_rv32": (32, 32)})
+
+    legend = captured["fig"].axes[0].get_legend()
+    labels = [t.get_text() for t in legend.get_texts()]
+    assert "141-window measurement" in labels
+    assert "40-window screen (not on the front)" in labels
+    assert "Pareto front (141-window rows)" in labels

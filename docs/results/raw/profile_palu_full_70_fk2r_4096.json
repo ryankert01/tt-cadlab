@@ -1066,7 +1066,7 @@
    ]
   }
  ],
- "csv": "/tmp/claude-1005/-home-user01-tt-cadlab--claude-worktrees-bright-elm-xum9/4941661f-efa0-4f6f-865b-7b8ede31259c/scratchpad/tracy_2e/palu_full_70_fk2r_4096/reports/2026_09_14_04_43_25/ops_perf_results_2026_09_14_04_43_25.csv",
+ "csv": "/tmp/claude-1005/-home-user01-tt-cadlab--claude-worktrees-bright-elm-xum9/4941661f-efa0-4f6f-865b-7b8ede31259c/scratchpad/tracy_2e/palu_full_70_fk2_4096/reports/2026_09_14_04_43_25/ops_perf_results_2026_09_14_04_43_25.csv",
  "name": "palu_full_70_fk2r_4096",
  "note": "legacy/off re-measured on 2026-09-14 as the same-day reference for the stage 2e variants (renamed from a _fk2 run; the stage 2d _fk2 file is unchanged)"
 }

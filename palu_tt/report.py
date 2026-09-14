@@ -625,6 +625,10 @@ def main(raw=RAW, out=OUT, rows=ROWS, stage=None):
             "chips), bfp8 weights and latent caches, non-paged, untraced decode, `use_qk_fused=False` "
             "for every row.",
             "",
+            "The fused rows in this document predate stage 2e, whose `dst` rotation and angle-table "
+            "multicast are now the defaults everywhere; reproduce them with `--rot-mode legacy "
+            "--table-mcast off`.",
+            "",
             "A `_fk1`/`_fk2` row is the row above it re-run with `--fused p1` / `--fused p2`. Perplexity "
             "here is measured **through prefill windows**, which reconstruct K and V in flight and never "
             "touch the decode kernel, so a fused row's perplexity and prefill time are its base row's by "
@@ -822,6 +826,10 @@ def _stage2b_lines(raw, rows, loaded, base, kv_base, dev_windows):
         "chips), bfp8 weights and latent caches, non-paged, untraced decode. Zero-shot task accuracy "
         "is measured by `palu_tt.eval_tasks` (lm-eval, 0-shot, greedy) on the device.",
         "",
+        "The fused rows in this document predate stage 2e, whose `dst` rotation and angle-table "
+        "multicast are now the defaults everywhere; reproduce them with `--rot-mode legacy "
+        "--table-mcast off`.",
+        "",
         "## Zero-shot accuracy",
         "",
         "| row | recipe | " + " | ".join(TASK_LABELS[t] for t in TASK_COLS) + " | avg (5) |",
@@ -928,6 +936,10 @@ def _stage2c_lines(raw, rows, loaded):
         "are the G-LRD dumps re-calibrated with 256 Fisher samples in place of stage 2b's 32; "
         "`_fk2g` rows are the fused Phase 2 kernel in group-shared mode (`heads_per_core` chosen "
         "automatically per layer), compared against the stage 2b `_fk2` (per-head) rows.",
+        "",
+        "The fused rows in this document predate stage 2e, whose `dst` rotation and angle-table "
+        "multicast are now the defaults everywhere; reproduce them with `--rot-mode legacy "
+        "--table-mcast off`.",
         "",
         "## Calibration sensitivity",
         "",
@@ -1081,7 +1093,11 @@ def _stage2e_lines(raw, rows, loaded, steps):
             continue
         for s in shown:
             pts = ", ".join(f"{x}: {y:.0f}" for x, y in s["points"])
-            lines.append(f"| {label} | {s['signature']} | {', '.join(s['rows'])} | {s['fixed_us']:.1f} | "
+            # The reference block's stock ``SdpaDecodeDeviceOperation`` signatures are not a rebuild
+            # mode: the stock op has no angle table and no ``rot_mode``, so labelling them with this
+            # variant's name ("legacy, table per core") describes a knob it does not have.
+            row_label = label if s["signature"].startswith("PaluSdpaDecode") else "stock op (reference)"
+            lines.append(f"| {row_label} | {s['signature']} | {', '.join(s['rows'])} | {s['fixed_us']:.1f} | "
                          f"{s['per_chunk_us']:.1f} | {s['per_item_per_chunk_us']:.1f} | {pts} |")
     lines.append("")
 
@@ -1137,13 +1153,15 @@ def _stage2e_lines(raw, rows, loaded, steps):
         if not any([ppl8, ppl4, chk8, chk4, b8, b4]):
             lines.append(f"| {base} | (not measured) |")
             continue
-        kv8 = _kv_bytes([b8]) if b8 else None
-        kv4 = _kv_bytes([b4]) if b4 else None
+        # Model means, not layer 0: these dumps have per-layer ranks, so bench's layer-0 figure is
+        # not the model's (and would contradict the same dumps' rows in stage 2 and stage 2f).
+        kv8 = _kv_model_mean(_kv_bytes([b8]), [b8]) if b8 else None
+        kv4 = _kv_model_mean(_kv_bytes([b4]), [b4]) if b4 else None
         pcc8 = chk8["pcc_min"] if chk8 else None
         pcc4 = chk4["pcc_min"] if chk4 else None
         lines.append(
             f"| {base} | {_fmt(ppl8 and ppl8.get('ppl'), 3)} | {_fmt(ppl4 and ppl4.get('ppl'), 3)} | "
-            f"{kv8 if kv8 is not None else '-'} -> {kv4 if kv4 is not None else '-'} | "
+            f"{_fmt(kv8, 1)} -> {_fmt(kv4, 1)} | "
             f"{_fmt(pcc8, 4)} -> {_fmt(pcc4, 4)} | "
             f"{_min_only(_cell(b8, '4096')) if b8 else '-'} -> {_min_only(_cell(b4, '4096')) if b4 else '-'} |"
         )
@@ -1243,9 +1261,11 @@ def _row_is_blind(d, has_bfp4_latent_suffix):
 
     ``latent_quant_in_prefill`` is the authoritative field when a row's JSON carries it -- ``False``
     on the two committed ``_l4`` rows measured before Task 1b landed. A row with no such field at
-    all is a pre-2f measurement (older than the field itself): bfp8 rows were never blind, so those
-    are trusted as faithful, but a bfp4-latent-suffixed row with no field cannot be -- it predates
-    both the fix and the record of whether the fix was in effect.
+    all is a pre-2f measurement (older than the field itself): bfp8 rows *were* blind, but to a
+    shift measured at -0.033 ppl (2f Task 1b), inside 40-window noise, so they are rendered as
+    numbers rather than ``blind``; a bfp4-latent-suffixed row with no field cannot be trusted the
+    same way -- it predates both the fix and the record of whether the fix was in effect, and the
+    shift it would be blind to is the one the format column is being read for.
     """
     lqip = d.get("latent_quant_in_prefill")
     if lqip is not None:
@@ -1414,6 +1434,11 @@ def _stage2f_lines(raw):
             "so it is identical to the row's bfp8 sibling by construction and is not evidence about "
             "that format -- see stage 2e's L4 section and the `note` field on the row's own "
             "`ppl_*.json`.",
+            "",
+            "Pre-2f bfp8 rows render as numbers, not `blind`, even though they were blind too: the "
+            "bfp8 round trip was measured at -0.033 ppl (2f Task 1b), inside 40-window noise, "
+            "whereas the bfp4 shift is the thing a format column is read for. Rows still carrying a "
+            "141-window pre-2f number are re-measured in Task 6/7.",
             "",
         ]
     return lines

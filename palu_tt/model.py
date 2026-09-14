@@ -55,8 +55,8 @@ def build_model(mesh_device, kind: str, palu_dir: Optional[str] = None, max_batc
                 use_fused_k: bool = False, cs_recurrence: bool = False, fused_k_chunk: Optional[int] = None,
                 group_heads: Optional[int] = None, rot_mode: str = "dst", table_mcast: bool = True,
                 latent_scale: str = "balanced", latent_quant_in_prefill: bool = True):
-    """latent_dtype: optional ttnn dtype for the Palu latent K/V caches (None = the model's KV cache
-    dtype, i.e. bfp8). k_latent_dtype / v_latent_dtype: stage 2f, per-cache overrides of latent_dtype
+    """latent_dtype: optional ttnn dtype for the Palu latent K/V caches (None = a literal bfp8, which
+    is *not* tied to kv_cache_dtype -- see attention.py's fallback). k_latent_dtype / v_latent_dtype: stage 2f, per-cache overrides of latent_dtype
     (None = follow it), so the K and V latents can take different block-float formats.
     kv_cache_dtype: stage 2f, the *model's* KV_CACHE precision -- the stock path's whole KV cache, and on
     the Palu path the dtype the naive decode's reconstructed K/V temporaries are cast to. None leaves

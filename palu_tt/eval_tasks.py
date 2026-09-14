@@ -132,9 +132,10 @@ def main():
     finally:
         dev.close(md)
     import importlib.metadata as m
-    # --kind stock has no latent cache (Minor 5): null the two per-cache fields there, same "null, not
-    # absent" rule R1 already applies to eval_ppl's --cpu rows. kv_dtype (the whole KV cache) still
-    # applies and is kept either way.
+    # --kind stock has no latent cache (Minor 5): null the per-cache fields there -- and
+    # latent_quant_in_prefill with them, since a stock row never round-trips through a latent cache --
+    # same "null, not absent" rule R1 already applies to eval_ppl's --cpu rows. kv_dtype (the whole KV
+    # cache) still applies and is kept either way.
     k_name, v_name = (None, None) if a.kind == "stock" else \
         pm.resolve_latent_dtype_names(a.latent_dtype, a.k_latent_dtype, a.v_latent_dtype)
     r.update({"row": a.row, "kind": a.kind, "palu_dir": a.palu_dir, "fused": a.fused,
@@ -142,7 +143,7 @@ def main():
               "latent_dtype": None if a.kind == "stock" else a.latent_dtype,
               # the *resolved* per-cache formats, so a row says what each cache held
               "k_latent_dtype": k_name, "v_latent_dtype": v_name, "kv_dtype": a.kv_dtype,
-              "latent_quant_in_prefill": bool(a.latent_quant_in_prefill),
+              "latent_quant_in_prefill": None if a.kind == "stock" else bool(a.latent_quant_in_prefill),
               "lm_eval_version": m.version("lm_eval")})
     (RAW / f"tasks_{a.row}.json").write_text(json.dumps(r, indent=1, default=str))
     print(json.dumps(r["tasks"]))

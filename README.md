@@ -286,7 +286,7 @@ nice -n 10 pytest tests/test_compress.py tests/test_convert.py tests/test_refere
                   tests/test_report.py tests/test_bench_utils.py tests/test_attention_tag.py \
                   tests/test_fused.py tests/test_lm_eval_tt.py -q
 scripts/run_device.sh pytest tests/test_attention_device.py tests/test_model_device.py \
-                             tests/test_ppl_harness.py tests/test_palu_sdpa_device.py -q
+                             tests/test_ppl_harness_device.py tests/test_palu_sdpa_device.py -q
 ```
 
 The first line is CPU-only (`test_fused.py` covers the stage-2 host-side table builders and the
@@ -295,7 +295,7 @@ toy tokenizer and a deterministic score function, no lm-eval task or device invo
 device files — `test_attention_device.py` (attention vs
 the fp32 CPU reference, prefill and decode, cache-level K/V checks, and fused-vs-naive decode),
 `test_model_device.py` (whole model, identity-vs-stock logits and greedy tokens),
-`test_ppl_harness.py`, and `test_palu_sdpa_device.py` (the fused op against its reference, both
+`test_ppl_harness_device.py`, and `test_palu_sdpa_device.py` (the fused op against its reference, both
 phases) — open the n300 and must go through the gate.
 
 ## Known issues

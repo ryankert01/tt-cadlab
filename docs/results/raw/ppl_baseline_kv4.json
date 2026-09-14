@@ -12,5 +12,5 @@
  "k_latent_dtype": null,
  "v_latent_dtype": null,
  "kv_dtype": "bfp4",
- "latent_quant_in_prefill": true
+ "latent_quant_in_prefill": null
 }

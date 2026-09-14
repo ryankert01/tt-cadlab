@@ -25,6 +25,7 @@ import matplotlib
 
 matplotlib.use("Agg")  # headless: no display on this host
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 
 from palu_tt.report import SCALING_BATCHES, SCALING_CONTEXTS, SCALING_ROWS
 
@@ -126,15 +127,32 @@ FRONTIER_COLOR = {"baseline": "#333333", "palu_full_50": "#2f6fdb", "palu_full_7
                    "split_k25_v75": "#7a4fd6", "split_k50_v75": "#a98ae8"}
 
 
-def _pareto_front(rows):
-    """The Pareto front of ``rows`` by (bytes, perplexity): scanning up in bytes, every row that is
-    strictly better than everything cheaper than it."""
+# Perplexity is only comparable between rows scored over the same number of wikitext-2 windows.
+# The stage 2f grids were screened at 40 windows, which is ~0.5 ppl easier than the 141-window
+# references on the same row and the same format (``palu_full_50``: 12.366 at 40 vs 12.931 at 141),
+# so a front drawn through both would track window count rather than rank or format.
+FRONT_WINDOWS = 141
+
+
+def _scan_front(rows):
+    """Scanning up in bytes, every row strictly better in perplexity than everything cheaper."""
     front, best = [], float("inf")
     for r in sorted(rows, key=lambda r: r["kb_token"]):
         if r["ppl"] < best:
             best = r["ppl"]
             front.append(r)
     return front
+
+
+def _pareto_front(rows):
+    """The Pareto front of ``rows`` by (bytes, perplexity), over ``FRONT_WINDOWS``-window rows only.
+
+    Rows screened at fewer windows are dropped before the scan rather than compared against the
+    full-length references: their perplexity is measurably easier (see ``FRONT_WINDOWS``), so
+    including them would put points on the front that are cheaper only because they were scored
+    over less text. ``frontier_figure`` still plots them, faintly, as background context.
+    """
+    return _scan_front([r for r in rows if r.get("windows") == FRONT_WINDOWS])
 
 
 def frontier_figure(raw_dir, out_png, ranks=None):
@@ -149,6 +167,11 @@ def frontier_figure(raw_dir, out_png, ranks=None):
     ``docs/results/stage2f.md``. The surviving labels are offset alternately above and below their
     point, since consecutive front points can still be close together.
 
+    The dashed front is drawn through ``FRONT_WINDOWS``-window rows only (see ``_pareto_front``).
+    Rows screened at fewer windows are plotted faint, behind the rest, and get their own legend
+    entry; the leading edge of that screened cloud is labelled too, with the window count appended,
+    so it can be read as the separate, not-yet-comparable series it is.
+
     A row measured before the cache-faithful prefill (``report.frontier_rows``' ``blind`` flag --
     see its docstring) is excluded: its perplexity is its bfp8 sibling's by construction, so it would
     otherwise plot as a bfp4 point at bfp8-level quality, which is exactly the kind of misleading
@@ -157,22 +180,43 @@ def frontier_figure(raw_dir, out_png, ranks=None):
     from palu_tt import report
     rows = [r for r in report.frontier_rows(raw_dir, ranks=ranks) if not r["blind"]]
     front = _pareto_front(rows)
-    labelled = {r["row"] for r in front} | {r["row"] for r in rows if r["dump"] == "baseline"}
+    screens = [r for r in rows if r.get("windows") != FRONT_WINDOWS]
+    labelled = ({r["row"] for r in front} | {r["row"] for r in rows if r["dump"] == "baseline"}
+                | {r["row"] for r in _scan_front(screens)})
     fig, ax = plt.subplots(figsize=(8, 5))
     n_labelled = 0
     for r in rows:
         c = FRONTIER_COLOR.get(r["dump"], "#3c9d6b")
         marker = "s" if r["k_fmt"] == "bfp4" else "o"
         face = c if r["v_fmt"] == "bfp8" else "white"
-        ax.scatter(r["kb_token"], r["ppl"], marker=marker, s=48, facecolors=face, edgecolors=c, linewidths=1.5)
+        screen = r.get("windows") != FRONT_WINDOWS
+        ax.scatter(r["kb_token"], r["ppl"], marker=marker, s=32 if screen else 48, facecolors=face,
+                   edgecolors=c, linewidths=0.8 if screen else 1.5, alpha=0.35 if screen else 1.0,
+                   zorder=2 if screen else 3)
         if r["row"] in labelled:
             dy = 4 if n_labelled % 2 == 0 else -10
-            ax.annotate(r["row"], (r["kb_token"], r["ppl"]), textcoords="offset points", xytext=(5, dy),
-                        fontsize=6, color=c)
+            ax.annotate(r["row"] + (f" ({r['windows']}w)" if screen else ""),
+                        (r["kb_token"], r["ppl"]), textcoords="offset points", xytext=(5, dy),
+                        fontsize=6, color=c, alpha=0.55 if screen else 1.0)
             n_labelled += 1
     if len(front) > 1:
         ax.plot([r["kb_token"] for r in front], [r["ppl"] for r in front], color="#999999", linewidth=1,
-                 linestyle="--")
+                 linestyle="--", zorder=4)
+    handles = []
+    if len(rows) > len(screens):
+        handles.append(Line2D([], [], marker="o", linestyle="none", markerfacecolor="#555555",
+                              markeredgecolor="#555555", markersize=6,
+                              label=f"{FRONT_WINDOWS}-window measurement"))
+    if screens:
+        counts = "/".join(str(w) for w in sorted({r["windows"] for r in screens}))
+        handles.append(Line2D([], [], marker="o", linestyle="none", markerfacecolor="#555555",
+                              markeredgecolor="#555555", markersize=5, alpha=0.35,
+                              label=f"{counts}-window screen (not on the front)"))
+    if len(front) > 1:
+        handles.append(Line2D([], [], color="#999999", linewidth=1, linestyle="--",
+                              label=f"Pareto front ({FRONT_WINDOWS}-window rows)"))
+    if handles:
+        ax.legend(handles=handles, loc="upper right", frameon=False, fontsize=7)
     ax.set_xlabel("KV cache, KB per token (whole model, both chips)")
     ax.set_ylabel("wikitext-2 perplexity")
     ax.set_title("quality per byte: rank x format (filled = bfp8 V, hollow = bfp4 V; square = bfp4 K)")

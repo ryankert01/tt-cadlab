@@ -127,8 +127,9 @@ def main():
     # claim a measurement that never happened; they are null on a CPU row instead, which a reader can
     # still tell apart from a pre-2f run that has no such key. --latent-scale is not device-only: the CPU
     # reference is built with it too, so it is recorded on both. A --kind stock row has no latent cache
-    # either (only kv_dtype -- the whole KV cache -- applies to it), so the two latent fields are null
-    # there too even on a device row.
+    # either (only kv_dtype -- the whole KV cache -- applies to it), so the latent fields are null there
+    # too even on a device row -- including latent_quant_in_prefill, which describes a round trip
+    # through a latent cache that a stock row never performs.
     formats = {"latent_dtype": None, "k_latent_dtype": None, "v_latent_dtype": None, "kv_dtype": None,
                "latent_quant_in_prefill": None}
     if not a.cpu:
@@ -138,7 +139,7 @@ def main():
         formats = {"latent_dtype": None if a.kind == "stock" else a.latent_dtype,
                    # the *resolved* per-cache formats, so a row says what each cache held
                    "k_latent_dtype": k_name, "v_latent_dtype": v_name, "kv_dtype": a.kv_dtype,
-                   "latent_quant_in_prefill": bool(a.latent_quant_in_prefill)}
+                   "latent_quant_in_prefill": None if a.kind == "stock" else bool(a.latent_quant_in_prefill)}
     r.update({"row": a.row, "kind": a.kind, "palu_dir": a.palu_dir,
               "latent_scale": a.latent_scale, **formats})
     out.write_text(json.dumps(r, indent=1))

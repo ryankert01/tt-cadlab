@@ -6,6 +6,9 @@ the wall-clock comparisons come from `docs/results/raw/bench_decode_<row>.json`,
 ranks from `compressed/palu_full_0.{5,7}/config.json`. Figures are rendered by
 `python -m palu_tt.profile_plots` from the same JSONs. Nothing here is estimated unless it says so.
 
+The fused rows in this document predate stage 2e, whose `dst` rotation and angle-table multicast are
+now the defaults everywhere; reproduce them with `--rot-mode legacy --table-mcast off`.
+
 This stage supersedes stage 2's "where the time goes" discussion, which rested on a **layer-0
 attention-only microbench**; what follows is a whole-model, per-op device profile of the real decode
 step, so it can say what fraction of the step each op is, not just how one layer's attention behaves.

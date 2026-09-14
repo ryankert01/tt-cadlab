@@ -407,8 +407,9 @@ against `legacy` at every calibrated rank.
 ### C3.5. The angle table is multicast down each grid column (stage 2e)
 
 `table_mcast` is the other half of the shipped default, and the larger win of the two: it moves the fused op's
-fixed cost from 118.7 to 57.4 us per layer (`docs/results/stage2e.md` §1), because in Phase 2 all 64 active
-cores were reading the same chunk-relative `[cos | sin]` table out of DRAM.
+fixed cost from 118.7 to 57.4 us per layer (the "Kernel variants: fixed and per-chunk cost per layer" table
+in `docs/results/stage2e.md`), because in Phase 2 all 64 active cores were reading the same chunk-relative
+`[cos | sin]` table out of DRAM.
 
 The roles come from the active-core list alone (`palu_sdpa_decode_program_factory.cpp`, "Stage 2e: table
 multicast leaders"): for each grid column the active cores are counted and their `y` range measured, and the
