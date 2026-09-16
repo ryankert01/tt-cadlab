@@ -22,12 +22,12 @@ OUT = ROOT / "docs" / "figures"
 # R1. What Palu changes in one attention layer
 # =============================================================================================
 def fig_palu_architecture() -> Fig:
-    f = Fig(940, 560, "One attention layer, one KV head: what the stock model caches and what Palu caches instead")
+    f = Fig(940, 560, "One attention layer, one KV head: what the baseline caches and what Palu caches instead")
     f.text(14, 24, "What Palu changes: the K and V projections become low-rank, and the cache stores the latent", size=15, weight="bold")
 
     # ---- left: stock -------------------------------------------------------------------------
     lx = 30
-    f.text(lx, 52, "Stock attention (per KV head)", size=12.5, weight="bold")
+    f.text(lx, 52, "Baseline attention: the unmodified model (per KV head)", size=12.5, weight="bold")
     f.box(lx, 64, 70, 34, "x", "1 x 4096", role=C_NOC, size=11)
     f.arrow(lx + 70, 81, lx + 100, 81)
     f.box(lx + 100, 64, 92, 34, "W_k", "4096 x 128", role=C_K, size=11, mono_sub=True)
@@ -45,7 +45,7 @@ def fig_palu_architecture() -> Fig:
     f.lines(lx, 190, [
         "decode, per step:  scores = q_p . K^T,  out = softmax(scores) . V,  y = out . W_o",
         "cache per token, per layer, per chip (4 KV heads): 4 x (136 + 136) B = 1088 B",
-        "Llama-3.1-8B on the n300, batch 32: 68 KB/token model-wide -> max context 4096",
+        "baseline on the n300, batch 32: 68 KB/token model-wide -> max context 4096",
     ], size=10.5, lh=15, color=MUTED)
 
     # ---- right: Palu -------------------------------------------------------------------------
@@ -82,7 +82,7 @@ def fig_palu_architecture() -> Fig:
     f.line(30, y0 - 12, 910, y0 - 12, color=LINE, sw=0.8, dash="2 3")
     f.text(30, y0 + 8, "How the factors are made (offline, on the CPU, once per model)", size=12.5, weight="bold")
     steps = [
-        ("1. calibrate", "2048-token wikitext windows through the fp32 model; per-layer activation covariance", C_NOC),
+        ("1. calibrate", "wikitext-2 sequences (1024 tokens) through the fp32 model; per-layer activation covariance; 32 or 256 Fisher samples", C_NOC),
         ("2. whiten", "SVD of W in the whitened basis (Sigma^1/2 W): the truncation error is measured on real activations, not on the weights", C_CB),
         ("3. rank search", "Fisher information per matrix; ranks are multiples of 32, chosen per layer for a target ratio", C_CB),
         ("4. export", "U (up-projection) and VT (down-projection) per head or per group; nothing else in the model changes", C_PALU),
@@ -112,7 +112,7 @@ def fig_palu_architecture() -> Fig:
         ("M-LRD  palu_full_0.5", "one KV head", "0.5", "32-64 (33)", "64-128 (102)", "574  (1.90x smaller)"),
         ("M-LRD  palu_full_0.7", "one KV head", "0.7", "32-128 (58)", "96-128 (121)", "761  (1.43x)"),
         ("G-LRD  glrd_0.7 (gs 4)", "four KV heads (one per chip)", "0.7", "160-512 per group", "352-512 per group", "one group latent per chip"),
-        ("stock", "-", "-", "128", "128", "1088"),
+        ("baseline (unmodified)", "-", "-", "128", "128", "1088"),
     ]
     for j, (h, x) in enumerate(cols):
         f.text(x, ty + 20, h, size=10, weight="bold", color=MUTED)
@@ -155,7 +155,7 @@ def fig_vanilla_path() -> Fig:
         ("slice", "h_k[:, :, :S]  [32,4,S,r_k]", C_PALU, 150),
         ("ttnn.matmul", "h_k . U_k^T  (bf16, HiFi2)\n[32,4,S,128]  268 MB at 8k", C_FPU, 200),
         ("rotary_embedding_llama", "prefill mode over positions 0..S-1\n[32,4,S,128]  268 MB", C_SFPU, 220),
-        ("ttnn.typecast", "bf16 -> bfp8 (as a stock K cache)\nK_att  143 MB", C_K, 200),
+        ("ttnn.typecast", "bf16 -> bfp8 (like the baseline K cache)\nK_att  143 MB", C_K, 200),
     ]
     x = 44
     for t, s, role, w in rboxes:
@@ -187,23 +187,23 @@ def fig_vanilla_path() -> Fig:
     f.rect(30, cy, 430, 150, (PLATE, C_DST[1]), r=6)
     f.text(42, cy + 20, "what it costs (batch 32, context 4k, per decode step; stage 2d profile)", size=11.5, weight="bold")
     f.lines(42, cy + 42, [
-        "stock decode step                      55 ms",
-        "Palu step, ratio 0.5, this path       265 ms   (0.21x stock)",
+        "baseline decode step                   55 ms",
+        "Palu step, ratio 0.5, this path       265 ms   (4.8x the baseline)",
         "  of which reconstruction             207 ms   matmul 91 + RoPE 80 + typecast 33",
         "  the attention op itself               8 ms",
         "cost is linear in S and set by the 128-wide output, not by r_k",
     ], size=10.5, lh=16, mono=True)
-    f.text(42, cy + 128, "V-only rows (r_k = 128) skip the block entirely and decode at stock speed:", size=10, color=MUTED)
-    f.text(42, cy + 141, "38.8 vs 38.1 ms at 1k, and they run at 8k where stock does not allocate.", size=10, color=MUTED)
+    f.text(42, cy + 128, "V-only rows (r_k = 128) skip the block entirely and decode at baseline speed:", size=10, color=MUTED)
+    f.text(42, cy + 141, "38.8 vs 38.1 ms at 1k, and they run at 8k where the baseline does not allocate.", size=10, color=MUTED)
 
     px = 480
     f.rect(px, cy, 430, 150, (PLATE, C_FPU[1]), r=6)
     f.text(px + 12, cy + 20, "prefill (once per request) and the fast paths", size=11.5, weight="bold")
     f.lines(px + 12, cy + 42, [
         "prefill: rebuild K and V in full (h . U^T), RoPE on q and K,",
-        "  stock scaled_dot_product_attention, then fill_cache(latents only)",
+        "  tt-metal scaled_dot_product_attention, then fill_cache(latents only)",
         "  -> compute-bound; TTFT unchanged (440-448 ms at 2k tokens)",
-        "r_k = 128: stock K path (RoPE'd K straight into a full-width cache)",
+        "r_k = 128: baseline K path (RoPE'd K straight into a full-width cache)",
         "r_v = 128: V block folded into the QKV weight, wo unchanged",
         "cache tag carries a converter version: ttnn's weight cache keys on",
         "  name/shape/dtype only, never on content",
@@ -257,11 +257,11 @@ def fig_fused_path() -> Fig:
     f.lines(240, iy + 78, [
         "AB = lat_i . [u_k | u_k T]      (matmul)",
         "K_rot = A . cos + B . sin        (rotation)",
-        "packed into c_1 in the stock K order",
+        "packed into c_1 in flash decode's K order",
     ], size=9.8, lh=13, mono=True)
     f.arrow(480, iy + 86, 516, iy + 86)
     f.rect(516, iy + 40, 200, 92, C_K, r=6)
-    f.text(616, iy + 60, "stock flash step", size=11, anchor="middle", weight="bold")
+    f.text(616, iy + 60, "flash-decode step, unchanged", size=11, anchor="middle", weight="bold")
     f.lines(526, iy + 78, [
         "scores = q~ . K_rot^T",
         "online softmax (m, l, O)",
@@ -276,7 +276,7 @@ def fig_fused_path() -> Fig:
     f.lines(240, iy + 178, ["q R_p . (k R_{s0+t})^T = (q R_{p-s0}) . (k R_t)^T",
                             "K only ever needs angles 0..511 (resident); the query state q~ is advanced",
                             "by R_{-512} once per chunk (8 fp32 tiles) instead of streaming a 256 KB table"], size=9.5, lh=13, mono=True)
-    f.lines(740, iy + 150, ["DRAM bytes per chunk:", "stock 136 KB (K + V)", "fused 17 KB latent", "  + 68 KB V (r_v 128)"], size=9.8, lh=13, mono=True, color=MUTED)
+    f.lines(740, iy + 150, ["DRAM bytes per chunk:", "baseline 136 KB (K + V)", "fused 17 KB latent", "  + 68 KB V (r_v 128)"], size=9.8, lh=13, mono=True, color=MUTED)
     f.text(44, iy + 226, "stage 2e made the rebuild cheaper (matmul straight into DST, dest-reuse multiplies; the angle table multicast down each grid column) and it is the default kernel today.", size=9.8, color=MUTED)
     f.caption("Fig. R3. Same caches, same front and tail of the layer as stage 1; only the dashed block of Fig. R2 changes, into a per-chunk rebuild inside the op.")
     return f
@@ -286,12 +286,12 @@ def fig_fused_path() -> Fig:
 # R4. What it bought: decode step and cache size
 # =============================================================================================
 def fig_results() -> Fig:
-    f = Fig(940, 400, "Decode step time per context and KV cache bytes: stock, the vanilla Palu path, the fused kernel, and the shipped kernel")
+    f = Fig(940, 400, "Decode step time per context and KV cache bytes: the baseline, the vanilla Palu path, the fused kernel, and the shipped kernel")
     f.text(14, 24, "What the two paths cost: whole decode step at batch 32 (min ms), ratio-0.5 dump", size=15, weight="bold")
     # bars: groups per context
     ctx = ["1k", "4k", "8k"]
     series = [
-        ("stock (bfp8 KV)", [38.0, 55.4, None], C_K),
+        ("baseline: unmodified model (bfp8 KV)", [38.0, 55.4, None], C_K),
         ("Palu, vanilla path (stage 1)", [88.5, 265.3, 488.5], C_DST),
         ("Palu, fused kernel (stage 2)", [42.8, 65.0, 94.5], C_PALU),
         ("Palu, shipped kernel (stage 2e)", [39.0, 55.5, 77.4], C_FPU),
@@ -323,7 +323,7 @@ def fig_results() -> Fig:
     rx = 640
     f.text(rx, 62, "KV bytes per token per layer per chip; max context", size=11.5, weight="bold")
     rows = [
-        ("stock", 1088, "4096", C_K),
+        ("baseline", 1088, "4096", C_K),
         ("Palu 0.7 (bfp8 latents)", 761, "8192", C_PALU),
         ("Palu 0.5 (bfp8 latents)", 574, "8192", C_PALU),
         ("Palu 0.7, bfp4 latents (stage 2f)", 403, "19456", C_FPU),
@@ -338,8 +338,8 @@ def fig_results() -> Fig:
     f.lines(rx, 276, [
         "The vanilla path pays for the smaller cache with a",
         "4.8x slower step at 4k; the fused kernel closes 95 %",
-        "of that gap (0.85x stock); the stage 2e kernel reaches",
-        "parity at 4k and runs at 8k where stock cannot allocate.",
+        "of that gap (0.85x the baseline); the stage 2e kernel reaches",
+        "parity at 4k and runs at 8k where the baseline cannot allocate.",
     ], size=10, lh=14, color=MUTED)
     f.caption("Fig. R4. Same dump, same quality (ppl 12.93 at ratio 0.5); only the way K is rebuilt changes between the three Palu rows.")
     return f
