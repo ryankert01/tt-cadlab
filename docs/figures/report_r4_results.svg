@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="940" height="400" viewBox="0 0 940 400" role="img" aria-label="Decode step time per context and KV cache bytes: stock, the vanilla Palu path, the fused kernel, and the shipped kernel">
+<title>Decode step time per context and KV cache bytes: stock, the vanilla Palu path, the fused kernel, and the shipped kernel</title>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#1f2430"/></marker></defs>
+<rect x="0" y="0" width="940" height="400" fill="#ffffff"/>
+<text x="14" y="24" font-family="Helvetica, Arial, sans-serif" font-size="15" text-anchor="start" font-weight="bold" fill="#1f2430">What the two paths cost: whole decode step at batch 32 (min ms), ratio-0.5 dump</text>
+<line x1="64" y1="280.0" x2="610" y2="280.0" stroke="#e4e7ec" stroke-width="1"/>
+<text x="60" y="284.0" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="end" font-weight="normal" fill="#5f6673">0</text>
+<line x1="64" y1="236.0" x2="610" y2="236.0" stroke="#e4e7ec" stroke-width="1"/>
+<text x="60" y="240.0" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="end" font-weight="normal" fill="#5f6673">100</text>
+<line x1="64" y1="192.0" x2="610" y2="192.0" stroke="#e4e7ec" stroke-width="1"/>
+<text x="60" y="196.0" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="end" font-weight="normal" fill="#5f6673">200</text>
+<line x1="64" y1="148.0" x2="610" y2="148.0" stroke="#e4e7ec" stroke-width="1"/>
+<text x="60" y="152.0" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="end" font-weight="normal" fill="#5f6673">300</text>
+<line x1="64" y1="104.0" x2="610" y2="104.0" stroke="#e4e7ec" stroke-width="1"/>
+<text x="60" y="108.0" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="end" font-weight="normal" fill="#5f6673">400</text>
+<line x1="64" y1="60.0" x2="610" y2="60.0" stroke="#e4e7ec" stroke-width="1"/>
+<text x="60" y="64.0" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="end" font-weight="normal" fill="#5f6673">500</text>
+<text x="62" y="48" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">ms per decode step</text>
+<rect x="70" y="263.28" width="34" height="16.72" rx="2" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="1.2" opacity="1.0"/>
+<text x="87.0" y="258.28" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#1f2430">38</text>
+<rect x="108" y="241.06" width="34" height="38.94" rx="2" fill="#fbe1e1" stroke="#d64545" stroke-width="1.2" opacity="1.0"/>
+<text x="125.0" y="236.06" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#1f2430">88</text>
+<rect x="146" y="261.168" width="34" height="18.832" rx="2" fill="#fde7d6" stroke="#e07b39" stroke-width="1.2" opacity="1.0"/>
+<text x="163.0" y="256.168" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#1f2430">43</text>
+<rect x="184" y="262.84" width="34" height="17.16" rx="2" fill="#dff3e6" stroke="#3c9d6b" stroke-width="1.2" opacity="1.0"/>
+<text x="201.0" y="257.84" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#1f2430">39</text>
+<text x="146" y="296" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" font-weight="normal" fill="#5f6673">context 1k</text>
+<rect x="250" y="255.624" width="34" height="24.375999999999998" rx="2" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="1.2" opacity="1.0"/>
+<text x="267.0" y="250.624" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#1f2430">55</text>
+<rect x="288" y="163.26799999999997" width="34" height="116.73200000000001" rx="2" fill="#fbe1e1" stroke="#d64545" stroke-width="1.2" opacity="1.0"/>
+<text x="305.0" y="158.26799999999997" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#1f2430">265</text>
+<rect x="326" y="251.4" width="34" height="28.6" rx="2" fill="#fde7d6" stroke="#e07b39" stroke-width="1.2" opacity="1.0"/>
+<text x="343.0" y="246.4" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#1f2430">65</text>
+<rect x="364" y="255.57999999999998" width="34" height="24.42" rx="2" fill="#dff3e6" stroke="#3c9d6b" stroke-width="1.2" opacity="1.0"/>
+<text x="381.0" y="250.57999999999998" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#1f2430">56</text>
+<text x="326" y="296" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" font-weight="normal" fill="#5f6673">context 4k</text>
+<rect x="430" y="266" width="34" height="14" rx="2" fill="#f4f4f4" stroke="#c2c6cc" stroke-width="1.2" opacity="1.0"/>
+<text x="447.0" y="260" font-family="Helvetica, Arial, sans-serif" font-size="9" text-anchor="middle" font-weight="normal" fill="#5f6673">OOM</text>
+<rect x="468" y="65.06" width="34" height="214.94" rx="2" fill="#fbe1e1" stroke="#d64545" stroke-width="1.2" opacity="1.0"/>
+<text x="485.0" y="60.06" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#1f2430">488</text>
+<rect x="506" y="238.42000000000002" width="34" height="41.58" rx="2" fill="#fde7d6" stroke="#e07b39" stroke-width="1.2" opacity="1.0"/>
+<text x="523.0" y="233.42000000000002" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#1f2430">94</text>
+<rect x="544" y="245.944" width="34" height="34.056000000000004" rx="2" fill="#dff3e6" stroke="#3c9d6b" stroke-width="1.2" opacity="1.0"/>
+<text x="561.0" y="240.944" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#1f2430">77</text>
+<text x="506" y="296" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" font-weight="normal" fill="#5f6673">context 8k</text>
+<rect x="70" y="311" width="14" height="11" rx="2" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="1.2" opacity="1.0"/>
+<text x="90" y="320" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">stock (bfp8 KV)</text>
+<rect x="70" y="326" width="14" height="11" rx="2" fill="#fbe1e1" stroke="#d64545" stroke-width="1.2" opacity="1.0"/>
+<text x="90" y="335" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">Palu, vanilla path (stage 1)</text>
+<rect x="70" y="341" width="14" height="11" rx="2" fill="#fde7d6" stroke="#e07b39" stroke-width="1.2" opacity="1.0"/>
+<text x="90" y="350" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">Palu, fused kernel (stage 2)</text>
+<rect x="70" y="356" width="14" height="11" rx="2" fill="#dff3e6" stroke="#3c9d6b" stroke-width="1.2" opacity="1.0"/>
+<text x="90" y="365" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">Palu, shipped kernel (stage 2e)</text>
+<text x="640" y="62" font-family="Helvetica, Arial, sans-serif" font-size="11.5" text-anchor="start" font-weight="bold" fill="#1f2430">KV bytes per token per layer per chip; max context</text>
+<text x="640" y="86" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">stock</text>
+<rect x="640" y="92" width="146.88" height="16" rx="2" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="1.2" opacity="1.0"/>
+<text x="792.88" y="104" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="9.5" text-anchor="start" font-weight="normal" fill="#1f2430">1088 B</text>
+<text x="910" y="86" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10" text-anchor="end" font-weight="normal" fill="#1f2430">max ctx 4096</text>
+<text x="640" y="132" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">Palu 0.7 (bfp8 latents)</text>
+<rect x="640" y="138" width="102.73500000000001" height="16" rx="2" fill="#fde7d6" stroke="#e07b39" stroke-width="1.2" opacity="1.0"/>
+<text x="748.735" y="150" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="9.5" text-anchor="start" font-weight="normal" fill="#1f2430">761 B</text>
+<text x="910" y="132" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10" text-anchor="end" font-weight="normal" fill="#1f2430">max ctx 8192</text>
+<text x="640" y="178" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">Palu 0.5 (bfp8 latents)</text>
+<rect x="640" y="184" width="77.49000000000001" height="16" rx="2" fill="#fde7d6" stroke="#e07b39" stroke-width="1.2" opacity="1.0"/>
+<text x="723.49" y="196" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="9.5" text-anchor="start" font-weight="normal" fill="#1f2430">574 B</text>
+<text x="910" y="178" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10" text-anchor="end" font-weight="normal" fill="#1f2430">max ctx 8192</text>
+<text x="640" y="224" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">Palu 0.7, bfp4 latents (stage 2f)</text>
+<rect x="640" y="230" width="54.405" height="16" rx="2" fill="#dff3e6" stroke="#3c9d6b" stroke-width="1.2" opacity="1.0"/>
+<text x="700.405" y="242" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="9.5" text-anchor="start" font-weight="normal" fill="#1f2430">403 B</text>
+<text x="910" y="224" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10" text-anchor="end" font-weight="normal" fill="#1f2430">max ctx 19456</text>
+<text x="640" y="276" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">The vanilla path pays for the smaller cache with a</text>
+<text x="640" y="290" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">4.8x slower step at 4k; the fused kernel closes 95 %</text>
+<text x="640" y="304" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">of that gap (0.85x stock); the stage 2e kernel reaches</text>
+<text x="640" y="318" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="normal" fill="#5f6673">parity at 4k and runs at 8k where stock cannot allocate.</text>
+<text x="14" y="390" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="start" font-weight="normal" fill="#5f6673" font-style="italic">Fig. R4. Same dump, same quality (ppl 12.93 at ratio 0.5); only the way K is rebuilt changes between the three Palu rows.</text>
+</svg>

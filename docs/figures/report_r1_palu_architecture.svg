@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="940" height="560" viewBox="0 0 940 560" role="img" aria-label="One attention layer, one KV head: what the stock model caches and what Palu caches instead">
+<title>One attention layer, one KV head: what the stock model caches and what Palu caches instead</title>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#1f2430"/></marker></defs>
+<rect x="0" y="0" width="940" height="560" fill="#ffffff"/>
+<text x="14" y="24" font-family="Helvetica, Arial, sans-serif" font-size="15" text-anchor="start" font-weight="bold" fill="#1f2430">What Palu changes: the K and V projections become low-rank, and the cache stores the latent</text>
+<text x="30" y="52" font-family="Helvetica, Arial, sans-serif" font-size="12.5" text-anchor="start" font-weight="bold" fill="#1f2430">Stock attention (per KV head)</text>
+<rect x="30" y="64" width="70" height="34" rx="5" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="1.2" opacity="1.0"/>
+<text x="65.0" y="78.0" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" font-weight="bold" fill="#1f2430">x</text>
+<text x="65.0" y="93.0" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#5f6673">1 x 4096</text>
+<line x1="100" y1="81" x2="130" y2="81" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="130" y="64" width="92" height="34" rx="5" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="1.2" opacity="1.0"/>
+<text x="176.0" y="78.0" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" font-weight="bold" fill="#1f2430">W_k</text>
+<text x="176.0" y="93.0" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#5f6673">4096 x 128</text>
+<line x1="222" y1="81" x2="252" y2="81" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="252" y="64" width="76" height="34" rx="5" fill="#ece4fb" stroke="#8b5cf6" stroke-width="1.2" opacity="1.0"/>
+<text x="290.0" y="78.0" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" font-weight="bold" fill="#1f2430">RoPE_p</text>
+<text x="290.0" y="93.0" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#5f6673">position p</text>
+<line x1="328" y1="81" x2="358" y2="81" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="358" y="60" width="96" height="42" rx="5" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="1.2" opacity="1.0"/>
+<text x="406.0" y="78.0" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" font-weight="bold" fill="#1f2430">K cache</text>
+<text x="406.0" y="93.0" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#5f6673">S x 128 bfp8</text>
+<rect x="30" y="124" width="70" height="34" rx="5" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="1.2" opacity="1.0"/>
+<text x="65.0" y="138.0" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" font-weight="bold" fill="#1f2430">x</text>
+<text x="65.0" y="153.0" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#5f6673">1 x 4096</text>
+<line x1="100" y1="141" x2="130" y2="141" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="130" y="124" width="92" height="34" rx="5" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="1.2" opacity="1.0"/>
+<text x="176.0" y="138.0" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" font-weight="bold" fill="#1f2430">W_v</text>
+<text x="176.0" y="153.0" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#5f6673">4096 x 128</text>
+<line x1="222" y1="141" x2="358" y2="141" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="358" y="120" width="96" height="42" rx="5" fill="#dbe7fb" stroke="#2f6fdb" stroke-width="1.2" opacity="1.0"/>
+<text x="406.0" y="138.0" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" font-weight="bold" fill="#1f2430">V cache</text>
+<text x="406.0" y="153.0" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#5f6673">S x 128 bfp8</text>
+<text x="30" y="190" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">decode, per step:  scores = q_p . K^T,  out = softmax(scores) . V,  y = out . W_o</text>
+<text x="30" y="205" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">cache per token, per layer, per chip (4 KV heads): 4 x (136 + 136) B = 1088 B</text>
+<text x="30" y="220" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">Llama-3.1-8B on the n300, batch 32: 68 KB/token model-wide -&gt; max context 4096</text>
+<text x="500" y="52" font-family="Helvetica, Arial, sans-serif" font-size="12.5" text-anchor="start" font-weight="bold" fill="#1f2430">Palu (M-LRD, per KV head)</text>
+<rect x="500" y="64" width="70" height="34" rx="5" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="1.2" opacity="1.0"/>
+<text x="535.0" y="78.0" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" font-weight="bold" fill="#1f2430">x</text>
+<text x="535.0" y="93.0" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#5f6673">1 x 4096</text>
+<line x1="570" y1="81" x2="600" y2="81" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="600" y="64" width="92" height="34" rx="5" fill="#fde7d6" stroke="#e07b39" stroke-width="1.2" opacity="1.0"/>
+<text x="646.0" y="78.0" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" font-weight="bold" fill="#1f2430">VT_k^T</text>
+<text x="646.0" y="93.0" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#5f6673">4096 x r_k</text>
+<line x1="692" y1="81" x2="722" y2="81" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="722" y="60" width="96" height="42" rx="5" fill="#fde7d6" stroke="#e07b39" stroke-width="1.2" opacity="1.0"/>
+<text x="770.0" y="78.0" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" font-weight="bold" fill="#1f2430">h_k cache</text>
+<text x="770.0" y="93.0" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#5f6673">S x r_k bfp8</text>
+<line x1="818" y1="81" x2="846" y2="81" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="840" y="54" width="96" height="72" rx="6" fill="#ffffff" stroke="#d64545" stroke-width="1.4" opacity="1.0" stroke-dasharray="4 3"/>
+<text x="888" y="46" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#d64545">the expensive part</text>
+<rect x="846" y="64" width="84" height="34" rx="5" fill="#dff3e6" stroke="#3c9d6b" stroke-width="1.2" opacity="1.0"/>
+<text x="888.0" y="78.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" font-weight="bold" fill="#1f2430">h_k . U_k^T</text>
+<text x="888.0" y="93.0" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="9.0" text-anchor="middle" font-weight="normal" fill="#5f6673">r_k x 128</text>
+<text x="888" y="110" font-family="Helvetica, Arial, sans-serif" font-size="9" text-anchor="middle" font-weight="normal" fill="#d64545">rebuild K, then RoPE_p</text>
+<text x="888" y="121" font-family="Helvetica, Arial, sans-serif" font-size="9" text-anchor="middle" font-weight="normal" fill="#d64545">before every q . K^T</text>
+<rect x="500" y="134" width="70" height="34" rx="5" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="1.2" opacity="1.0"/>
+<text x="535.0" y="148.0" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" font-weight="bold" fill="#1f2430">x</text>
+<text x="535.0" y="163.0" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#5f6673">1 x 4096</text>
+<line x1="570" y1="151" x2="600" y2="151" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="600" y="134" width="92" height="34" rx="5" fill="#fde7d6" stroke="#e07b39" stroke-width="1.2" opacity="1.0"/>
+<text x="646.0" y="148.0" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" font-weight="bold" fill="#1f2430">VT_v^T</text>
+<text x="646.0" y="163.0" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#5f6673">4096 x r_v</text>
+<line x1="692" y1="151" x2="722" y2="151" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="722" y="130" width="96" height="42" rx="5" fill="#fde7d6" stroke="#e07b39" stroke-width="1.2" opacity="1.0"/>
+<text x="770.0" y="148.0" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" font-weight="bold" fill="#1f2430">h_v cache</text>
+<text x="770.0" y="163.0" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="9.5" text-anchor="middle" font-weight="normal" fill="#5f6673">S x r_v bfp8</text>
+<line x1="818" y1="151" x2="846" y2="151" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="846" y="134" width="84" height="34" rx="5" fill="#dff3e6" stroke="#3c9d6b" stroke-width="1.2" opacity="1.0"/>
+<text x="888.0" y="148.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="middle" font-weight="bold" fill="#1f2430">absorbed</text>
+<text x="888.0" y="163.0" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="9.0" text-anchor="middle" font-weight="normal" fill="#5f6673">W_o&#x27; = U_v W_o</text>
+<text x="500" y="196" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">W ~ U . VT (rank r) from a whitened SVD; the cache keeps h = x . VT^T</text>
+<text x="500" y="211" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">V never comes back: softmax . h_v . U_v^T . W_o = softmax . h_v . W_o&#x27;</text>
+<text x="500" y="226" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">K must come back: RoPE sits between the projection and q . K^T</text>
+<line x1="30" y1="250" x2="910" y2="250" stroke="#8e94a0" stroke-width="0.8" stroke-dasharray="2 3"/>
+<text x="30" y="270" font-family="Helvetica, Arial, sans-serif" font-size="12.5" text-anchor="start" font-weight="bold" fill="#1f2430">How the factors are made (offline, on the CPU, once per model)</text>
+<rect x="30" y="282" width="208" height="92" rx="6" fill="#e8e8ee" stroke="#6b6f8a" stroke-width="1.2" opacity="1.0"/>
+<text x="40" y="302" font-family="Helvetica, Arial, sans-serif" font-size="11.5" text-anchor="start" font-weight="bold" fill="#1f2430">1. calibrate</text>
+<text x="40" y="318" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">2048-token wikitext windows</text>
+<text x="40" y="330" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">through the fp32 model; per-layer</text>
+<text x="40" y="342" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">activation covariance</text>
+<line x1="238" y1="321" x2="252" y2="321" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="252" y="282" width="208" height="92" rx="6" fill="#f7f2e4" stroke="#b08a3e" stroke-width="1.2" opacity="1.0"/>
+<text x="262" y="302" font-family="Helvetica, Arial, sans-serif" font-size="11.5" text-anchor="start" font-weight="bold" fill="#1f2430">2. whiten</text>
+<text x="262" y="318" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">SVD of W in the whitened basis</text>
+<text x="262" y="330" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">(Sigma^1/2 W): the truncation</text>
+<text x="262" y="342" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">error is measured on real</text>
+<text x="262" y="354" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">activations, not on the weights</text>
+<line x1="460" y1="321" x2="474" y2="321" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="474" y="282" width="208" height="92" rx="6" fill="#f7f2e4" stroke="#b08a3e" stroke-width="1.2" opacity="1.0"/>
+<text x="484" y="302" font-family="Helvetica, Arial, sans-serif" font-size="11.5" text-anchor="start" font-weight="bold" fill="#1f2430">3. rank search</text>
+<text x="484" y="318" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">Fisher information per matrix;</text>
+<text x="484" y="330" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">ranks are multiples of 32, chosen</text>
+<text x="484" y="342" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">per layer for a target ratio</text>
+<line x1="682" y1="321" x2="696" y2="321" stroke="#1f2430" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="696" y="282" width="208" height="92" rx="6" fill="#fde7d6" stroke="#e07b39" stroke-width="1.2" opacity="1.0"/>
+<text x="706" y="302" font-family="Helvetica, Arial, sans-serif" font-size="11.5" text-anchor="start" font-weight="bold" fill="#1f2430">4. export</text>
+<text x="706" y="318" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">U (up-projection) and VT</text>
+<text x="706" y="330" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">(down-projection) per head or per</text>
+<text x="706" y="342" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">group; nothing else in the model</text>
+<text x="706" y="354" font-family="Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="start" font-weight="normal" fill="#5f6673">changes</text>
+<text x="30" y="400" font-family="Helvetica, Arial, sans-serif" font-size="12.5" text-anchor="start" font-weight="bold" fill="#1f2430">Two granularities, two calibrated dumps used throughout the study (Llama-3.1-8B-Instruct)</text>
+<text x="30" y="420" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="bold" fill="#5f6673"></text>
+<text x="230" y="420" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="bold" fill="#5f6673">latent shared by</text>
+<text x="410" y="420" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="bold" fill="#5f6673">ratio</text>
+<text x="470" y="420" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="bold" fill="#5f6673">r_k per head (mean)</text>
+<text x="620" y="420" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="bold" fill="#5f6673">r_v per head (mean)</text>
+<text x="775" y="420" font-family="Helvetica, Arial, sans-serif" font-size="10" text-anchor="start" font-weight="bold" fill="#5f6673">B / token / layer / chip</text>
+<line x1="30" y1="426" x2="910" y2="426" stroke="#8e94a0" stroke-width="0.8"/>
+<text x="30" y="444" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">M-LRD  palu_full_0.5</text>
+<text x="230" y="444" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">one KV head</text>
+<text x="410" y="444" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">0.5</text>
+<text x="470" y="444" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">32-64 (33)</text>
+<text x="620" y="444" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">64-128 (102)</text>
+<text x="775" y="444" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">574  (1.90x smaller)</text>
+<text x="30" y="462" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">M-LRD  palu_full_0.7</text>
+<text x="230" y="462" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">one KV head</text>
+<text x="410" y="462" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">0.7</text>
+<text x="470" y="462" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">32-128 (58)</text>
+<text x="620" y="462" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">96-128 (121)</text>
+<text x="775" y="462" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">761  (1.43x)</text>
+<text x="30" y="480" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">G-LRD  glrd_0.7 (gs 4)</text>
+<text x="230" y="480" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">four KV heads (one per chip)</text>
+<text x="410" y="480" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">0.7</text>
+<text x="470" y="480" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">160-512 per group</text>
+<text x="620" y="480" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">352-512 per group</text>
+<text x="775" y="480" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">one group latent per chip</text>
+<text x="30" y="498" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">stock</text>
+<text x="230" y="498" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">-</text>
+<text x="410" y="498" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">-</text>
+<text x="470" y="498" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">128</text>
+<text x="620" y="498" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">128</text>
+<text x="775" y="498" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">1088</text>
+<text x="14" y="550" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="start" font-weight="normal" fill="#5f6673" font-style="italic">Fig. R1. The model keeps its shapes everywhere except inside the two caches and the attention call; the price of the smaller K cache is a rebuild before every use.</text>
+</svg>
