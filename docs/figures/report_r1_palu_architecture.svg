@@ -122,9 +122,9 @@
 <text x="30" y="480" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">G-LRD  glrd_0.7 (gs 4)</text>
 <text x="230" y="480" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">four KV heads (one per chip)</text>
 <text x="410" y="480" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">0.7</text>
-<text x="470" y="480" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">160-512 per group</text>
-<text x="620" y="480" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">352-512 per group</text>
-<text x="775" y="480" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">one group latent per chip</text>
+<text x="470" y="480" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">160-512 per group (228)</text>
+<text x="620" y="480" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">352-512 per group (486)</text>
+<text x="775" y="480" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#1f2430">759  (1.43x; V rebuilt too)</text>
 <text x="30" y="498" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">baseline (unmodified)</text>
 <text x="230" y="498" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">-</text>
 <text x="410" y="498" font-family="Helvetica, Arial, sans-serif" font-size="10.5" text-anchor="start" font-weight="normal" fill="#5f6673">-</text>

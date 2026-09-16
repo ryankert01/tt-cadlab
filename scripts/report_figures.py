@@ -111,7 +111,7 @@ def fig_palu_architecture() -> Fig:
     rows = [
         ("M-LRD  palu_full_0.5", "one KV head", "0.5", "32-64 (33)", "64-128 (102)", "574  (1.90x smaller)"),
         ("M-LRD  palu_full_0.7", "one KV head", "0.7", "32-128 (58)", "96-128 (121)", "761  (1.43x)"),
-        ("G-LRD  glrd_0.7 (gs 4)", "four KV heads (one per chip)", "0.7", "160-512 per group", "352-512 per group", "one group latent per chip"),
+        ("G-LRD  glrd_0.7 (gs 4)", "four KV heads (one per chip)", "0.7", "160-512 per group (228)", "352-512 per group (486)", "759  (1.43x; V rebuilt too)"),
         ("baseline (unmodified)", "-", "-", "128", "128", "1088"),
     ]
     for j, (h, x) in enumerate(cols):
