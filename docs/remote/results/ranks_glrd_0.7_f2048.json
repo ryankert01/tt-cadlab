@@ -1,0 +1,258 @@
+{
+ "model.layers.0.self_attn.k_proj": [
+  160,
+  160
+ ],
+ "model.layers.0.self_attn.v_proj": [
+  512,
+  512
+ ],
+ "model.layers.1.self_attn.k_proj": [
+  224,
+  224
+ ],
+ "model.layers.1.self_attn.v_proj": [
+  512,
+  512
+ ],
+ "model.layers.2.self_attn.k_proj": [
+  320,
+  320
+ ],
+ "model.layers.2.self_attn.v_proj": [
+  512,
+  512
+ ],
+ "model.layers.3.self_attn.k_proj": [
+  320,
+  320
+ ],
+ "model.layers.3.self_attn.v_proj": [
+  512,
+  512
+ ],
+ "model.layers.4.self_attn.k_proj": [
+  288,
+  288
+ ],
+ "model.layers.4.self_attn.v_proj": [
+  512,
+  512
+ ],
+ "model.layers.5.self_attn.k_proj": [
+  288,
+  288
+ ],
+ "model.layers.5.self_attn.v_proj": [
+  512,
+  512
+ ],
+ "model.layers.6.self_attn.k_proj": [
+  256,
+  256
+ ],
+ "model.layers.6.self_attn.v_proj": [
+  512,
+  512
+ ],
+ "model.layers.7.self_attn.k_proj": [
+  256,
+  256
+ ],
+ "model.layers.7.self_attn.v_proj": [
+  512,
+  512
+ ],
+ "model.layers.8.self_attn.k_proj": [
+  224,
+  224
+ ],
+ "model.layers.8.self_attn.v_proj": [
+  512,
+  512
+ ],
+ "model.layers.9.self_attn.k_proj": [
+  224,
+  224
+ ],
+ "model.layers.9.self_attn.v_proj": [
+  512,
+  512
+ ],
+ "model.layers.10.self_attn.k_proj": [
+  224,
+  224
+ ],
+ "model.layers.10.self_attn.v_proj": [
+  512,
+  512
+ ],
+ "model.layers.11.self_attn.k_proj": [
+  224,
+  224
+ ],
+ "model.layers.11.self_attn.v_proj": [
+  512,
+  512
+ ],
+ "model.layers.12.self_attn.k_proj": [
+  224,
+  224
+ ],
+ "model.layers.12.self_attn.v_proj": [
+  512,
+  512
+ ],
+ "model.layers.13.self_attn.k_proj": [
+  192,
+  192
+ ],
+ "model.layers.13.self_attn.v_proj": [
+  512,
+  512
+ ],
+ "model.layers.14.self_attn.k_proj": [
+  256,
+  256
+ ],
+ "model.layers.14.self_attn.v_proj": [
+  512,
+  512
+ ],
+ "model.layers.15.self_attn.k_proj": [
+  224,
+  224
+ ],
+ "model.layers.15.self_attn.v_proj": [
+  512,
+  512
+ ],
+ "model.layers.16.self_attn.k_proj": [
+  192,
+  192
+ ],
+ "model.layers.16.self_attn.v_proj": [
+  512,
+  512
+ ],
+ "model.layers.17.self_attn.k_proj": [
+  224,
+  224
+ ],
+ "model.layers.17.self_attn.v_proj": [
+  512,
+  512
+ ],
+ "model.layers.18.self_attn.k_proj": [
+  160,
+  160
+ ],
+ "model.layers.18.self_attn.v_proj": [
+  416,
+  416
+ ],
+ "model.layers.19.self_attn.k_proj": [
+  160,
+  160
+ ],
+ "model.layers.19.self_attn.v_proj": [
+  480,
+  480
+ ],
+ "model.layers.20.self_attn.k_proj": [
+  160,
+  160
+ ],
+ "model.layers.20.self_attn.v_proj": [
+  480,
+  480
+ ],
+ "model.layers.21.self_attn.k_proj": [
+  192,
+  192
+ ],
+ "model.layers.21.self_attn.v_proj": [
+  480,
+  480
+ ],
+ "model.layers.22.self_attn.k_proj": [
+  160,
+  160
+ ],
+ "model.layers.22.self_attn.v_proj": [
+  384,
+  384
+ ],
+ "model.layers.23.self_attn.k_proj": [
+  160,
+  160
+ ],
+ "model.layers.23.self_attn.v_proj": [
+  352,
+  352
+ ],
+ "model.layers.24.self_attn.k_proj": [
+  192,
+  192
+ ],
+ "model.layers.24.self_attn.v_proj": [
+  384,
+  384
+ ],
+ "model.layers.25.self_attn.k_proj": [
+  192,
+  192
+ ],
+ "model.layers.25.self_attn.v_proj": [
+  416,
+  416
+ ],
+ "model.layers.26.self_attn.k_proj": [
+  192,
+  192
+ ],
+ "model.layers.26.self_attn.v_proj": [
+  448,
+  448
+ ],
+ "model.layers.27.self_attn.k_proj": [
+  256,
+  256
+ ],
+ "model.layers.27.self_attn.v_proj": [
+  512,
+  512
+ ],
+ "model.layers.28.self_attn.k_proj": [
+  256,
+  256
+ ],
+ "model.layers.28.self_attn.v_proj": [
+  448,
+  448
+ ],
+ "model.layers.29.self_attn.k_proj": [
+  320,
+  320
+ ],
+ "model.layers.29.self_attn.v_proj": [
+  480,
+  480
+ ],
+ "model.layers.30.self_attn.k_proj": [
+  224,
+  224
+ ],
+ "model.layers.30.self_attn.v_proj": [
+  512,
+  512
+ ],
+ "model.layers.31.self_attn.k_proj": [
+  480,
+  480
+ ],
+ "model.layers.31.self_attn.v_proj": [
+  512,
+  512
+ ]
+}
