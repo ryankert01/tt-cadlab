@@ -179,3 +179,18 @@ def test_one_flag_only_falls_back_to_param_ratio_target_for_the_other_family(pat
     assert total_rank == 2 * PER_FAMILY_TOTAL
     assert _family_sum(select_result, "k_proj") == 0.25 * PER_FAMILY_TOTAL == 8192
     assert _family_sum(select_result, "v_proj") == 0.5 * PER_FAMILY_TOTAL == 16384
+
+
+def test_patch_script_runs_from_the_repo_root_by_relative_path(repo_root=None):
+    """scripts/patch_palu_cpu.sh must work when invoked as `scripts/patch_palu_cpu.sh` (the way every
+    calibration script calls it): it changes into third_party/palu before locating its helper file, so the
+    helper path has to be resolved first. Regression for the 2f Task 6 fix-wave refactor."""
+    import subprocess
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    if not (root / "third_party" / "palu" / "compress.py").exists():
+        import pytest
+        pytest.skip("third_party/palu is not checked out")
+    r = subprocess.run(["bash", "scripts/patch_palu_cpu.sh"], cwd=root, capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout[-800:] + r.stderr[-800:]
+    assert "applied cleanly" in r.stdout

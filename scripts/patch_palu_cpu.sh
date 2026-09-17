@@ -3,7 +3,8 @@
 # working tree. Never committed inside the submodule (the parent repo does
 # not record a changed submodule pointer either).
 set -euo pipefail
-P="$(cd "$(dirname "$0")/.." && pwd)/third_party/palu"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"   # resolved before the cd below: $0 may be a relative path
+P="$SCRIPT_DIR/../third_party/palu"
 cd "$P"
 git checkout -- palu/decomposition.py palu/rank_search.py palu/data_utils.py \
   palu/model/modules/hadamard_utils.py utils.py palu/model/modules/svd_linear.py
@@ -172,7 +173,7 @@ grep -n "ranks_json" compress.py >/dev/null || { echo "ranks_json patch missing"
 # --param_ratio_target and the arithmetic is upstream's, unchanged. The transform itself lives in
 # scripts/patch_rank_search_split.py (factored out so tests/test_patch_palu_cpu.py can import and
 # exec it against a pristine copy of rank_search.py without touching this submodule tree).
-python3 "$(cd "$(dirname "$0")" && pwd)/patch_rank_search_split.py"
+python3 "$SCRIPT_DIR/patch_rank_search_split.py"
 grep -n "k_ratio_target" palu/rank_search.py >/dev/null || { echo "split-budget rank_search patch missing"; exit 1; }
 
 python3 - <<'PY'
