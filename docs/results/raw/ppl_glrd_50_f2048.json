@@ -1,0 +1,16 @@
+{
+ "ppl": 10.56978532399218,
+ "nll": 680582.3187255859,
+ "tokens": 288627,
+ "windows": 141,
+ "seq_len": 2048,
+ "row": "glrd_50_f2048",
+ "kind": "palu",
+ "palu_dir": "compressed/glrd_0.5_f2048",
+ "latent_scale": "balanced",
+ "latent_dtype": "bfp8",
+ "k_latent_dtype": "bfp8",
+ "v_latent_dtype": "bfp8",
+ "kv_dtype": "bfp8",
+ "latent_quant_in_prefill": true
+}

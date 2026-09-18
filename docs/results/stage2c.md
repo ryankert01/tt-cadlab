@@ -634,10 +634,10 @@ document are what actually ran, not what was picked.
   and latent caches, TP=2 across the two n300 chips against the paper's GPU fp16; five tasks rather
   than six (no HellaSwag); untraced, partly host-dispatch-bound decode; the `_recon_len` workaround for
   the stock decode op's 32-row chunk defect. See `docs/results/stage2b.md` §6.
-- **The Fisher calibration is still 8x short of the paper's.** 256 against 2048. §1 argues the curve
-  has flattened, but that is an inference from one step of the ladder (32 -> 256), not a measurement of
-  the endpoint. The 2048-sample run is **~39 h** of CPU at the measured ~69 s per sample and was never
-  in budget.
+- **The Fisher calibration was 8x short of the paper's when this stage closed.** 256 against 2048. §1
+  argued the curve had flattened, an inference from one step of the ladder (32 -> 256). The endpoint has
+  since been measured: §9 (2026-09-18) reruns the paper's 2048-sample search on a GPU and rebuilds the
+  dumps here; it changes at most 7 of 64 module ranks by one step and perplexity by 0.02 or less.
 - **`_f256` moves the Fisher pass only.** Palu's whitening already used its own default of 256 samples
   at every setting, so the whitening transform is byte-identical between a `_f256` dump and its 32-sample
   counterpart; only the rank *allocation* changes. If the conditioning of a 512x512 whitening estimate
@@ -678,7 +678,8 @@ document are what actually ran, not what was picked.
 
 ## 8. What was not measured
 
-- **The 2048-sample Fisher calibration** — the paper's actual setting (see above).
+- ~~**The 2048-sample Fisher calibration** — the paper's actual setting.~~ Done on 2026-09-18 on a
+  GPU, rebuilt and measured here: §9.
 - **Whitening sample count.** Held fixed at Palu's default 256 in every dump in this study, so the
   whitening limb of stage 2b's calibration hypothesis is untested.
 - **J-LRD**, still. One joint latent for all KV heads of a layer; the paper's best variant, deferred at
@@ -696,3 +697,97 @@ document are what actually ran, not what was picked.
 - **`eval_tasks` on the group kernel.** Meaningless by construction (prefill only), so it was not run.
 - **The upstream `correction_block` fix.** §6.1 is a diagnosis and a workaround, not a patch to
   tt-metal, and no issue has been filed.
+
+## 9. Addendum (2026-09-18): the paper's 2048-sample calibration, rerun on a GPU
+
+The one caveat §7 could not close was the calibration size: the paper searches ranks with 2048 Fisher
+samples, this study with 32 (per-head dumps) and 256 (grouped dumps), because the Fisher pass costs
+~69 s per sample in fp32 on this host (~39 h for 2048). The pass was therefore run on a borrowed GPU
+(one NVIDIA RTX 6000 Ada, fp16, Palu upstream `bb22666` with the patch set in
+`docs/remote/patch_palu_gpu.sh`, transformers 4.46.3) under the recipe of `docs/remote/goal.md`: the
+same `fisher_uniform` + `whiten` recipe, `calib_seqlen` 1024, 2048 Fisher samples, whitening at Palu's
+default 256, for `mlrd_0.5`, `mlrd_0.7` (group size 1) and `glrd_0.5`, `glrd_0.7` (group size 4). The
+Fisher pass took **16 minutes** on the GPU. Only the four `head_wise_ranks` lists came back
+(`docs/remote/results/ranks_*_f2048.json`, with the GPU report beside them); the factors themselves were
+rebuilt here from those ranks with the cached whitening statistics
+(`scripts/run_calibration_from_ranks.sh`, no rank search, 2.5 to 6 min per dump) and measured through
+the usual harness. `mlrd_0.5` was not rebuilt because its ranks are identical to `palu_full_0.5`'s.
+
+### 9.1 The ranks: 64x the samples moves at most 7 of 64 modules, each by one 32-step
+
+| GPU search (2048 samples) | dump it replaces (samples) | modules changed, of 64 | which | mean r_k / r_v, before -> after | B / token / layer / chip |
+|---|---|---|---|---|---|
+| `mlrd_0.5` | `palu_full_0.5` (32) | **0** | - | 33 / 102 -> same | 574 -> 574 |
+| `mlrd_0.7` | `palu_full_0.7` (32) | **1** | L2 K 64 -> 96 | 58 / 121 -> 59 / 121 | 761 -> 765 |
+| `glrd_0.5` | `glrd_0.5_f256` (256) | **5** | K: L1 128 -> 96, L3 192 -> 160, L5 160 -> 128; V: L14 480 -> 512, L31 384 -> 416 | 113 / 400 -> 110 / 402 | 545 -> 544 |
+| `glrd_0.7` | `glrd_0.7_f256` (256) | **4** | K: L2 352 -> 320, L20 192 -> 160; V: L26 416 -> 448, L27 480 -> 512 | 234 / 483 -> 232 / 485 | 762 -> 762 |
+
+Against the original 32-sample grouped dumps the 2048-sample search differs in 5 (`glrd_0.5`) and 7
+(`glrd_0.7`) modules. Every change is a single 32-step, and in the grouped dumps the direction is the
+one this study keeps finding: rank moves from K to V (§1.3, stage 2f). The per-head 0.5 search is
+bit-identical at 32 and 2048 samples.
+
+### 9.2 On the n300: the rebuilt dumps are indistinguishable from their cheap counterparts
+
+Same harness and settings as the rest of this document (bfp8 latents, `latent_quant_in_prefill`,
+141 windows; `ppl (40)` is the 40-window screen). Task columns as in the calibration table above:
+`acc (acc_norm)`, `avg (5)` plain `acc`, `paper protocol` with `acc_norm` for OBQA/ARC-c.
+
+| row | Fisher samples | ppl (141) | ppl (40) | OBQA | PIQA | ARC-e | ARC-c | WinoGrande | avg (5) | paper protocol |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `palu_full_70` | 32 | 9.028 | 8.578 | 32.0 (42.0) | 78.3 (79.2) | 78.6 (74.0) | 48.7 (50.5) | 69.9 | 61.50 | 63.86 |
+| `palu_full_70_f2048` | 2048 | **9.006** | 8.563 | 32.2 (41.6) | 78.1 (78.4) | 78.3 (74.1) | 48.4 (50.8) | 69.7 | **61.34** | **63.69** |
+| `glrd_50_f256` | 256 | 10.561 | 9.995 | 32.2 (41.4) | 76.9 (78.3) | 78.2 (73.7) | 45.7 (48.6) | 70.8 | 60.78 | 63.20 |
+| `glrd_50_f2048` | 2048 | **10.570** | 10.044 | not run | | | | | - | - |
+| `glrd_70_f256` | 256 | 8.135 | 7.776 | 36.6 (45.6) | 78.8 (79.5) | 81.3 (79.0) | 51.5 (54.9) | 74.5 | 64.53 | 67.03 |
+| `glrd_70_f2048` | 2048 | **8.135** | 7.779 | 36.8 (45.6) | 78.9 (79.1) | 81.1 (78.6) | 51.1 (54.4) | 74.7 | **64.51** | **66.92** |
+
+Perplexity moves by -0.022 (M-LRD 0.7, 32 -> 2048), +0.009 (G-LRD 0.5, 256 -> 2048) and 0.000
+(G-LRD 0.7, 256 -> 2048); the five-task averages by -0.16 and -0.02 points, the paper-protocol averages
+by -0.17 and -0.11. For scale, the 32 -> 256 step in §1 moved the grouped rows by -0.155 / -0.081
+perplexity and +1.02 / +0.91 paper-protocol points. The ladder has a flat top, and now that is a
+measurement, not an inference. **The calibration-size hypothesis for the remaining gap to the paper is
+closed**: what 256 samples did not recover, 2048 do not either. The unexplained remainder (§1.1: -4.06
+paper-protocol points at G-LRD 0.5, of which WinoGrande alone is -4.1 at both ratios) has to come from
+the model revision (Llama-3.1 against the paper's Llama-3), the whitening sample count, or the storage
+format, and §9.3 removes the last of those.
+
+### 9.3 The same factorisations under Palu's own fp16 evaluation: what the bfp8 port costs
+
+The GPU box also scored the baseline and the four dumps with Palu's own scripts (`run_ppl_eval.py`,
+wikitext-2 at sequence length 2048; `run_lm_eval.py`, lm-eval 0.4.2 zero-shot `acc`), fp16 end to end,
+on a single GPU. Those numbers are the paper's protocol on our model and our ranks; set against the
+n300 rows they isolate the port (bfp8 weights and latents, bf16 activations, TP 2, our harness).
+
+| factorisation (2048-sample ranks) | GPU fp16 ppl | n300 bfp8 ppl | n300 - GPU | GPU fp16 mean acc | n300 avg (5) | n300 - GPU |
+|---|---|---|---|---|---|---|
+| baseline | 7.213 | 7.254 | **+0.041** | 64.25 | 65.44 | +1.19 |
+| M-LRD 0.5 (`palu_full_50`, identical ranks) | 12.708 | 12.931 | **+0.223** | 56.17 | 55.84 | -0.33 |
+| M-LRD 0.7 (`palu_full_70_f2048`) | 8.907 | 9.006 | **+0.099** | 62.06 | 61.34 | -0.72 |
+| G-LRD 0.5 (`glrd_50_f2048`; tasks: `glrd_50_f256`) | 10.448 | 10.570 | **+0.122** | 59.28 | 60.78 | +1.50 |
+| G-LRD 0.7 (`glrd_70_f2048`) | 8.045 | 8.135 | **+0.090** | 64.17 | 64.51 | +0.34 |
+
+The port costs 0.04 perplexity on the baseline and 0.09 to 0.22 on the compressed models (most at
+ratio 0.5, where the latents are narrowest and the bfp8 block exponent is shared by the most
+information per element); stage 2f's 0.03 for the bfp8 latent round trip alone is consistent with that.
+The task means disagree by -0.7 to +1.5 points with no consistent sign, and the baseline itself reads
+1.2 points higher on the n300 harness than under lm-eval on the GPU (OBQA +2.6, ARC-c +2.1, the other
+three within half a point), so nothing below about 1.5 points separates the two harnesses. Two things
+follow. First, the Palu numbers of this study are the paper's numbers for this model to within the
+port cost; the ratio-level comparisons transfer. Second, the GPU reproduces the WinoGrande figure of
+the G-LRD 0.7 dump (74.5 fp16 against 74.7 here), so the WinoGrande shortfall against the paper is a
+property of the model or the dump, not of the device or the harness.
+
+### 9.4 What this addendum does not settle
+
+- **Whitening samples** stay at Palu's default 256 in every dump, on the GPU as well as here. The
+  whitening limb of stage 2b's hypothesis remains untested.
+- **`glrd_50_f2048` has no task row** (the perplexity screen and the 141-window run were indistinguishable
+  from `glrd_50_f256`, and a task row costs 52 minutes of device time); its task comparison in §9.3 uses
+  the `_f256` dump.
+- **The GPU perplexity protocol is Palu's script**, whose window construction is not byte-identical to
+  ours; the 0.04 baseline offset absorbs that difference together with the hardware's, and the two are
+  not separated.
+- **Raw files**: `docs/results/raw/ppl_{palu_full_70,glrd_50,glrd_70}_f2048{,_w40}.json`,
+  `tasks_{palu_full_70,glrd_70}_f2048.json`; ranks in `compressed/*_f2048.ranks.json` (copies of the
+  committed `docs/remote/results/ranks_*_f2048.json`); dumps in `compressed/{palu_full_0.7,glrd_0.5,glrd_0.7}_f2048/`.
