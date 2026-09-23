@@ -1,0 +1,1940 @@
+{
+ "steps": 3,
+ "device_ms_per_step": 55.17472333333333,
+ "device_ms_per_step_chip1": 55.149943,
+ "ops_per_step": 1075.0,
+ "categories": {
+  "attention": {
+   "ms": 25.295268999999998,
+   "count": 31.999999999999996
+  },
+  "mlp": {
+   "ms": 12.332869999999996,
+   "count": 96.00000000000013
+  },
+  "ccl": {
+   "ms": 9.307241666666666,
+   "count": 130.00000000000034
+  },
+  "qkv": {
+   "ms": 2.0112646666666665,
+   "count": 31.999999999999954
+  },
+  "wo": {
+   "ms": 1.3832589999999996,
+   "count": 31.999999999999954
+  },
+  "norm": {
+   "ms": 0.8054023333333336,
+   "count": 65.00000000000016
+  },
+  "lm_head": {
+   "ms": 1.0907053333333334,
+   "count": 2.0
+  },
+  "elementwise": {
+   "ms": 0.8316433333333331,
+   "count": 99.00000000000013
+  },
+  "heads": {
+   "ms": 0.7205739999999999,
+   "count": 160.00000000000003
+  },
+  "cache": {
+   "ms": 0.38115399999999994,
+   "count": 64.0
+  },
+  "layout": {
+   "ms": 0.774286,
+   "count": 299.00000000000006
+  },
+  "other": {
+   "ms": 0.24105399999999996,
+   "count": 64.0
+  }
+ },
+ "ops": [
+  {
+   "op": "PaluSdpaDecodeDeviceOperation",
+   "category": "attention",
+   "ms": 8.655636,
+   "count": 11.000000000000002,
+   "cores": 64.0,
+   "in0": [
+    1,
+    8,
+    16,
+    128
+   ],
+   "in1": [
+    8,
+    1,
+    4096,
+    96
+   ],
+   "out": [
+    1,
+    8,
+    16,
+    128
+   ]
+  },
+  {
+   "op": "MatmulDeviceOperation",
+   "category": "mlp",
+   "ms": 8.223551333333333,
+   "count": 64.00000000000017,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    4096
+   ],
+   "in1": [
+    1,
+    1,
+    4096,
+    7168
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    7168
+   ]
+  },
+  {
+   "op": "ReduceScatterMinimalAsyncDeviceOperation",
+   "category": "ccl",
+   "ms": 6.998202666666668,
+   "count": 64.00000000000017,
+   "cores": 5.0,
+   "in0": [
+    1,
+    1,
+    32,
+    4096
+   ],
+   "in1": [],
+   "out": [
+    2,
+    1,
+    32,
+    4096
+   ]
+  },
+  {
+   "op": "PaluSdpaDecodeDeviceOperation",
+   "category": "attention",
+   "ms": 5.93395,
+   "count": 7.9999999999999964,
+   "cores": 64.0,
+   "in0": [
+    1,
+    8,
+    16,
+    128
+   ],
+   "in1": [
+    8,
+    1,
+    4096,
+    64
+   ],
+   "out": [
+    1,
+    8,
+    16,
+    128
+   ]
+  },
+  {
+   "op": "PaluSdpaDecodeDeviceOperation",
+   "category": "attention",
+   "ms": 5.5794896666666665,
+   "count": 6.999999999999997,
+   "cores": 64.0,
+   "in0": [
+    1,
+    8,
+    16,
+    128
+   ],
+   "in1": [
+    8,
+    1,
+    4096,
+    128
+   ],
+   "out": [
+    1,
+    8,
+    16,
+    128
+   ]
+  },
+  {
+   "op": "MatmulDeviceOperation",
+   "category": "mlp",
+   "ms": 4.109318666666664,
+   "count": 31.999999999999954,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    7168
+   ],
+   "in1": [
+    1,
+    1,
+    7168,
+    4096
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    4096
+   ]
+  },
+  {
+   "op": "PaluSdpaDecodeDeviceOperation",
+   "category": "attention",
+   "ms": 2.5301656666666665,
+   "count": 3.0,
+   "cores": 64.0,
+   "in0": [
+    1,
+    8,
+    16,
+    128
+   ],
+   "in1": [
+    8,
+    1,
+    4096,
+    160
+   ],
+   "out": [
+    1,
+    8,
+    16,
+    128
+   ]
+  },
+  {
+   "op": "MatmulDeviceOperation",
+   "category": "qkv",
+   "ms": 2.0112646666666665,
+   "count": 31.999999999999954,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    4096
+   ],
+   "in1": [
+    1,
+    1,
+    4096,
+    3072
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    3072
+   ]
+  },
+  {
+   "op": "PaluSdpaDecodeDeviceOperation",
+   "category": "attention",
+   "ms": 1.7101103333333332,
+   "count": 1.9999999999999998,
+   "cores": 64.0,
+   "in0": [
+    1,
+    8,
+    16,
+    128
+   ],
+   "in1": [
+    8,
+    1,
+    4096,
+    192
+   ],
+   "out": [
+    1,
+    8,
+    16,
+    128
+   ]
+  },
+  {
+   "op": "AllGatherAsyncDeviceOperation",
+   "category": "ccl",
+   "ms": 1.5585153333333326,
+   "count": 65.00000000000016,
+   "cores": 5.0,
+   "in0": [
+    1,
+    1,
+    32,
+    2048
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    4096
+   ]
+  },
+  {
+   "op": "MatmulDeviceOperation",
+   "category": "wo",
+   "ms": 1.3832589999999996,
+   "count": 31.999999999999954,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    2048
+   ],
+   "in1": [
+    1,
+    1,
+    2048,
+    4096
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    4096
+   ]
+  },
+  {
+   "op": "PaluSdpaDecodeDeviceOperation",
+   "category": "attention",
+   "ms": 0.8859173333333334,
+   "count": 1.0,
+   "cores": 64.0,
+   "in0": [
+    1,
+    8,
+    16,
+    128
+   ],
+   "in1": [
+    8,
+    1,
+    4096,
+    288
+   ],
+   "out": [
+    1,
+    8,
+    16,
+    128
+   ]
+  },
+  {
+   "op": "LayerNormDeviceOperation",
+   "category": "norm",
+   "ms": 0.8054023333333336,
+   "count": 65.00000000000016,
+   "cores": 32.0,
+   "in0": [
+    1,
+    1,
+    32,
+    4096
+   ],
+   "in1": [
+    1,
+    1,
+    128,
+    32
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    4096
+   ]
+  },
+  {
+   "op": "AllGatherAsyncDeviceOperation",
+   "category": "ccl",
+   "ms": 0.7505236666666666,
+   "count": 1.0,
+   "cores": 5.0,
+   "in0": [
+    1,
+    1,
+    32,
+    64128
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    128256
+   ]
+  },
+  {
+   "op": "MatmulDeviceOperation",
+   "category": "lm_head",
+   "ms": 0.7266170000000001,
+   "count": 1.0,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    4096
+   ],
+   "in1": [
+    1,
+    1,
+    4096,
+    42752
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    42752
+   ]
+  },
+  {
+   "op": "BinaryNgDeviceOperation",
+   "category": "elementwise",
+   "ms": 0.6713519999999998,
+   "count": 31.999999999999954,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    7168
+   ],
+   "in1": [
+    1,
+    1,
+    32,
+    7168
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    7168
+   ]
+  },
+  {
+   "op": "MatmulDeviceOperation",
+   "category": "lm_head",
+   "ms": 0.36408833333333335,
+   "count": 1.0,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    4096
+   ],
+   "in1": [
+    1,
+    1,
+    4096,
+    21376
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    21376
+   ]
+  },
+  {
+   "op": "NLPCreateQKVHeadsDecodeDeviceOperation",
+   "category": "heads",
+   "ms": 0.3332536666666667,
+   "count": 31.999999999999954,
+   "cores": 8.0,
+   "in0": [
+    1,
+    1,
+    8,
+    3072
+   ],
+   "in1": [],
+   "out": [
+    1,
+    8,
+    16,
+    128
+   ]
+  },
+  {
+   "op": "NLPConcatHeadsDecodeDeviceOperation",
+   "category": "heads",
+   "ms": 0.15290799999999993,
+   "count": 64.00000000000017,
+   "cores": 4.0,
+   "in0": [
+    1,
+    8,
+    4,
+    128
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    512
+   ]
+  },
+  {
+   "op": "RotaryEmbeddingLlamaDeviceOperation",
+   "category": "heads",
+   "ms": 0.15162966666666663,
+   "count": 31.999999999999954,
+   "cores": 8.0,
+   "in0": [
+    1,
+    8,
+    16,
+    128
+   ],
+   "in1": [
+    1,
+    8,
+    1,
+    128
+   ],
+   "out": [
+    1,
+    8,
+    16,
+    128
+   ]
+  },
+  {
+   "op": "BinaryNgDeviceOperation",
+   "category": "elementwise",
+   "ms": 0.1306843333333333,
+   "count": 64.00000000000017,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    2048
+   ],
+   "in1": [
+    1,
+    1,
+    32,
+    2048
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    2048
+   ]
+  },
+  {
+   "op": "PagedUpdateCacheDeviceOperation",
+   "category": "cache",
+   "ms": 0.11356533333333331,
+   "count": 14.000000000000007,
+   "cores": 8.0,
+   "in0": [
+    8,
+    1,
+    4096,
+    512
+   ],
+   "in1": [
+    1,
+    8,
+    1,
+    512
+   ],
+   "out": [
+    8,
+    1,
+    4096,
+    512
+   ]
+  },
+  {
+   "op": "ShardedToInterleavedDeviceOperation",
+   "category": "layout",
+   "ms": 0.1128666666666667,
+   "count": 64.00000000000017,
+   "cores": 4.0,
+   "in0": [
+    1,
+    1,
+    32,
+    512
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    512
+   ]
+  },
+  {
+   "op": "UntilizeCodegenDeviceOperation",
+   "category": "layout",
+   "ms": 0.10511300000000001,
+   "count": 1.0,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    128256
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    128256
+   ]
+  },
+  {
+   "op": "NLPConcatHeadsDecodeDeviceOperation",
+   "category": "heads",
+   "ms": 0.08278266666666664,
+   "count": 31.999999999999954,
+   "cores": 16.0,
+   "in0": [
+    1,
+    8,
+    16,
+    128
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    2048
+   ]
+  },
+  {
+   "op": "InterleavedToShardedDeviceOperation",
+   "category": "layout",
+   "ms": 0.07581666666666664,
+   "count": 41.000000000000014,
+   "cores": 8.0,
+   "in0": [
+    1,
+    8,
+    1,
+    128
+   ],
+   "in1": [],
+   "out": [
+    1,
+    8,
+    1,
+    128
+   ]
+  },
+  {
+   "op": "ShardedToInterleavedDeviceOperation",
+   "category": "layout",
+   "ms": 0.07432866666666667,
+   "count": 31.999999999999954,
+   "cores": 32.0,
+   "in0": [
+    1,
+    1,
+    32,
+    3072
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    3072
+   ]
+  },
+  {
+   "op": "ReshardDeviceOperation",
+   "category": "layout",
+   "ms": 0.06868799999999997,
+   "count": 31.999999999999954,
+   "cores": 32.0,
+   "in0": [
+    1,
+    1,
+    32,
+    2048
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    2048
+   ]
+  },
+  {
+   "op": "ReshapeViewDeviceOperation",
+   "category": "other",
+   "ms": 0.06796466666666666,
+   "count": 14.000000000000007,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    8,
+    512
+   ],
+   "in1": [],
+   "out": [
+    1,
+    8,
+    1,
+    512
+   ]
+  },
+  {
+   "op": "PagedUpdateCacheDeviceOperation",
+   "category": "cache",
+   "ms": 0.05045166666666666,
+   "count": 11.000000000000002,
+   "cores": 8.0,
+   "in0": [
+    8,
+    1,
+    4096,
+    96
+   ],
+   "in1": [
+    1,
+    8,
+    1,
+    96
+   ],
+   "out": [
+    8,
+    1,
+    4096,
+    96
+   ]
+  },
+  {
+   "op": "InterleavedToShardedDeviceOperation",
+   "category": "layout",
+   "ms": 0.04730133333333333,
+   "count": 14.000000000000007,
+   "cores": 8.0,
+   "in0": [
+    1,
+    8,
+    1,
+    512
+   ],
+   "in1": [],
+   "out": [
+    1,
+    8,
+    1,
+    512
+   ]
+  },
+  {
+   "op": "PagedUpdateCacheDeviceOperation",
+   "category": "cache",
+   "ms": 0.041721,
+   "count": 5.999999999999998,
+   "cores": 8.0,
+   "in0": [
+    8,
+    1,
+    4096,
+    288
+   ],
+   "in1": [
+    1,
+    8,
+    1,
+    288
+   ],
+   "out": [
+    8,
+    1,
+    4096,
+    288
+   ]
+  },
+  {
+   "op": "PagedUpdateCacheDeviceOperation",
+   "category": "cache",
+   "ms": 0.034427,
+   "count": 6.999999999999997,
+   "cores": 8.0,
+   "in0": [
+    8,
+    1,
+    4096,
+    128
+   ],
+   "in1": [
+    1,
+    8,
+    1,
+    128
+   ],
+   "out": [
+    8,
+    1,
+    4096,
+    128
+   ]
+  },
+  {
+   "op": "ReshapeViewDeviceOperation",
+   "category": "other",
+   "ms": 0.034123,
+   "count": 11.000000000000002,
+   "cores": 24.0,
+   "in0": [
+    1,
+    1,
+    8,
+    96
+   ],
+   "in1": [],
+   "out": [
+    1,
+    8,
+    1,
+    96
+   ]
+  },
+  {
+   "op": "SliceDeviceOperation",
+   "category": "layout",
+   "ms": 0.03384066666666667,
+   "count": 14.000000000000007,
+   "cores": 16.0,
+   "in0": [
+    1,
+    1,
+    32,
+    512
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    512
+   ]
+  },
+  {
+   "op": "PagedUpdateCacheDeviceOperation",
+   "category": "cache",
+   "ms": 0.03258333333333333,
+   "count": 7.9999999999999964,
+   "cores": 8.0,
+   "in0": [
+    8,
+    1,
+    4096,
+    64
+   ],
+   "in1": [
+    1,
+    8,
+    1,
+    64
+   ],
+   "out": [
+    8,
+    1,
+    4096,
+    64
+   ]
+  },
+  {
+   "op": "ReshapeViewDeviceOperation",
+   "category": "other",
+   "ms": 0.02687533333333333,
+   "count": 5.999999999999998,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    8,
+    288
+   ],
+   "in1": [],
+   "out": [
+    1,
+    8,
+    1,
+    288
+   ]
+  },
+  {
+   "op": "SliceDeviceOperation",
+   "category": "layout",
+   "ms": 0.024974666666666673,
+   "count": 11.000000000000002,
+   "cores": 3.0,
+   "in0": [
+    1,
+    1,
+    32,
+    512
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    96
+   ]
+  },
+  {
+   "op": "InterleavedToShardedDeviceOperation",
+   "category": "layout",
+   "ms": 0.023069999999999997,
+   "count": 11.000000000000002,
+   "cores": 8.0,
+   "in0": [
+    1,
+    8,
+    1,
+    96
+   ],
+   "in1": [],
+   "out": [
+    1,
+    8,
+    1,
+    96
+   ]
+  },
+  {
+   "op": "ReshapeViewDeviceOperation",
+   "category": "other",
+   "ms": 0.02289533333333333,
+   "count": 6.999999999999997,
+   "cores": 32.0,
+   "in0": [
+    1,
+    1,
+    8,
+    128
+   ],
+   "in1": [],
+   "out": [
+    1,
+    8,
+    1,
+    128
+   ]
+  },
+  {
+   "op": "ReshapeViewDeviceOperation",
+   "category": "other",
+   "ms": 0.022865999999999997,
+   "count": 7.9999999999999964,
+   "cores": 16.0,
+   "in0": [
+    1,
+    1,
+    8,
+    64
+   ],
+   "in1": [],
+   "out": [
+    1,
+    8,
+    1,
+    64
+   ]
+  },
+  {
+   "op": "EmbeddingsDeviceOperation",
+   "category": "elementwise",
+   "ms": 0.021669333333333332,
+   "count": 1.0,
+   "cores": 1.0,
+   "in0": [
+    1,
+    1,
+    1,
+    32
+   ],
+   "in1": [
+    1,
+    1,
+    128256,
+    2048
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    2048
+   ]
+  },
+  {
+   "op": "SliceDeviceOperation",
+   "category": "layout",
+   "ms": 0.017659000000000005,
+   "count": 6.999999999999997,
+   "cores": 4.0,
+   "in0": [
+    1,
+    1,
+    32,
+    512
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    128
+   ]
+  },
+  {
+   "op": "PagedUpdateCacheDeviceOperation",
+   "category": "cache",
+   "ms": 0.017356333333333335,
+   "count": 3.0,
+   "cores": 8.0,
+   "in0": [
+    8,
+    1,
+    4096,
+    256
+   ],
+   "in1": [
+    1,
+    8,
+    1,
+    256
+   ],
+   "out": [
+    8,
+    1,
+    4096,
+    256
+   ]
+  },
+  {
+   "op": "PagedUpdateCacheDeviceOperation",
+   "category": "cache",
+   "ms": 0.01597233333333333,
+   "count": 1.9999999999999998,
+   "cores": 8.0,
+   "in0": [
+    8,
+    1,
+    4096,
+    480
+   ],
+   "in1": [
+    1,
+    8,
+    1,
+    480
+   ],
+   "out": [
+    8,
+    1,
+    4096,
+    480
+   ]
+  },
+  {
+   "op": "InterleavedToShardedDeviceOperation",
+   "category": "layout",
+   "ms": 0.015709,
+   "count": 5.999999999999998,
+   "cores": 8.0,
+   "in0": [
+    1,
+    8,
+    1,
+    288
+   ],
+   "in1": [],
+   "out": [
+    1,
+    8,
+    1,
+    288
+   ]
+  },
+  {
+   "op": "PagedUpdateCacheDeviceOperation",
+   "category": "cache",
+   "ms": 0.015542333333333333,
+   "count": 3.0,
+   "cores": 8.0,
+   "in0": [
+    8,
+    1,
+    4096,
+    192
+   ],
+   "in1": [
+    1,
+    8,
+    1,
+    192
+   ],
+   "out": [
+    8,
+    1,
+    4096,
+    192
+   ]
+  },
+  {
+   "op": "PagedUpdateCacheDeviceOperation",
+   "category": "cache",
+   "ms": 0.015493333333333333,
+   "count": 3.0,
+   "cores": 8.0,
+   "in0": [
+    8,
+    1,
+    4096,
+    224
+   ],
+   "in1": [
+    1,
+    8,
+    1,
+    224
+   ],
+   "out": [
+    8,
+    1,
+    4096,
+    224
+   ]
+  },
+  {
+   "op": "SliceDeviceOperation",
+   "category": "layout",
+   "ms": 0.015347666666666667,
+   "count": 7.9999999999999964,
+   "cores": 2.0,
+   "in0": [
+    1,
+    1,
+    32,
+    512
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    64
+   ]
+  },
+  {
+   "op": "PagedUpdateCacheDeviceOperation",
+   "category": "cache",
+   "ms": 0.015231666666666666,
+   "count": 3.0,
+   "cores": 8.0,
+   "in0": [
+    8,
+    1,
+    4096,
+    160
+   ],
+   "in1": [
+    1,
+    8,
+    1,
+    160
+   ],
+   "out": [
+    8,
+    1,
+    4096,
+    160
+   ]
+  },
+  {
+   "op": "ConcatDeviceOperation",
+   "category": "layout",
+   "ms": 0.014890666666666667,
+   "count": 1.0,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    42752
+   ],
+   "in1": [
+    1,
+    1,
+    32,
+    21376
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    64128
+   ]
+  },
+  {
+   "op": "PagedUpdateCacheDeviceOperation",
+   "category": "cache",
+   "ms": 0.014820333333333331,
+   "count": 1.9999999999999998,
+   "cores": 8.0,
+   "in0": [
+    8,
+    1,
+    4096,
+    448
+   ],
+   "in1": [
+    1,
+    8,
+    1,
+    448
+   ],
+   "out": [
+    8,
+    1,
+    4096,
+    448
+   ]
+  },
+  {
+   "op": "SliceDeviceOperation",
+   "category": "layout",
+   "ms": 0.013883333333333333,
+   "count": 5.999999999999998,
+   "cores": 9.0,
+   "in0": [
+    1,
+    1,
+    32,
+    512
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    288
+   ]
+  },
+  {
+   "op": "InterleavedToShardedDeviceOperation",
+   "category": "layout",
+   "ms": 0.013650333333333335,
+   "count": 7.9999999999999964,
+   "cores": 8.0,
+   "in0": [
+    1,
+    8,
+    1,
+    64
+   ],
+   "in1": [],
+   "out": [
+    1,
+    8,
+    1,
+    64
+   ]
+  },
+  {
+   "op": "TransposeDeviceOperation",
+   "category": "layout",
+   "ms": 0.009998333333333333,
+   "count": 1.9999999999999998,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    128
+   ],
+   "in1": [],
+   "out": [
+    1,
+    32,
+    1,
+    128
+   ]
+  },
+  {
+   "op": "ReshapeViewDeviceOperation",
+   "category": "other",
+   "ms": 0.009869333333333332,
+   "count": 3.0,
+   "cores": 40.0,
+   "in0": [
+    1,
+    1,
+    8,
+    160
+   ],
+   "in1": [],
+   "out": [
+    1,
+    8,
+    1,
+    160
+   ]
+  },
+  {
+   "op": "ReshapeViewDeviceOperation",
+   "category": "other",
+   "ms": 0.009713,
+   "count": 1.9999999999999998,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    8,
+    480
+   ],
+   "in1": [],
+   "out": [
+    1,
+    8,
+    1,
+    480
+   ]
+  },
+  {
+   "op": "ReshapeViewDeviceOperation",
+   "category": "other",
+   "ms": 0.009649333333333333,
+   "count": 3.0,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    8,
+    256
+   ],
+   "in1": [],
+   "out": [
+    1,
+    8,
+    1,
+    256
+   ]
+  },
+  {
+   "op": "ReshapeViewDeviceOperation",
+   "category": "other",
+   "ms": 0.009554666666666666,
+   "count": 3.0,
+   "cores": 48.0,
+   "in0": [
+    1,
+    1,
+    8,
+    192
+   ],
+   "in1": [],
+   "out": [
+    1,
+    8,
+    1,
+    192
+   ]
+  },
+  {
+   "op": "ReshapeViewDeviceOperation",
+   "category": "other",
+   "ms": 0.009335666666666667,
+   "count": 1.9999999999999998,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    8,
+    448
+   ],
+   "in1": [],
+   "out": [
+    1,
+    8,
+    1,
+    448
+   ]
+  },
+  {
+   "op": "ReshapeViewDeviceOperation",
+   "category": "other",
+   "ms": 0.008913333333333334,
+   "count": 3.0,
+   "cores": 56.0,
+   "in0": [
+    1,
+    1,
+    8,
+    224
+   ],
+   "in1": [],
+   "out": [
+    1,
+    8,
+    1,
+    224
+   ]
+  },
+  {
+   "op": "InterleavedToShardedDeviceOperation",
+   "category": "layout",
+   "ms": 0.008040666666666666,
+   "count": 3.0,
+   "cores": 8.0,
+   "in0": [
+    1,
+    8,
+    1,
+    256
+   ],
+   "in1": [],
+   "out": [
+    1,
+    8,
+    1,
+    256
+   ]
+  },
+  {
+   "op": "EmbeddingsDeviceOperation",
+   "category": "elementwise",
+   "ms": 0.007937666666666666,
+   "count": 1.9999999999999998,
+   "cores": 1.0,
+   "in0": [
+    1,
+    1,
+    1,
+    32
+   ],
+   "in1": [
+    1,
+    1,
+    4096,
+    128
+   ],
+   "out": [
+    1,
+    1,
+    32,
+    128
+   ]
+  },
+  {
+   "op": "SliceDeviceOperation",
+   "category": "layout",
+   "ms": 0.007573666666666667,
+   "count": 3.0,
+   "cores": 5.0,
+   "in0": [
+    1,
+    1,
+    32,
+    512
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    160
+   ]
+  },
+  {
+   "op": "ShardedToInterleavedDeviceOperation",
+   "category": "layout",
+   "ms": 0.00737,
+   "count": 1.0,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    32,
+    42752
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    42752
+   ]
+  },
+  {
+   "op": "InterleavedToShardedDeviceOperation",
+   "category": "layout",
+   "ms": 0.007352666666666667,
+   "count": 3.0,
+   "cores": 8.0,
+   "in0": [
+    1,
+    8,
+    1,
+    160
+   ],
+   "in1": [],
+   "out": [
+    1,
+    8,
+    1,
+    160
+   ]
+  },
+  {
+   "op": "PagedUpdateCacheDeviceOperation",
+   "category": "cache",
+   "ms": 0.0072,
+   "count": 1.0,
+   "cores": 8.0,
+   "in0": [
+    8,
+    1,
+    4096,
+    384
+   ],
+   "in1": [
+    1,
+    8,
+    1,
+    384
+   ],
+   "out": [
+    8,
+    1,
+    4096,
+    384
+   ]
+  },
+  {
+   "op": "SliceDeviceOperation",
+   "category": "layout",
+   "ms": 0.0071600000000000006,
+   "count": 3.0,
+   "cores": 8.0,
+   "in0": [
+    1,
+    1,
+    32,
+    512
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    256
+   ]
+  },
+  {
+   "op": "InterleavedToShardedDeviceOperation",
+   "category": "layout",
+   "ms": 0.007144666666666667,
+   "count": 3.0,
+   "cores": 8.0,
+   "in0": [
+    1,
+    8,
+    1,
+    192
+   ],
+   "in1": [],
+   "out": [
+    1,
+    8,
+    1,
+    192
+   ]
+  },
+  {
+   "op": "SliceDeviceOperation",
+   "category": "layout",
+   "ms": 0.007095666666666667,
+   "count": 3.0,
+   "cores": 6.0,
+   "in0": [
+    1,
+    1,
+    32,
+    512
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    192
+   ]
+  },
+  {
+   "op": "InterleavedToShardedDeviceOperation",
+   "category": "layout",
+   "ms": 0.0068513333333333325,
+   "count": 1.9999999999999998,
+   "cores": 8.0,
+   "in0": [
+    1,
+    8,
+    1,
+    480
+   ],
+   "in1": [],
+   "out": [
+    1,
+    8,
+    1,
+    480
+   ]
+  },
+  {
+   "op": "PagedUpdateCacheDeviceOperation",
+   "category": "cache",
+   "ms": 0.006789333333333333,
+   "count": 1.0,
+   "cores": 8.0,
+   "in0": [
+    8,
+    1,
+    4096,
+    320
+   ],
+   "in1": [
+    1,
+    8,
+    1,
+    320
+   ],
+   "out": [
+    8,
+    1,
+    4096,
+    320
+   ]
+  },
+  {
+   "op": "InterleavedToShardedDeviceOperation",
+   "category": "layout",
+   "ms": 0.006508999999999999,
+   "count": 3.0,
+   "cores": 8.0,
+   "in0": [
+    1,
+    8,
+    1,
+    224
+   ],
+   "in1": [],
+   "out": [
+    1,
+    8,
+    1,
+    224
+   ]
+  },
+  {
+   "op": "SliceDeviceOperation",
+   "category": "layout",
+   "ms": 0.006253,
+   "count": 3.0,
+   "cores": 7.0,
+   "in0": [
+    1,
+    1,
+    32,
+    512
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    224
+   ]
+  },
+  {
+   "op": "InterleavedToShardedDeviceOperation",
+   "category": "layout",
+   "ms": 0.006155333333333333,
+   "count": 1.9999999999999998,
+   "cores": 8.0,
+   "in0": [
+    1,
+    8,
+    1,
+    448
+   ],
+   "in1": [],
+   "out": [
+    1,
+    8,
+    1,
+    448
+   ]
+  },
+  {
+   "op": "SliceDeviceOperation",
+   "category": "layout",
+   "ms": 0.0050683333333333335,
+   "count": 1.9999999999999998,
+   "cores": 15.0,
+   "in0": [
+    1,
+    1,
+    32,
+    512
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    480
+   ]
+  },
+  {
+   "op": "ReshapeViewDeviceOperation",
+   "category": "other",
+   "ms": 0.004686333333333333,
+   "count": 1.0,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    8,
+    384
+   ],
+   "in1": [],
+   "out": [
+    1,
+    8,
+    1,
+    384
+   ]
+  },
+  {
+   "op": "SliceDeviceOperation",
+   "category": "layout",
+   "ms": 0.004671666666666667,
+   "count": 1.9999999999999998,
+   "cores": 14.0,
+   "in0": [
+    1,
+    1,
+    32,
+    512
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    448
+   ]
+  },
+  {
+   "op": "ReshapeViewDeviceOperation",
+   "category": "other",
+   "ms": 0.004608,
+   "count": 1.0,
+   "cores": 64.0,
+   "in0": [
+    1,
+    1,
+    8,
+    320
+   ],
+   "in1": [],
+   "out": [
+    1,
+    8,
+    1,
+    320
+   ]
+  },
+  {
+   "op": "ShardedToInterleavedDeviceOperation",
+   "category": "layout",
+   "ms": 0.0038473333333333337,
+   "count": 1.0,
+   "cores": 61.0,
+   "in0": [
+    1,
+    1,
+    32,
+    21376
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    21376
+   ]
+  },
+  {
+   "op": "SliceDeviceOperation",
+   "category": "layout",
+   "ms": 0.003755333333333333,
+   "count": 1.9999999999999998,
+   "cores": 32.0,
+   "in0": [
+    1,
+    32,
+    1,
+    128
+   ],
+   "in1": [],
+   "out": [
+    1,
+    8,
+    32,
+    128
+   ]
+  },
+  {
+   "op": "InterleavedToShardedDeviceOperation",
+   "category": "layout",
+   "ms": 0.0031253333333333333,
+   "count": 1.0,
+   "cores": 8.0,
+   "in0": [
+    1,
+    8,
+    1,
+    320
+   ],
+   "in1": [],
+   "out": [
+    1,
+    8,
+    1,
+    320
+   ]
+  },
+  {
+   "op": "InterleavedToShardedDeviceOperation",
+   "category": "layout",
+   "ms": 0.0029193333333333332,
+   "count": 1.0,
+   "cores": 8.0,
+   "in0": [
+    1,
+    8,
+    1,
+    384
+   ],
+   "in1": [],
+   "out": [
+    1,
+    8,
+    1,
+    384
+   ]
+  },
+  {
+   "op": "SliceDeviceOperation",
+   "category": "layout",
+   "ms": 0.0025183333333333334,
+   "count": 1.0,
+   "cores": 12.0,
+   "in0": [
+    1,
+    1,
+    32,
+    512
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    384
+   ]
+  },
+  {
+   "op": "SliceDeviceOperation",
+   "category": "layout",
+   "ms": 0.002514,
+   "count": 1.0,
+   "cores": 10.0,
+   "in0": [
+    1,
+    1,
+    32,
+    512
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    320
+   ]
+  },
+  {
+   "op": "InterleavedToShardedDeviceOperation",
+   "category": "layout",
+   "ms": 0.0012223333333333333,
+   "count": 1.0,
+   "cores": 32.0,
+   "in0": [
+    1,
+    1,
+    32,
+    2048
+   ],
+   "in1": [],
+   "out": [
+    1,
+    1,
+    32,
+    2048
+   ]
+  }
+ ],
+ "csv": "third_party/tt-metal/generated/profiler/g8_glrd50_h4c8_b8_4096/reports/2026_09_24_01_14_21/ops_perf_results_2026_09_24_01_14_21.csv",
+ "name": "g8_glrd50_h4c8_b8_4096"
+}

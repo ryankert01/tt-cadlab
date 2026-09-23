@@ -1,0 +1,48 @@
+{
+ "row": "g8_glrd70_h4c8",
+ "kind": "palu",
+ "palu_dir": "compressed/glrd_0.7_f256",
+ "what": "attention",
+ "fused": "p2",
+ "fused_k_chunk": null,
+ "group_heads": "4",
+ "group_heads_per_layer": [
+  2
+ ],
+ "batch": 1,
+ "rot_mode": "dst",
+ "table_mcast": "on",
+ "latent_dtype": "bfp8",
+ "k_latent_dtype": "bfp8",
+ "v_latent_dtype": "bfp8",
+ "kv_dtype": "bfp8",
+ "latent_scale": "balanced",
+ "contexts": [
+  1024,
+  4096,
+  8192
+ ],
+ "data": {
+  "1024": {
+   "p50_ms": 1.53372623026371,
+   "min_ms": 0.975501723587513,
+   "iters": 20,
+   "kv_bytes_per_token_per_layer_per_chip": 714.0,
+   "mesh_reopened_first": false
+  },
+  "4096": {
+   "p50_ms": 1.2267953716218472,
+   "min_ms": 1.1897999793291092,
+   "iters": 20,
+   "kv_bytes_per_token_per_layer_per_chip": 714.0,
+   "mesh_reopened_first": false
+  },
+  "8192": {
+   "p50_ms": 2.1211840212345123,
+   "min_ms": 2.0977570675313473,
+   "iters": 20,
+   "kv_bytes_per_token_per_layer_per_chip": 714.0,
+   "mesh_reopened_first": false
+  }
+ }
+}

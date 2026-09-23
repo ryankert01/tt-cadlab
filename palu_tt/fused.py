@@ -23,6 +23,7 @@ cos/sin come from the same generator tt_transformers' ``get_rot_mats`` uses (so 
 tables the naive stage-1 path rotates with), Meta-interleaved: every frequency occupies two adjacent
 columns. ``reference_decode`` is the fp32 torch model of the whole op.
 """
+import os
 from typing import Optional
 
 import torch
@@ -200,6 +201,14 @@ def palu_l1_cb_bytes(r_k: int, r_v: int, chunk: int, phase2: bool, heads_per_cor
     return n
 
 
+def _group_cap() -> int:
+    """Cores per item that group mode may split over: the factory's cap of 4, or the debug override
+    PALU_GROUP_MAX_CORES_PER_ITEM (the factory reads the same variable), so the L1 model and the
+    program agree on the tree depth during the eight-core sweep."""
+    v = os.environ.get("PALU_GROUP_MAX_CORES_PER_ITEM", "").strip()
+    return max(1, int(v)) if v.isdigit() else 4
+
+
 def _split_for(h: int, batch: int, num_kv_heads: int, grid_cores: int, max_cores_per_head: int):
     """(cores per item, tree rounds, active cores) the program factory derives for heads_per_core = h.
 
@@ -210,7 +219,7 @@ def _split_for(h: int, batch: int, num_kv_heads: int, grid_cores: int, max_cores
     uncapped = max(1, min(grid_cores, max_cores_per_head * batch * num_kv_heads) // max(1, batch))
     if h > 1:
         items = max(1, num_kv_heads // h)
-        cores = max(1, min(4, uncapped // items))
+        cores = max(1, min(_group_cap(), uncapped // items))
     else:
         heads_per_core = max(1, -(-num_kv_heads // uncapped))       # the stock ceil, then round up
         while num_kv_heads % heads_per_core:

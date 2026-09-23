@@ -40,7 +40,11 @@ def main():
     p.add_argument("--ctx", type=int, required=True)
     p.add_argument("--steps", type=int, default=3)
     p.add_argument("--warmup", type=int, default=3)
+    p.add_argument("--batch", type=int, default=32,
+                   help="users per decode step (default 32; the group-mode cap sweep profiles 8, 4 and 1)")
     a = p.parse_args()
+    global BATCH
+    BATCH = a.batch
     flags = {}
     if a.fused != "off":
         flags = dict(use_fused_k=True, cs_recurrence=a.fused == "p2", fused_k_chunk=a.fused_k_chunk,
