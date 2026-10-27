@@ -1,0 +1,8 @@
+- [Shared server, no tt-data](shared-server-no-tt-data.md) — check device idle, cap threads, never touch /home/user01/tt-data
+- [Palu on TT project](palu-tt-project.md) — multi-stage study; 2e/2f merged 2026-09-14; report + deck published; 2048-sample calibration verified on a GPU 2026-09-18 (hypothesis closed; bfp8 port costs 0.04-0.2 ppl); main 40b9a15; stage 3 next
+- [ttnn weight cache trap](ttnn-weight-cache-trap.md) — cache keyed by name/shape/dtype, not content; bump names when contents change
+- [ttnn SDPA decode chunk-32 bug](ttnn-sdpa-decode-chunk32-bug.md) — fp32-acc decode attention wrong at batch<32 when K chunk is 32; root cause = correction_block DST overflow, fixed on palu-sdpa a41a23f and upstream #56225
+- [Bench needs a quiet CPU](bench-needs-quiet-cpu.md) — wall-clock bench cells corrupted by concurrent CPU jobs; p50/min > 3% flags it; attention-only cells at batch <= 16 are host-bound noise regardless, use the device profiler
+- [Code audit 2026-09-19](code-audit-2026-09-19.md) — measurements sound, report prose wrong in 7 places + 43 Important; docs/audit/; fixes await the user; device gate and JIT-hash bugs to work around
+- [correction_block DST fix](correction-block-dst-fix.md) — stock sdpa merge helper overflowed the 4-tile fp32 DEST window; fixed on palu-sdpa a41a23f 2026-09-23; upstream fixed it too in #56225 (no PR needed); cache-purge and gate gotchas
+- [CB two-sided counter trap](cb-two-sided-counter-trap.md) — a CB pushed and popped by both a dataflow kernel and compute desynchronises (dataflow increments, LLK stores); cause of the group-mode three-round hang, fixed 2026-09-24
